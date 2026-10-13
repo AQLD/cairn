@@ -66,7 +66,7 @@ Everything Cairn must handle is written down as a tree of end-goal scenarios in 
 
 ## Contributing
 
-Cairn is built in the open, and contributions will be welcome once the first release is out. Start with [CLAUDE.md](CLAUDE.md), which explains the layout, the scenario-first workflow and the rules the engine must never break. We use the [Developer Certificate of Origin](https://developercertificate.org/) instead of a contributor license agreement: sign off your commits with `git commit -s`.
+Cairn is built in the open, and contributions will be welcome once the first release is out. Start with [CONTRIBUTING.md](CONTRIBUTING.md), which explains the layout, the scenario-first workflow and the rules the engine must never break. We use the [Developer Certificate of Origin](https://developercertificate.org/) instead of a contributor license agreement: sign off your commits with `git commit -s`.
 
 ## License
 

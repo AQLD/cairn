@@ -6,3 +6,8 @@ devenv/.ssh.config
 devenv/.*.info.json
 spike/results/*.jsonl
 spike/results/session-*/
+
+# Local agent context (imports private notes); not part of the repo
+CLAUDE.md
+CLAUDE.local.md
+.claude/
