@@ -60,3 +60,4 @@ A scenario that cannot run in the current environment must **skip with the reaso
 - Comments explain *why*; match the surrounding density. Errors wrap with `%w` and map to API codes in `internal/api`.
 - No new dependencies without a reason in the PR (the engine ships as one static binary; SQLite is pure Go).
 - Commits: `type(scope): summary` (`feat(engine)`, `test(acceptance)`, `docs(roadmap)`), DCO sign-off (`git commit -s`).
+- Git: work on the fork. `origin` = `ananta/cairn` (push branches here), `upstream` = `AQLD/cairn` (PRs target `upstream/main`). Branch from `upstream/main`; never push to upstream directly.
