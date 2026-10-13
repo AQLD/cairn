@@ -35,6 +35,21 @@ Cairn is an open-source engine that gives each AI agent a private Linux workspac
 - **Your assistant waits for your answer.** When an agent needs an approval or a password, its computer is saved and switched off until you reply.
 - **Agents that stay inside your walls.** Install it on your own servers, on ordinary virtual machines, and nothing leaves your network.
 
+## Try the development build
+
+The engine runs on gVisor in production (Linux). For development there is a `host` runtime that runs commands directly on your machine with **no isolation**; use it only with code you trust.
+
+```sh
+make build
+./bin/cairnd --runtime host --data ./data &        # engine on 127.0.0.1:7420
+WS=$(./bin/cairn create --name demo)
+./bin/cairn exec $WS -- sh -c 'echo hello > note.txt'
+SAVE=$(./bin/cairn save $WS)
+./bin/cairn exec $WS -- sh -c 'echo changed > note.txt'
+./bin/cairn resume $SAVE && ./bin/cairn get $WS note.txt   # hello
+./bin/cairn copy $SAVE --count 3
+```
+
 ## Planned for v0.1
 
 - Workspaces with CPU, memory and disk limits, started from templates
@@ -45,9 +60,13 @@ Cairn is an open-source engine that gives each AI agent a private Linux workspac
 - REST API, MCP server, Python and TypeScript SDKs, and a CLI
 - One-command install on a single Linux server
 
+## How it is tested
+
+Everything Cairn must handle is written down as a tree of end-goal scenarios in [`spec/catalog.go`](spec/catalog.go), from "a coding agent picks up where it left off" down to "a flipped byte in a save is caught". `make test` runs them; [docs/test-plan.md](docs/test-plan.md) shows which pass, and [ROADMAP.md](ROADMAP.md) ties each milestone to the scenarios that gate it.
+
 ## Contributing
 
-Cairn is built in the open, and contributions will be welcome once the first release is out. We use the [Developer Certificate of Origin](https://developercertificate.org/) instead of a contributor license agreement: sign off your commits with `git commit -s`.
+Cairn is built in the open, and contributions will be welcome once the first release is out. Start with [CLAUDE.md](CLAUDE.md), which explains the layout, the scenario-first workflow and the rules the engine must never break. We use the [Developer Certificate of Origin](https://developercertificate.org/) instead of a contributor license agreement: sign off your commits with `git commit -s`.
 
 ## License
 

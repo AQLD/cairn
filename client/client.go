@@ -1,0 +1,266 @@
+// Package client is the Go client for Cairn's REST API.
+//
+//	c := client.New("http://127.0.0.1:7420", "")
+//	ws, _ := c.CreateWorkspace(ctx, client.CreateWorkspace{Name: "demo"})
+//	out, _ := c.Exec(ctx, ws.ID, client.Exec{Command: []string{"echo", "hi"}})
+//	sv, _ := c.Save(ctx, ws.ID, client.QuickSave)
+//	_, _ = c.Resume(ctx, sv.ID)
+package client
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+type Client struct {
+	base  string
+	token string
+	http  *http.Client
+}
+
+// New returns a client for the engine at base, for example http://127.0.0.1:7420.
+func New(base, token string) *Client {
+	return &Client{base: strings.TrimRight(base, "/"), token: token, http: &http.Client{}}
+}
+
+// WithHTTPClient replaces the underlying HTTP client (for timeouts, transports).
+func (c *Client) WithHTTPClient(h *http.Client) *Client { c.http = h; return c }
+
+// Error is an error returned by the engine.
+type Error struct {
+	Status  int
+	Code    string // stable: not_found, invalid_argument, conflict, save_corrupt, unsupported_by_runtime, unauthorized, internal
+	Message string
+}
+
+func (e *Error) Error() string { return fmt.Sprintf("cairn: %s (%d): %s", e.Code, e.Status, e.Message) }
+
+// IsCode reports whether err is an engine error with the given code.
+func IsCode(err error, code string) bool {
+	if e, ok := err.(*Error); ok {
+		return e.Code == code
+	}
+	return false
+}
+
+type Capabilities struct {
+	Isolation           bool `json:"isolation"`
+	FullSave            bool `json:"full_save"`
+	ResourceLimits      bool `json:"resource_limits"`
+	NetworkControl      bool `json:"network_control"`
+	PersistentProcesses bool `json:"persistent_processes"`
+}
+
+type Info struct {
+	Runtime        string       `json:"runtime"`
+	RuntimeVersion string       `json:"runtime_version"`
+	Capabilities   Capabilities `json:"capabilities"`
+	SaveFormat     int          `json:"save_format"`
+}
+
+type Limits struct {
+	CPUs     float64 `json:"cpus,omitempty"`
+	MemoryMB int64   `json:"memory_mb,omitempty"`
+	DiskMB   int64   `json:"disk_mb,omitempty"`
+}
+
+type CreateWorkspace struct {
+	Name    string `json:"name,omitempty"`
+	Limits  Limits `json:"limits,omitempty"`
+	Network bool   `json:"network,omitempty"`
+}
+
+type Workspace struct {
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	State      string    `json:"state"`
+	Limits     Limits    `json:"limits"`
+	Network    bool      `json:"network"`
+	SourceSave string    `json:"source_save,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type SaveKind string
+
+const (
+	QuickSave SaveKind = "quick"
+	FullSave  SaveKind = "full"
+)
+
+type Save struct {
+	ID          string    `json:"id"`
+	WorkspaceID string    `json:"workspace_id"`
+	Kind        SaveKind  `json:"kind"`
+	State       string    `json:"state"`
+	Size        int64     `json:"size"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type Exec struct {
+	Command   []string          `json:"command"`
+	Env       map[string]string `json:"env,omitempty"`
+	Dir       string            `json:"dir,omitempty"`
+	Stdin     string            `json:"stdin,omitempty"`
+	TimeoutMS int64             `json:"timeout_ms,omitempty"`
+}
+
+type ExecResult struct {
+	ExitCode        int    `json:"exit_code"`
+	TimedOut        bool   `json:"timed_out"`
+	Stdout          string `json:"stdout"`
+	Stderr          string `json:"stderr"`
+	StdoutTruncated bool   `json:"stdout_truncated,omitempty"`
+	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
+	DurationMS      int64  `json:"duration_ms"`
+}
+
+func (c *Client) Health(ctx context.Context) error {
+	return c.do(ctx, http.MethodGet, "/healthz", nil, nil)
+}
+
+func (c *Client) Info(ctx context.Context) (*Info, error) {
+	var out Info
+	return &out, c.do(ctx, http.MethodGet, "/v1/info", nil, &out)
+}
+
+func (c *Client) CreateWorkspace(ctx context.Context, req CreateWorkspace) (*Workspace, error) {
+	var out Workspace
+	return &out, c.do(ctx, http.MethodPost, "/v1/workspaces", req, &out)
+}
+
+func (c *Client) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
+	var out struct {
+		Workspaces []Workspace `json:"workspaces"`
+	}
+	return out.Workspaces, c.do(ctx, http.MethodGet, "/v1/workspaces", nil, &out)
+}
+
+func (c *Client) GetWorkspace(ctx context.Context, id string) (*Workspace, error) {
+	var out Workspace
+	return &out, c.do(ctx, http.MethodGet, "/v1/workspaces/"+url.PathEscape(id), nil, &out)
+}
+
+func (c *Client) DeleteWorkspace(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/workspaces/"+url.PathEscape(id), nil, nil)
+}
+
+func (c *Client) Exec(ctx context.Context, id string, req Exec) (*ExecResult, error) {
+	var out ExecResult
+	return &out, c.do(ctx, http.MethodPost, "/v1/workspaces/"+url.PathEscape(id)+"/exec", req, &out)
+}
+
+// Run is Exec for the common case: run argv and return stdout, failing on a
+// non-zero exit.
+func (c *Client) Run(ctx context.Context, id string, argv ...string) (string, error) {
+	res, err := c.Exec(ctx, id, Exec{Command: argv})
+	if err != nil {
+		return "", err
+	}
+	if res.ExitCode != 0 || res.TimedOut {
+		return res.Stdout, fmt.Errorf("%q exited %d (timed out: %v): %s", strings.Join(argv, " "), res.ExitCode, res.TimedOut, res.Stderr)
+	}
+	return res.Stdout, nil
+}
+
+func (c *Client) WriteFile(ctx context.Context, id, path string, content []byte) error {
+	q := url.Values{"path": {path}}
+	return c.doRaw(ctx, http.MethodPut, "/v1/workspaces/"+url.PathEscape(id)+"/files?"+q.Encode(), bytes.NewReader(content), nil)
+}
+
+func (c *Client) ReadFile(ctx context.Context, id, path string) ([]byte, error) {
+	q := url.Values{"path": {path}}
+	var buf bytes.Buffer
+	err := c.doRaw(ctx, http.MethodGet, "/v1/workspaces/"+url.PathEscape(id)+"/files?"+q.Encode(), nil, &buf)
+	return buf.Bytes(), err
+}
+
+func (c *Client) Save(ctx context.Context, id string, kind SaveKind) (*Save, error) {
+	var out Save
+	return &out, c.do(ctx, http.MethodPost, "/v1/workspaces/"+url.PathEscape(id)+"/saves", map[string]SaveKind{"kind": kind}, &out)
+}
+
+func (c *Client) ListSaves(ctx context.Context, workspaceID string) ([]Save, error) {
+	var out struct {
+		Saves []Save `json:"saves"`
+	}
+	return out.Saves, c.do(ctx, http.MethodGet, "/v1/workspaces/"+url.PathEscape(workspaceID)+"/saves", nil, &out)
+}
+
+func (c *Client) GetSave(ctx context.Context, id string) (*Save, error) {
+	var out Save
+	return &out, c.do(ctx, http.MethodGet, "/v1/saves/"+url.PathEscape(id), nil, &out)
+}
+
+func (c *Client) Resume(ctx context.Context, saveID string) (*Workspace, error) {
+	var out Workspace
+	return &out, c.do(ctx, http.MethodPost, "/v1/saves/"+url.PathEscape(saveID)+"/resume", nil, &out)
+}
+
+func (c *Client) Copy(ctx context.Context, saveID string, count int) ([]Workspace, error) {
+	var out struct {
+		Workspaces []Workspace `json:"workspaces"`
+	}
+	return out.Workspaces, c.do(ctx, http.MethodPost, "/v1/saves/"+url.PathEscape(saveID)+"/copies", map[string]int{"count": count}, &out)
+}
+
+func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
+	var body io.Reader
+	if in != nil {
+		data, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(data)
+	}
+	if out == nil {
+		return c.doRaw(ctx, method, path, body, nil)
+	}
+	var buf bytes.Buffer
+	if err := c.doRaw(ctx, method, path, body, &buf); err != nil {
+		return err
+	}
+	return json.Unmarshal(buf.Bytes(), out)
+}
+
+func (c *Client) doRaw(ctx context.Context, method, path string, body io.Reader, out io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
+	if err != nil {
+		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		var e struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		if json.Unmarshal(data, &e) != nil || e.Error.Code == "" {
+			return &Error{Status: resp.StatusCode, Code: "http_error", Message: strings.TrimSpace(string(data))}
+		}
+		return &Error{Status: resp.StatusCode, Code: e.Error.Code, Message: e.Error.Message}
+	}
+	if out != nil {
+		_, err = io.Copy(out, resp.Body)
+	}
+	return err
+}
