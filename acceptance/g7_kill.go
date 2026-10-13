@@ -48,6 +48,18 @@ type ledger struct {
 	saves   map[string]savedState
 	deleted map[string]bool // saves acknowledged as deleted (and not undeleted)
 	seq     int
+
+	// inFlight is the operation that was running when the engine was killed.
+	// Its reply was lost, but it may still have taken effect, so after a
+	// restart either outcome is accepted (and the ledger follows what happened).
+	// Every other operation must be exactly as acknowledged.
+	inFlight *pendingOp
+}
+
+type pendingOp struct {
+	kind      string // resume, delete, undelete
+	save      string
+	workspace string
 }
 
 type savedState struct {
@@ -146,9 +158,11 @@ func runRandomOps(ctx context.Context, c *client.Client, l *ledger, rng *rand.Ra
 			}
 		case op < 80 && len(live) > 0:
 			id := live[rng.IntN(len(live))]
+			l.setInFlight(&pendingOp{kind: "resume", save: id, workspace: l.saves[id].workspace})
 			if _, err = c.Resume(ctx, id); err == nil {
 				l.mu.Lock()
 				l.files[l.saves[id].workspace] = copyFiles(l.saves[id].files)
+				l.inFlight = nil
 				l.mu.Unlock()
 			}
 		case op < 88 && len(live) > 0:
@@ -163,16 +177,20 @@ func runRandomOps(ctx context.Context, c *client.Client, l *ledger, rng *rand.Ra
 			}
 		case op < 95 && len(live) > 0:
 			id := live[rng.IntN(len(live))]
+			l.setInFlight(&pendingOp{kind: "delete", save: id})
 			if err = c.DeleteSave(ctx, id); err == nil {
 				l.mu.Lock()
 				l.deleted[id] = true
+				l.inFlight = nil
 				l.mu.Unlock()
 			}
 		case len(dead) > 0:
 			id := dead[rng.IntN(len(dead))]
+			l.setInFlight(&pendingOp{kind: "undelete", save: id})
 			if _, err = c.UndeleteSave(ctx, id); err == nil {
 				l.mu.Lock()
 				delete(l.deleted, id)
+				l.inFlight = nil
 				l.mu.Unlock()
 			}
 		}
@@ -180,6 +198,75 @@ func runRandomOps(ctx context.Context, c *client.Client, l *ledger, rng *rand.Ra
 			return // the engine was killed (or the round ended)
 		}
 	}
+}
+
+func (l *ledger) setInFlight(op *pendingOp) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.inFlight = op
+}
+
+// settleInFlight decides whether the operation cut off by the kill took effect,
+// accepts only "it did" or "it did not", and updates the ledger to match.
+func settleInFlight(e *Env, c *client.Client, l *ledger, fail func(string, ...any)) {
+	op := l.inFlight
+	l.inFlight = nil
+	if op == nil {
+		return
+	}
+	switch op.kind {
+	case "resume":
+		before, after := l.files[op.workspace], l.saves[op.save].files
+		got := map[string]string{}
+		for path := range union(before, after) {
+			if data, err := c.ReadFile(e.Ctx, op.workspace, path); err == nil {
+				got[path] = string(data)
+			}
+		}
+		switch {
+		case sameFiles(got, before):
+		case sameFiles(got, after):
+			l.files[op.workspace] = copyFiles(after) // the resume completed
+		default:
+			fail("workspace %s is neither before nor after the interrupted resume of %s: %v", op.workspace, op.save, got)
+		}
+	case "delete", "undelete":
+		sv, err := c.GetSave(e.Ctx, op.save)
+		if err != nil {
+			fail("save %s after interrupted %s: %v", op.save, op.kind, err)
+		}
+		switch sv.State {
+		case "deleted":
+			l.deleted[op.save] = true
+		case "ready":
+			delete(l.deleted, op.save)
+		default:
+			fail("save %s is %s after interrupted %s", op.save, sv.State, op.kind)
+		}
+	}
+}
+
+func union(a, b map[string]string) map[string]bool {
+	out := map[string]bool{}
+	for k := range a {
+		out[k] = true
+	}
+	for k := range b {
+		out[k] = true
+	}
+	return out
+}
+
+func sameFiles(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // verifyAfterRestart checks every acknowledged fact and that nothing is half done.
@@ -190,6 +277,7 @@ func verifyAfterRestart(e *Env, c *client.Client, data string, l *ledger, round 
 	fail := func(format string, args ...any) {
 		e.T.Fatalf("after kill %d: "+format, append([]any{round}, args...)...)
 	}
+	settleInFlight(e, c, l, fail)
 
 	listed, err := c.ListWorkspaces(e.Ctx)
 	if err != nil {
