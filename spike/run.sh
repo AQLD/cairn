@@ -6,6 +6,8 @@
 #   run.sh host-info               CPU, kernel and runsc version as JSON
 #   run.sh local WORKLOAD          full cycle on this host: start, warm up, checkpoint, restore, verify
 #   run.sh local-all               every workload
+#   run.sh compat [TEST...]        run the compatibility tests under gVisor and, as a
+#                                  control, under plain Docker (runc); see spike/compat/
 #
 # Building blocks (used by cross.sh to move a workload between hosts):
 #   run.sh prepare WORKLOAD        build image, bundle and network namespace
@@ -35,8 +37,18 @@ bundle() { echo "$WORK/bundles/$1"; }
 image() { echo "$WORK/images/$1"; }
 cid() { echo "spike-$1"; }
 
-# Each workload's workload.conf sets IDX (network slot), WARM_TIMEOUT and SETTLE.
-load_conf() { IDX=0 WARM_TIMEOUT=60 SETTLE=3; source "$(wdir "$1")/workload.conf"; }
+# Each workload's workload.conf sets IDX (network slot), WARM_TIMEOUT and SETTLE,
+# and optionally:
+#   BUILD_DIR    image to build, relative to spike/ (default: the workload's own folder)
+#   ENV          space-separated KEY=VALUE pairs added to the workload's environment
+#   MIN_FREE_MB  skip (not fail) on hosts with less available memory than this
+load_conf() {
+  IDX=0 WARM_TIMEOUT=60 SETTLE=3 BUILD_DIR="" ENV="" MIN_FREE_MB=0
+  source "$(wdir "$1")/workload.conf"
+  [[ -n $BUILD_DIR ]] && BUILD_DIR="$SPIKE_DIR/$BUILD_DIR" || BUILD_DIR=$(wdir "$1")
+}
+
+free_mb() { awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo; }
 
 # --- setup -------------------------------------------------------------------
 
@@ -92,7 +104,7 @@ net_down() {
 cmd_prepare() {
   local w=$1 b dir
   load_conf "$w"
-  dir=$(wdir "$w"); b=$(bundle "$w")
+  dir=$BUILD_DIR; b=$(bundle "$w")
   log "$w: building image"
   docker build -q -t "cairn-spike/$w" "$dir" >/dev/null
   log "$w: exporting root filesystem"
@@ -103,8 +115,9 @@ cmd_prepare() {
   echo "nameserver 1.1.1.1" > "$b/rootfs/etc/resolv.conf"
   ( cd "$b" && rs spec -- /spike/start.sh )
   local tmp; tmp=$(mktemp)
-  jq --arg ns "/var/run/netns/cs-$w" --arg host "$(cid "$w")" '
-      .process.terminal = false
+  jq --arg ns "/var/run/netns/cs-$w" --arg host "$(cid "$w")" --arg env "$ENV" '
+      .process.env += ($env | split(" ") | map(select(length > 0)))
+    | .process.terminal = false
     | .process.cwd = "/"
     | .root.readonly = false
     | .hostname = $host
@@ -116,8 +129,16 @@ cmd_prepare() {
 
 # --- lifecycle ---------------------------------------------------------------
 
+# Exit code for "this host cannot run the workload" (too little memory): callers
+# record a skip, not a failure.
+EX_SKIP=75
+
 cmd_start() {
   local w=$1 id; id=$(cid "$w"); load_conf "$w"
+  if (( MIN_FREE_MB > 0 && $(free_mb) < MIN_FREE_MB )); then
+    log "$w: needs ${MIN_FREE_MB} MB free, host has $(free_mb) MB"
+    exit $EX_SKIP
+  fi
   net_up "$w"
   rs delete --force "$id" >/dev/null 2>&1 || true
   rs run --detach --bundle "$(bundle "$w")" "$id" </dev/null >"$WORK/logs/$w.out" 2>&1
@@ -190,6 +211,13 @@ cmd_local() {
   local w=$1 out ck rs_ verdict detail
   out="$WORK/runs/$w"
   load_conf "$w"
+  if (( MIN_FREE_MB > 0 && $(free_mb) < MIN_FREE_MB )); then
+    log "$w: skipped, needs ${MIN_FREE_MB} MB free, host has $(free_mb) MB"
+    jq -n -c --arg w "$w" --arg detail "needs ${MIN_FREE_MB} MB free memory, host has $(free_mb) MB" \
+      --argjson host "$(cmd_host_info | jq -c .)" \
+      '{workload:$w, mode:"local", verdict:"skip", detail:$detail, host:$host}' | tee -a "$RESULTS/runs.jsonl"
+    return 0
+  fi
   mkdir -p "$out"
   cmd_prepare "$w"
   cmd_start "$w"
@@ -222,6 +250,60 @@ cmd_local_all() {
   return $failed
 }
 
+# --- compatibility list -------------------------------------------------------
+# Each test in spike/compat/tests runs twice: in a gVisor sandbox and, as a
+# control, in an ordinary Docker container. Only "gvisor-only" failures belong
+# on the compatibility list; failures in both are the network or the test.
+
+cmd_compat() {
+  local name=compat img=cairn-spike/compat b rootfs base t tb out ec ms rc rms verdict tests
+  IDX=9
+  b=$(bundle "$name")
+  log "compat: building toolbox image"
+  docker build -q -t "$img" "$SPIKE_DIR/compat" >/dev/null
+  rm -rf "$b"; mkdir -p "$b/rootfs"
+  local c; c=$(docker create "$img")
+  docker export "$c" | tar -x -C "$b/rootfs"
+  docker rm -f "$c" >/dev/null
+  echo "nameserver 1.1.1.1" > "$b/rootfs/etc/resolv.conf"
+  ( cd "$b" && rs spec -- /bin/true )
+  rootfs="$b/rootfs"
+  base=$(jq --arg ns "/var/run/netns/cs-$name" --arg root "$rootfs" '
+      .process.terminal = false | .process.cwd = "/tmp" | .root.path = $root | .root.readonly = false
+    | .hostname = "compat"
+    | .linux.namespaces = ([.linux.namespaces[] | select(.type != "network")] + [{type: "network", path: $ns}])' "$b/config.json")
+  net_up "$name"
+
+  if [[ $# -gt 0 ]]; then tests=("$@"); else tests=($(cd "$SPIKE_DIR/compat/tests" && ls | sed 's/\.sh$//')); fi
+  local pass=0 gvisor_only=0 other=0
+  for t in "${tests[@]}"; do
+    tb="$WORK/compat-bundles/$t"; out="$WORK/logs/compat-$t"
+    mkdir -p "$tb"
+    jq --arg t "/compat/tests/$t.sh" '.process.args = [$t]' <<<"$base" > "$tb/config.json"
+    rs delete --force "compat-$t" >/dev/null 2>&1 || true
+    local t0; t0=$(now_ms)
+    timeout 300 "$RUNSC" "${RUNSC_FLAGS[@]}" run --bundle "$tb" "compat-$t" </dev/null >"$out.runsc" 2>&1 && ec=0 || ec=$?
+    ms=$(( $(now_ms) - t0 ))
+    rs delete --force "compat-$t" >/dev/null 2>&1 || true
+    net_up "$name" # runsc strips the namespace; re-apply for the next test
+    t0=$(now_ms)
+    timeout 300 docker run --rm "$img" "/compat/tests/$t.sh" </dev/null >"$out.runc" 2>&1 && rc=0 || rc=$?
+    rms=$(( $(now_ms) - t0 ))
+    if (( ec == 0 )); then verdict=ok; pass=$((pass + 1))
+    elif (( rc == 0 )); then verdict=gvisor-only-failure; gvisor_only=$((gvisor_only + 1))
+    else verdict=fails-everywhere; other=$((other + 1)); fi
+    log "compat: $t: $verdict (gvisor exit $ec in ${ms} ms, docker exit $rc in ${rms} ms)"
+    jq -n -c --arg t "$t" --arg v "$verdict" --argjson ec "$ec" --argjson ms "$ms" --argjson rc "$rc" --argjson rms "$rms" \
+      --arg about "$(sed -n '2s/^# //p' "$SPIKE_DIR/compat/tests/$t.sh")" \
+      --arg tail "$(tail -c 600 "$out.runsc")" --argjson host "$(cmd_host_info | jq -c .)" \
+      '{mode:"compat", test:$t, about:$about, verdict:$v, gvisor:{exit:$ec, ms:$ms}, docker:{exit:$rc, ms:$rms}, gvisor_output_tail:$tail, host:$host}' \
+      >> "$RESULTS/compat.jsonl"
+  done
+  net_down "$name"
+  log "compat: $pass ok, $gvisor_only gVisor-only failures, $other failing everywhere (details: $RESULTS/compat.jsonl)"
+  (( gvisor_only == 0 ))
+}
+
 main() {
   local cmd=${1:-}; shift || true
   [[ $EUID -ne 0 ]] || mkdir -p "$WORK"/{bundles,images,runsc-state,logs,runs} "$RESULTS"
@@ -232,6 +314,7 @@ main() {
     exec) [[ $# -ge 2 ]] || die "usage: $0 exec WORKLOAD COMMAND..."; cmd_exec "$@" ;;
     check) [[ $# -eq 3 ]] || die "usage: $0 check WORKLOAD BEFORE AFTER"; cmd_check "$@" ;;
     local-all) cmd_local_all ;;
+    compat) cmd_compat "$@" ;;
     *) sed -n '2,15p' "$0"; exit 2 ;;
   esac
 }

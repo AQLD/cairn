@@ -16,8 +16,9 @@ TAG=cairn-spike
 
 # Premium Intel vs Premium AMD: two different CPU families, which is what the
 # portability half of the gate needs. Same size, so timings compare fairly.
+# 8 GB so the 4 GiB memory-sweep workspace fits; override with CAIRN_DO_SIZE_INTEL/AMD.
 NAMES=(cairn-spike-intel cairn-spike-amd)
-SIZES=(s-2vcpu-4gb-intel s-2vcpu-4gb-amd)
+SIZES=("${CAIRN_DO_SIZE_INTEL:-s-4vcpu-8gb-intel}" "${CAIRN_DO_SIZE_AMD:-s-4vcpu-8gb-amd}")
 
 command -v doctl >/dev/null || { echo "install doctl first: brew install doctl && doctl auth init" >&2; exit 1; }
 

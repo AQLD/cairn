@@ -12,6 +12,11 @@ A restore passes only if it is **the same process continuing**, not a restart: s
 | `node-dev-server` | a listening server and a file watcher | same server answers with rising hit count; editing a watched file still fires the watcher |
 | `package-install` | a network download interrupted mid-transfer | the checkpoint lands mid-download; after restore the install still finishes (pip must retry its broken connection) |
 | `headless-browser` | a large, multi-process program | same Chromium process; the page's JavaScript counter keeps running |
+| `memory-1g`, `memory-2g`, `memory-4g` | save and restore time against memory size | 1, 2 or 4 GiB of random bytes re-hashed inside the restored sandbox: every byte identical, same process. Skipped (not failed) on hosts without enough free memory. |
+
+## Compatibility list
+
+`run.sh compat` runs the tools agents reach for (git over HTTPS, pip in a virtualenv, npm, gcc, Go, parallel make, SQLite WAL, multiprocessing and shared memory, worker threads, `/proc` tools, Unix sockets, HTTPS, archives, ripgrep, ssh-keygen, file watching, IPv6 loopback, large file I/O, signals, lock-heavy threads), each twice: under gVisor and, as a control, in plain Docker. A failure under gVisor that passes in Docker is a **gVisor-only failure** and belongs on the compatibility list; results go to `results/compat.jsonl`. Tests live in `compat/tests/`, one script each; add one per tool you care about.
 
 ## How it works
 
@@ -28,13 +33,15 @@ Proves the scripts work, that same-host save and restore works, and that a save 
 devenv/dev.sh up          # two Ubuntu 24.04 VMs, set up like the droplets
 devenv/dev.sh spike       # same-host, every workload
 devenv/dev.sh cross       # cairn-a -> cairn-b and back
+devenv/dev.sh compat      # compatibility tests
+devenv/dev.sh rehearse    # the whole DigitalOcean session, on the two VMs
 ```
 
 Any other Linux machine works too: `sudo spike/run.sh setup && sudo spike/run.sh local-all`.
 
 ## Stage B: two DigitalOcean droplets (the gate)
 
-Two droplets in one region with different CPU families (Premium Intel and Premium AMD, 2 vCPU / 4 GB each), billed hourly; a few hours of testing costs about a dollar. `do-up` shows the price and asks before creating anything.
+Two droplets in one region with different CPU families (Premium Intel and Premium AMD, 4 vCPU / 8 GB each so the 4 GiB workspace fits), billed hourly at roughly $0.18/hour for both; `do-up` shows the live price and asks before creating anything. Run `devenv/dev.sh rehearse` first: it is the same session on the free local VMs.
 
 ```sh
 doctl auth init                                         # once; you enter your own API token

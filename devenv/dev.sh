@@ -8,11 +8,14 @@
 #   dev.sh test [ARGS...]        go test on Linux (default: -short ./...)
 #   dev.sh spike [WORKLOAD]      same-host save/restore (all workloads by default)
 #   dev.sh cross [WORKLOAD]      save on cairn-a, restore on cairn-b (and back)
+#   dev.sh compat [TEST...]      compatibility tests under gVisor vs plain Docker
+#   dev.sh rehearse              the full DigitalOcean session, run on the two VMs
 #   dev.sh status | stop | delete
 #
 # DigitalOcean (billed hourly): run everything queued in one sitting, then delete.
 #   dev.sh do-up SSH_KEY_ID [REGION]     create the two droplets (asks first)
-#   dev.sh do-session A B                setup, spike (same-host + cross-CPU), tests, benchmarks
+#   dev.sh do-session A B                setup, spike (same-host, memory sweep, cross-CPU),
+#                                        compatibility, tests, benchmarks
 #   dev.sh do-down                       delete the droplets (asks first)
 set -euo pipefail
 
@@ -84,6 +87,17 @@ cmd_cross() {
   fi
 }
 
+cmd_compat() { need_lima; in_vm cairn-a "sudo -n spike/run.sh compat $*"; }
+
+# The DigitalOcean session, step for step, on the two dev VMs: catches script
+# problems for free before an hour is paid for.
+cmd_rehearse() {
+  need_lima
+  write_ssh_config
+  CAIRN_SSH_CONFIG=$SSH_CONFIG CAIRN_REMOTE_REPO=$REPO CAIRN_SYNC=none CAIRN_TRANSFER=relay \
+    cmd_do_session lima-cairn-a lima-cairn-b
+}
+
 cmd_status() { need_lima; "$LIMACTL" list; }
 cmd_stop() { need_lima; for vm in "${VMS[@]}"; do "$LIMACTL" stop "$vm" || true; done; }
 cmd_delete() {
@@ -106,33 +120,45 @@ cmd_do_session() {
   local a=$1 b=$2 dir status=0
   dir=$RESULTS/session-$(date +%Y%m%d-%H%M%S)
   mkdir -p "$dir"
-  export CAIRN_REMOTE_REPO=/root/cairn CAIRN_SYNC=rsync CAIRN_TRANSFER=direct
+  export CAIRN_REMOTE_REPO=${CAIRN_REMOTE_REPO:-/root/cairn}
+  export CAIRN_SYNC=${CAIRN_SYNC:-rsync} CAIRN_TRANSFER=${CAIRN_TRANSFER:-direct}
+  local r=$CAIRN_REMOTE_REPO
+  local ssh_opts=(-o BatchMode=yes)
+  [[ -n ${CAIRN_SSH_CONFIG:-} ]] && ssh_opts=(-F "$CAIRN_SSH_CONFIG" "${ssh_opts[@]}")
   step() {
     local name=$1; shift
     log "session: $name"
     if "$@" > "$dir/$name.log" 2>&1; then log "  ok"; else log "  FAILED (see $dir/$name.log)"; status=1; fi
   }
-  on() { ssh -o BatchMode=yes "$1" "sudo -n bash -c $(printf %q "$2")"; }
+  on() { ssh "${ssh_opts[@]}" "$1" "sudo -n bash -c $(printf %q "$2")"; }
+  fetch() { ssh "${ssh_opts[@]}" "$1" "sudo -n cat $2" > "$3" 2>/dev/null || true; }
 
   step sync "$REPO/spike/cross.sh" sync "$a" "$b"
-  step host-info-a on "$a" "/root/cairn/deploy/host-setup.sh --info"
-  step host-info-b on "$b" "/root/cairn/deploy/host-setup.sh --info"
-  step spike-local-a on "$a" "/root/cairn/spike/run.sh local-all"
-  step spike-local-b on "$b" "/root/cairn/spike/run.sh local-all"
+  step host-info-a on "$a" "$r/deploy/host-setup.sh --info"
+  step host-info-b on "$b" "$r/deploy/host-setup.sh --info"
+  step spike-local-a on "$a" "$r/spike/run.sh local-all"
+  step spike-local-b on "$b" "$r/spike/run.sh local-all"
   step spike-cross "$REPO/spike/cross.sh" all "$a" "$b"
-  step go-test-a on "$a" "cd /root/cairn && /usr/local/go/bin/go test -count=1 ./..."
-  step bench-a on "$a" "cd /root/cairn && /usr/local/go/bin/go test -run XXX -bench . -benchmem ./bench"
-  step bench-b on "$b" "cd /root/cairn && /usr/local/go/bin/go test -run XXX -bench . -benchmem ./bench"
-  cp "$RESULTS/runs.jsonl" "$dir/" 2>/dev/null || true
+  step compat-a on "$a" "$r/spike/run.sh compat"
+  step compat-b on "$b" "$r/spike/run.sh compat"
+  step go-test-a on "$a" "cd $r && /usr/local/go/bin/go test -count=1 ./..."
+  step bench-a on "$a" "cd $r && /usr/local/go/bin/go test -run XXX -bench . -benchmem ./bench"
+  step bench-b on "$b" "cd $r && /usr/local/go/bin/go test -run XXX -bench . -benchmem ./bench"
+  # same-host and compat results are written on each host; collect them here
+  fetch "$a" "$r/spike/results/runs.jsonl" "$dir/runs-a.jsonl"
+  fetch "$b" "$r/spike/results/runs.jsonl" "$dir/runs-b.jsonl"
+  fetch "$a" "$r/spike/results/compat.jsonl" "$dir/compat-a.jsonl"
+  fetch "$b" "$r/spike/results/compat.jsonl" "$dir/compat-b.jsonl"
+  cp "$RESULTS/runs.jsonl" "$dir/runs-cross.jsonl" 2>/dev/null || true
 
   log "session done: $dir"
-  log "the droplets are still running and billing: devenv/dev.sh do-down"
+  [[ $a == lima-* ]] || log "the droplets are still running and billing: devenv/dev.sh do-down"
   return $status
 }
 
 cmd=${1:-}; shift || true
 case $cmd in
-  up | shell | test | spike | cross | status | stop | delete) "cmd_$cmd" "$@" ;;
+  up | shell | test | spike | cross | compat | rehearse | status | stop | delete) "cmd_$cmd" "$@" ;;
   do-up) cmd_do_up "$@" ;;
   do-session) cmd_do_session "$@" ;;
   do-down) cmd_do_down ;;

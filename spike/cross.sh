@@ -74,7 +74,16 @@ cmd_run() {
   tmp=$(mktemp -d)
   log "$w: $a -> $b"
 
-  on "$a" "$REMOTE/run.sh prepare $w && $REMOTE/run.sh start $w && $REMOTE/run.sh warm $w"
+  local rc=0
+  on "$a" "$REMOTE/run.sh prepare $w && $REMOTE/run.sh start $w && $REMOTE/run.sh warm $w" || rc=$?
+  if (( rc == 75 )); then
+    log "$w: skipped on $a (not enough memory)"
+    jq -n -c --arg w "$w" --arg a "$a" '{workload:$w, mode:"cross", verdict:"skip", detail:("not enough memory on " + $a)}' \
+      | tee -a "$SPIKE_DIR/results/runs.jsonl"
+    rm -rf "$tmp"
+    return 0
+  fi
+  (( rc == 0 )) || { rm -rf "$tmp"; return "$rc"; }
   on "$a" "$REMOTE/run.sh probe $w" > "$tmp/before.json"
   ck=$(on "$a" "$REMOTE/run.sh checkpoint $w")
   log "$w: checkpoint on $a: $(jq -c . <<<"$ck")"
