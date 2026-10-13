@@ -140,7 +140,7 @@ var Catalog = []Scenario{
 				}},
 			{ID: "G7.4", Title: "A crash mid-create leaves a usable workspace", Proves: "Creation is never left half done.", Milestone: E1, Needs: []Need{NeedInProcess}},
 			{ID: "G7.5", Title: "A crash mid-copy discards the unfinished copy", Proves: "Callers never see a copy they were not given.", Milestone: E2, Needs: []Need{NeedInProcess}},
-			{ID: "G7.6", Title: "kill -9 of the engine mid-operation recovers", Proves: "Real process death, not just simulated crashes, is survived.", Milestone: E1, Needs: []Need{NeedLinuxBench}},
+			{ID: "G7.6", Title: "kill -9 of the engine mid-operation recovers", Proves: "Real process death at random moments loses nothing that was acknowledged (CAIRN_KILL_ROUNDS).", Milestone: E1, Needs: []Need{NeedInProcess}},
 			{ID: "G7.7", Title: "A lost server's workspaces resume elsewhere from their last save", Proves: "Losing a server loses at most the work since the last save.", Milestone: E5, Needs: []Need{NeedMultiServer, NeedObjectStorage}},
 			{ID: "G7.8", Title: "A workspace never runs on two servers at once", Proves: "Leases and fencing hold under partitions and slow servers.", Milestone: E5, Needs: []Need{NeedMultiServer}},
 		},

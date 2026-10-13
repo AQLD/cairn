@@ -7,7 +7,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
 | E0 | 0 | 4 | 1 |
-| E1 | 29 | 10 | 4 |
+| E1 | 30 | 9 | 4 |
 | E2 | 17 | 7 | 1 |
 | E3 | 0 | 4 | 0 |
 | E4 | 0 | 11 | 1 |
@@ -123,7 +123,7 @@ However the engine stops, it comes back knowing every workspace and save, and ne
   - ✅ **G7.3.2** Crash after the filesystem swap completes · E1 · needs in_process
 - ✅ **G7.4** A crash mid-create leaves a usable workspace · E1 · needs in_process
 - ✅ **G7.5** A crash mid-copy discards the unfinished copy · E2 · needs in_process
-- ⏳ **G7.6** kill -9 of the engine mid-operation recovers · E1 · needs linux_bench
+- ✅ **G7.6** kill -9 of the engine mid-operation recovers · E1 · needs in_process
 - ⏳ **G7.7** A lost server's workspaces resume elsewhere from their last save · E5 · needs multi_server, object_storage
 - ⏳ **G7.8** A workspace never runs on two servers at once · E5 · needs multi_server
 

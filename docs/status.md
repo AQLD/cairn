@@ -14,16 +14,13 @@ One line per active task: `scenario/feature · owner (person, agent or branch) �
 ## Next up (in order)
 
 1. **Run the E0 spike** ([spike/README.md](../spike/README.md)): stage A on any Linux machine (`run.sh local-all`), then stage B on two droplets (`provision.sh`, `cross.sh all`, `destroy.sh`). Output: pass/fail per workload and direction, save/resume times (G9.6), and the CPU baseline decision below.
-2. **`runsc` runtime driver** (`internal/runtime/runsc.go`): start/exec/stop, then checkpoint/restore. Turn on capabilities one at a time as their scenarios pass on the Linux bench.
-3. **Streaming exec output** (G1.6.8): NDJSON or SSE on the exec endpoint; client support.
-4. **Kill -9 harness** (G7.6): run `cairnd` as a subprocess and kill it at each failpoint for real.
-5. **Soft delete and retention** (G6.8) and the save-deletion API.
-6. **Linux test bench in CI:** a self-hosted runner (or two droplets) that runs the acceptance suite with `CAIRN_TEST_RUNTIME=runsc CAIRN_ENV_LINUX_BENCH=1`.
+2. **`runsc` runtime driver** (`internal/runtime/runsc.go`): start/exec/stop, then checkpoint/restore, using what the spike proved (bundle per workspace, overlay in memory, network re-applied before every start/restore). Turn on capabilities one at a time as their scenarios pass in the dev VMs (`devenv/dev.sh test` with `CAIRN_TEST_RUNTIME=runsc`).
+3. **Linux test bench in CI:** a self-hosted runner (or two droplets) that runs the acceptance suite with `CAIRN_TEST_RUNTIME=runsc CAIRN_ENV_LINUX_BENCH=1`.
 
 ## Open decisions
 
 - [ ] CPU baseline every full save is pinned to (decide from the E0 droplet types).
-- [ ] Streaming format for exec output (NDJSON vs SSE vs WebSocket for interactive shells).
+- [x] Streaming format for exec output: NDJSON on the exec endpoint (decided 2026-10-12). Interactive shells (PTY, stdin streaming) will need a WebSocket later.
 - [ ] Workspace identity on full-save copies: how hostname, machine-id, MAC/IP and RNG state are refreshed (G2.6).
 - [ ] Which SDK first (TypeScript or Python), decided by the first design partners.
 
@@ -37,6 +34,10 @@ One line per active task: `scenario/feature · owner (person, agent or branch) �
 ## Decisions log
 
 Newest first. One line each: date · decision · why.
+
+- 2026-10-12 · State-store schema changes go through numbered migrations recorded in `PRAGMA user_version`; never edit a shipped migration; a newer database is refused · engine upgrades must keep state (G10.6).
+- 2026-10-12 · Deleted saves are kept 7 days (`cairnd --retention`) then purged hourly; delete/undelete are idempotent · mistakes are recoverable and agents retry.
+- 2026-10-12 · Exec output is lossless: NDJSON stream with base64 chunks, or base64 in the JSON response when not valid UTF-8 · agents handle binary output (archives, images).
 
 - 2026-10-12 · Local dev = two Lima VMs (Ubuntu 24.04, vz) set up by `deploy/host-setup.sh`, versions pinned in `deploy/versions.env`; DigitalOcean runs go through `dev.sh do-session` · identical hosts locally and on real hardware, so paid hours only cover what local can't (cross-CPU, x86 numbers).
 - 2026-10-12 · gVisor installed per release under `/opt/gvisor/<release>/`, `runsc` symlinked · old releases stay installed, the basis for upgrade-safe restore.
