@@ -1,30 +1,72 @@
 #!/usr/bin/env bash
 # E0 gate: save a workload on host A, move the save to host B, resume it there.
-# Runs on your machine; drives both hosts over SSH as root.
+# Runs on your machine and drives both hosts over SSH. The same script works
+# for the local dev VMs and the DigitalOcean droplets; only the settings differ.
 #
-#   cross.sh sync A B                  copy spike/ to both hosts and run setup
+#   cross.sh sync A B                  put the repo on both hosts and run setup
 #   cross.sh run A B WORKLOAD          one workload, A -> B
 #   cross.sh all A B                   every workload, A -> B and B -> A
 #
-# A and B are SSH targets (IPs or hostnames). Results append to spike/results/runs.jsonl.
-# The save travels directly from A to B (SSH agent forwarding), as it would between servers.
+# A and B are SSH destinations (root@203.0.113.5, or an alias from an ssh config).
+# Settings (environment):
+#   CAIRN_SSH_CONFIG    ssh config file to use (the dev VMs provide one)
+#   CAIRN_REMOTE_REPO   repo path on the hosts (default /root/cairn)
+#   CAIRN_SYNC          rsync | none   (none when the repo is already mounted; default rsync)
+#   CAIRN_TRANSFER      direct | relay (direct: A streams to B over the private network,
+#                       needs ssh-agent forwarding; relay: through this machine; default direct)
+# Results append to spike/results/runs.jsonl.
 set -euo pipefail
 
 SPIKE_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-REMOTE=/root/spike
+REPO_DIR=$(cd "$SPIKE_DIR/.." && pwd)
+REMOTE_REPO=${CAIRN_REMOTE_REPO:-/root/cairn}
+REMOTE=$REMOTE_REPO/spike
 WORKDIR=/var/lib/cairn-spike
-SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15)
+SYNC=${CAIRN_SYNC:-rsync}
+TRANSFER=${CAIRN_TRANSFER:-direct}
+
+SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o BatchMode=yes)
+[[ -n ${CAIRN_SSH_CONFIG:-} ]] && SSH_OPTS=(-F "$CAIRN_SSH_CONFIG" "${SSH_OPTS[@]}")
 
 log() { echo "[$(date +%H:%M:%S)] $*" >&2; }
-on() { local h=$1; shift; ssh "${SSH_OPTS[@]}" "root@$h" "$@"; }
 now_ms() { python3 -c 'import time; print(int(time.time()*1000))'; }
+
+# on HOST CMD: run CMD as root on HOST (sudo is a no-op for root).
+on() {
+  local h=$1; shift
+  ssh "${SSH_OPTS[@]}" "$h" "sudo -n bash -c $(printf %q "$*")"
+}
 
 cmd_sync() {
   for h in "$@"; do
-    log "$h: syncing spike/ and running setup"
-    rsync -az --delete --exclude results -e "ssh ${SSH_OPTS[*]}" "$SPIKE_DIR/" "root@$h:$REMOTE/"
+    if [[ $SYNC == rsync ]]; then
+      log "$h: copying repo to $REMOTE_REPO"
+      on "$h" "mkdir -p $REMOTE_REPO"
+      rsync -az --delete --rsync-path="sudo -n rsync" \
+        --exclude .git --exclude bin --exclude data --exclude 'spike/results/*.jsonl' \
+        -e "ssh ${SSH_OPTS[*]}" "$REPO_DIR/" "$h:$REMOTE_REPO/"
+    fi
+    log "$h: setup"
     on "$h" "$REMOTE/run.sh setup"
   done
+}
+
+# move WORKLOAD's bundle and checkpoint image from A to B
+move() {
+  local a=$1 b=$2 w=$3 pack unpack
+  pack="tar -C $WORKDIR -cf - bundles/$w images/$w | zstd -q -T0"
+  unpack="mkdir -p $WORKDIR && rm -rf $WORKDIR/bundles/$w $WORKDIR/images/$w && zstd -q -d | tar -x -C $WORKDIR"
+  if [[ $TRANSFER == relay ]]; then
+    on "$a" "$pack" | on "$b" "$unpack"
+  else
+    # A streams straight to B's private address; the inner ssh runs as A's login
+    # user so the forwarded agent is available, then becomes root on B.
+    local b_login=${b%@*} b_addr
+    [[ $b_login == "$b" ]] && b_login=root
+    b_addr=$(on "$b" "hostname -I | awk '{print \$1}'")
+    ssh -A "${SSH_OPTS[@]}" "$a" \
+      "sudo -n bash -c $(printf %q "$pack") | ssh -o StrictHostKeyChecking=accept-new $b_login@$b_addr $(printf %q "sudo -n bash -c $(printf %q "$unpack")")"
+  fi
 }
 
 cmd_run() {
@@ -37,11 +79,8 @@ cmd_run() {
   ck=$(on "$a" "$REMOTE/run.sh checkpoint $w")
   log "$w: checkpoint on $a: $(jq -c . <<<"$ck")"
 
-  # Move the bundle (unchanged root filesystem) and the checkpoint image A -> B.
-  local b_addr; b_addr=$(on "$b" "hostname -I | awk '{print \$1}'")
   t0=$(now_ms)
-  ssh -A "${SSH_OPTS[@]}" "root@$a" \
-    "tar -C $WORKDIR -cf - bundles/$w images/$w | zstd -q -T0 | ssh -o StrictHostKeyChecking=accept-new root@$b_addr 'mkdir -p $WORKDIR && rm -rf $WORKDIR/bundles/$w $WORKDIR/images/$w && zstd -q -d | tar -x -C $WORKDIR'"
+  move "$a" "$b" "$w"
   t1=$(now_ms)
   on "$a" "$REMOTE/run.sh stop $w" || true
 
@@ -62,12 +101,13 @@ cmd_run() {
   fi
   on "$b" "$REMOTE/run.sh stop $w" || true
 
+  mkdir -p "$SPIKE_DIR/results"
   jq -n -c \
-    --arg w "$w" --arg verdict "$verdict" --arg detail "$detail" --arg mode cross \
-    --argjson from "$(on "$a" "$REMOTE/run.sh host-info" | jq -c 'del(.cpu_flags)')" \
-    --argjson to "$(on "$b" "$REMOTE/run.sh host-info" | jq -c 'del(.cpu_flags)')" \
+    --arg w "$w" --arg verdict "$verdict" --arg detail "$detail" --arg mode cross --arg transfer "$TRANSFER" \
+    --argjson from "$(on "$a" "$REMOTE/run.sh host-info" | jq -c .)" \
+    --argjson to "$(on "$b" "$REMOTE/run.sh host-info" | jq -c .)" \
     --argjson ck "$ck" --argjson rs "$rs_" --argjson transfer_ms $((t1 - t0)) \
-    '{workload:$w, mode:$mode, verdict:$verdict, detail:$detail, from:$from, to:$to, transfer_ms:$transfer_ms} + $ck + $rs' \
+    '{workload:$w, mode:$mode, verdict:$verdict, detail:$detail, from:$from, to:$to, transfer:$transfer, transfer_ms:$transfer_ms} + $ck + $rs' \
     | tee -a "$SPIKE_DIR/results/runs.jsonl"
   rm -rf "$tmp"
   [[ $verdict == pass ]]
@@ -86,5 +126,5 @@ case ${1:-} in
   sync) shift; [[ $# -ge 1 ]] || { echo "usage: $0 sync HOST..." >&2; exit 2; }; cmd_sync "$@" ;;
   run) shift; [[ $# -eq 3 ]] || { echo "usage: $0 run A B WORKLOAD" >&2; exit 2; }; cmd_run "$@" ;;
   all) shift; [[ $# -eq 2 ]] || { echo "usage: $0 all A B" >&2; exit 2; }; cmd_all "$@" ;;
-  *) sed -n '2,11p' "$0"; exit 2 ;;
+  *) sed -n '2,20p' "$0"; exit 2 ;;
 esac

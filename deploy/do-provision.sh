@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Create the two E0 test droplets on DigitalOcean: same region, different CPU types.
 #
-#   provision.sh SSH_KEY_ID_OR_FINGERPRINT [REGION]
-#   destroy.sh                                  delete them (do this when done)
+#   do-provision.sh SSH_KEY_ID_OR_FINGERPRINT [REGION]
+#   do-destroy.sh                                  delete them (do this when done)
+# Usually run through devenv/dev.sh do-up / do-down.
 #
 # Needs doctl, logged in (doctl auth init). Droplets bill hourly until destroyed.
 set -euo pipefail
 
-KEY=${1:?usage: provision.sh SSH_KEY_ID_OR_FINGERPRINT [REGION] (list keys: doctl compute ssh-key list)}
+KEY=${1:?usage: do-provision.sh SSH_KEY_ID_OR_FINGERPRINT [REGION] (list keys: doctl compute ssh-key list)}
 REGION=${2:-nyc3}
-IMAGE=ubuntu-24-04-x64
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/versions.env"
+IMAGE=$DO_IMAGE
 TAG=cairn-spike
 
 # Premium Intel vs Premium AMD: two different CPU families, which is what the
@@ -28,7 +30,7 @@ for i in 0 1; do
   printf "  %-20s %-20s \$%s/hour\n" "$name" "$size" "$hourly"
   total=$(python3 -c "print(round($total + $hourly, 4))")
 done
-echo "  total about \$$total/hour, billed until you run spike/destroy.sh"
+echo "  total about \$$total/hour, billed until you run devenv/dev.sh do-down"
 read -r -p "Create them? [y/N] " ok
 [[ $ok == y || $ok == Y ]] || { echo "cancelled"; exit 1; }
 
@@ -37,4 +39,4 @@ for i in 0 1; do
     --ssh-keys "$KEY" --tag-name "$TAG" --enable-private-networking --wait --format Name,PublicIPv4,PrivateIPv4 --no-header
 done
 echo
-echo "Next: spike/cross.sh sync <intel-ip> <amd-ip> && spike/cross.sh all <intel-ip> <amd-ip>"
+echo "Next: devenv/dev.sh do-session root@<intel-ip> root@<amd-ip>"

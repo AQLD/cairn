@@ -15,30 +15,33 @@ A restore passes only if it is **the same process continuing**, not a restart: s
 
 ## How it works
 
+- Hosts are set up by the shared [`deploy/host-setup.sh`](../deploy/host-setup.sh) with versions pinned in [`deploy/versions.env`](../deploy/versions.env), identical on local VMs and droplets.
 - `run.sh` runs **on a Linux host as root**. `prepare` builds each workload's image with Docker, exports it to an OCI bundle and creates a network namespace (runsc's user-space network stack takes its addresses from it). `runsc` runs with `--overlay2=root:memory`, so the workload's writes live in sandbox memory and travel inside the checkpoint image; the bundle stays the unchanged base.
 - `cross.sh` runs **on your machine**. It checkpoints a workload on host A, streams the bundle and checkpoint image straight from A to B over SSH, restores on B and runs the check, in both directions.
 - Every run appends one JSON line to `results/runs.jsonl`: workload, verdict, detail, checkpoint/restore/transfer times, image size, and both hosts' CPU model, kernel, runsc version and a hash of the CPU flags.
 
-## Stage A: one Linux machine (free)
+## Stage A: local dev VMs (free)
 
-Proves the scripts work and that same-host save and restore works at all. Any Linux VM or server with root and internet works (not a container: runsc needs a real kernel).
+Proves the scripts work, that same-host save and restore works, and that a save moves between two machines. See [devenv/README.md](../devenv/README.md).
 
 ```sh
-sudo ./run.sh setup
-sudo ./run.sh local-all          # or: sudo ./run.sh local python-open-files
+devenv/dev.sh up          # two Ubuntu 24.04 VMs, set up like the droplets
+devenv/dev.sh spike       # same-host, every workload
+devenv/dev.sh cross       # cairn-a -> cairn-b and back
 ```
+
+Any other Linux machine works too: `sudo spike/run.sh setup && sudo spike/run.sh local-all`.
 
 ## Stage B: two DigitalOcean droplets (the gate)
 
-Two droplets in one region with different CPU families (Premium Intel and Premium AMD, 2 vCPU / 4 GB each), billed hourly; a few hours of testing costs about a dollar. `provision.sh` shows the price and asks before creating anything.
+Two droplets in one region with different CPU families (Premium Intel and Premium AMD, 2 vCPU / 4 GB each), billed hourly; a few hours of testing costs about a dollar. `do-up` shows the price and asks before creating anything.
 
 ```sh
-brew install doctl && doctl auth init          # once; you enter your own API token
-doctl compute ssh-key list                     # pick your key's ID
-spike/provision.sh <ssh-key-id> nyc3           # creates cairn-spike-intel and cairn-spike-amd
-spike/cross.sh sync <intel-ip> <amd-ip>        # copy scripts, install runsc on both
-spike/cross.sh all <intel-ip> <amd-ip>         # every workload, both directions
-spike/destroy.sh                               # delete the droplets when done
+doctl auth init                                         # once; you enter your own API token
+doctl compute ssh-key list                              # pick your key's ID
+devenv/dev.sh do-up <ssh-key-id> nyc3                   # creates cairn-spike-intel and cairn-spike-amd
+devenv/dev.sh do-session root@<intel-ip> root@<amd-ip>  # setup + every test in one sitting
+devenv/dev.sh do-down                                   # delete the droplets when done
 ```
 
 ## Reading the results

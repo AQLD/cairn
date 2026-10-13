@@ -2,3 +2,7 @@ bin/
 data/
 *.test
 .DS_Store
+devenv/.ssh.config
+devenv/.*.info.json
+spike/results/*.jsonl
+spike/results/session-*/

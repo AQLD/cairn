@@ -2,7 +2,7 @@
 # E0 spike: drive gVisor's runsc directly to save and restore real workloads.
 # Runs on a Linux host as root. See spike/README.md.
 #
-#   run.sh setup                   install runsc, docker (for building root filesystems), jq
+#   run.sh setup                   prepare the host (deploy/host-setup.sh) and spike folders
 #   run.sh host-info               CPU, kernel and runsc version as JSON
 #   run.sh local WORKLOAD          full cycle on this host: start, warm up, checkpoint, restore, verify
 #   run.sh local-all               every workload
@@ -40,62 +40,46 @@ load_conf() { IDX=0 WARM_TIMEOUT=60 SETTLE=3; source "$(wdir "$1")/workload.conf
 
 # --- setup -------------------------------------------------------------------
 
+# Host setup is shared with every Cairn host: deploy/host-setup.sh (pinned in deploy/versions.env).
 cmd_setup() {
   [[ $EUID -eq 0 ]] || die "run as root"
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq ca-certificates curl gnupg jq docker.io iptables iproute2 zstd >/dev/null
-  if ! command -v runsc >/dev/null; then
-    # Official gVisor apt repository (https://gvisor.dev/docs/user_guide/install/)
-    curl -fsSL https://gvisor.dev/archive.key | gpg --dearmor -o /usr/share/keyrings/gvisor-archive-keyring.gpg
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/gvisor-archive-keyring.gpg] https://storage.googleapis.com/gvisor/releases release main" \
-      > /etc/apt/sources.list.d/gvisor.list
-    apt-get update -qq
-    apt-get install -y -qq runsc >/dev/null
-  fi
-  systemctl enable --now docker >/dev/null 2>&1 || true
+  bash "$SPIKE_DIR/../deploy/host-setup.sh" >/dev/null
   mkdir -p "$WORK"/{bundles,images,runsc-state,logs} "$RESULTS"
   log "ready: $(runsc --version | head -1)"
 }
 
 cmd_host_info() {
-  local flags
-  flags=$(grep -m1 '^flags' /proc/cpuinfo | cut -d: -f2 | tr ' ' '\n' | sort | tr '\n' ' ')
-  jq -n \
-    --arg host "$(hostname)" \
-    --arg cpu "$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs || uname -m)" \
-    --arg arch "$(uname -m)" \
-    --arg kernel "$(uname -r)" \
-    --arg runsc "$(rs --version 2>/dev/null | head -1)" \
-    --arg flags_sha "$(echo "$flags" | sha256sum | cut -c1-16)" \
-    --arg flags "$flags" \
-    '{host:$host, cpu:$cpu, arch:$arch, kernel:$kernel, runsc:$runsc, cpu_flags_sha:$flags_sha, cpu_flags:$flags}'
+  bash "$SPIKE_DIR/../deploy/host-setup.sh" --info
 }
 
 # --- network: one namespace per workload, NAT to the internet ----------------
 # runsc's user-space network stack takes its addresses and routes from this
 # namespace. The target host of a restore must recreate it identically.
 
+# runsc moves the namespace's address and routes into its user-space network
+# stack, leaving the namespace bare, so this re-applies the full configuration
+# before every start and every restore instead of only on first creation.
 net_up() {
-  local name=$1 i=$IDX ns="cs-$1" host_if="cs$IDX-h" ws_if="cs$IDX-w"
+  local i=$IDX ns="cs-$1" host_if="cs$IDX-h" ws_if="cs$IDX-w"
   ip netns add "$ns" 2>/dev/null || true
-  if ! ip link show "$host_if" >/dev/null 2>&1; then
+  if ! ip -n "$ns" link show "$ws_if" >/dev/null 2>&1; then
+    ip link del "$host_if" 2>/dev/null || true
     ip link add "$host_if" type veth peer name "$ws_if"
     ip link set "$ws_if" netns "$ns"
-    ip addr add "10.200.$i.1/24" dev "$host_if"
-    ip link set "$host_if" up
-    ip netns exec "$ns" ip addr add "10.200.$i.2/24" dev "$ws_if"
-    ip netns exec "$ns" ip link set "$ws_if" up
-    ip netns exec "$ns" ip link set lo up
-    ip netns exec "$ns" ip route add default via "10.200.$i.1"
   fi
+  ip addr replace "10.200.$i.1/24" dev "$host_if"
+  ip link set "$host_if" up
+  ip -n "$ns" addr flush dev "$ws_if"
+  ip -n "$ns" addr add "10.200.$i.2/24" dev "$ws_if"
+  ip -n "$ns" link set "$ws_if" up
+  ip -n "$ns" link set lo up
+  ip -n "$ns" route replace default via "10.200.$i.1"
   sysctl -qw net.ipv4.ip_forward=1
   iptables -t nat -C POSTROUTING -s "10.200.$i.0/24" ! -o "$host_if" -j MASQUERADE 2>/dev/null \
     || iptables -t nat -A POSTROUTING -s "10.200.$i.0/24" ! -o "$host_if" -j MASQUERADE
   # docker sets the FORWARD policy to DROP; let this workload's traffic through
   iptables -C FORWARD -i "$host_if" -j ACCEPT 2>/dev/null || iptables -I FORWARD -i "$host_if" -j ACCEPT
   iptables -C FORWARD -o "$host_if" -j ACCEPT 2>/dev/null || iptables -I FORWARD -o "$host_if" -j ACCEPT
-  : "$name"
 }
 
 net_down() {
@@ -203,7 +187,8 @@ cmd_check() {
 # --- full cycle on one host --------------------------------------------------
 
 cmd_local() {
-  local w=$1 out="$WORK/runs/$w" ck rs_ verdict detail
+  local w=$1 out ck rs_ verdict detail
+  out="$WORK/runs/$w"
   load_conf "$w"
   mkdir -p "$out"
   cmd_prepare "$w"
@@ -224,7 +209,7 @@ cmd_local() {
   cmd_stop "$w"
   jq -n -c \
     --arg w "$w" --arg verdict "$verdict" --arg detail "$detail" --arg mode local \
-    --argjson host "$(cmd_host_info | jq -c 'del(.cpu_flags)')" \
+    --argjson host "$(cmd_host_info | jq -c .)" \
     --argjson ck "$ck" --argjson rs "$rs_" \
     '{workload:$w, mode:$mode, verdict:$verdict, detail:$detail, host:$host} + $ck + $rs' \
     | tee -a "$RESULTS/runs.jsonl"
@@ -239,6 +224,7 @@ cmd_local_all() {
 
 main() {
   local cmd=${1:-}; shift || true
+  [[ $EUID -ne 0 ]] || mkdir -p "$WORK"/{bundles,images,runsc-state,logs,runs} "$RESULTS"
   case $cmd in
     setup) cmd_setup ;;
     host-info) cmd_host_info ;;

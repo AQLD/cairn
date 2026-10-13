@@ -5,7 +5,7 @@ set -euo pipefail
 b=$1 a=$2
 jq -e -n --slurpfile b "$b" --slurpfile a "$a" '
   ($b[0]) as $b | ($a[0]) as $a |
-  if $a.started != $b.started or $a.installer_pid != $b.installer_pid then error("sandbox restarted instead of resuming") else empty end
+  if $a.started != $b.started or $a.installer_pid != $b.installer_pid then error("sandbox restarted instead of resuming") else true end
 ' >/dev/null
 deadline=$(( $(date +%s) + 600 ))
 while :; do

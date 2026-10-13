@@ -9,7 +9,7 @@ The working log for whoever (person or agent) picks up the engine next. Read it 
 
 One line per active task: `scenario/feature · owner (person, agent or branch) · started`. Claim a task here before starting so parallel agents don't collide.
 
-- E0 spike scripts (`spike/`) · written, not yet run · 2026-10-12. Local Multipass VM failed to boot (Multipass 1.12.2); next is a Linux VM or the two droplets.
+- E0 spike · stage A (local VMs) **passed** · 2026-10-12. Same-host and cross-host (cairn-a ↔ cairn-b, same CPU, both directions): all 4 workloads pass. Stage B (DigitalOcean, cross-CPU Intel ↔ AMD, x86 numbers) next: `devenv/dev.sh do-up` then `do-session`.
 
 ## Next up (in order)
 
@@ -27,9 +27,19 @@ One line per active task: `scenario/feature · owner (person, agent or branch) �
 - [ ] Workspace identity on full-save copies: how hostname, machine-id, MAC/IP and RNG state are refreshed (G2.6).
 - [ ] Which SDK first (TypeScript or Python), decided by the first design partners.
 
+## Findings
+
+- 2026-10-12 · runsc (release-20261005.0, systrap, arm64 Ubuntu 24.04 VM) saves and restores live processes on the same host: python 25–116 ms checkpoint / 55–73 ms restore (20 MB image); node 30–57 / 187–190 ms (8 MB); headless Chromium 374 / 354 ms (162 MB); pip mid-download 1.4 s / 470 ms (199 MB) and the same pip process finished the download after restore. Inotify watchers and listening sockets survive.
+- 2026-10-12 · runsc moves a network namespace's address and routes into its own stack, leaving the namespace bare. **Network config must be re-applied before every start and restore**, not set up once. The engine's runsc driver must own this.
+- 2026-10-12 · Cross-host (two VMs, relay transfer through the Mac): all 4 workloads pass both ways. Checkpoint 40 ms–1.5 s, restore 90 ms–1.1 s, images 8–152 MB. Open TCP connections do not survive a move: pip's in-flight download failed once and its retry finished. Agents' tools must retry; the SDK should say so.
+- 2026-10-12 · With `--overlay2=root:memory` the workspace's writes travel inside the checkpoint image; the bundle stays the unchanged base. Image size ≈ workload memory + its writes.
+
 ## Decisions log
 
 Newest first. One line each: date · decision · why.
+
+- 2026-10-12 · Local dev = two Lima VMs (Ubuntu 24.04, vz) set up by `deploy/host-setup.sh`, versions pinned in `deploy/versions.env`; DigitalOcean runs go through `dev.sh do-session` · identical hosts locally and on real hardware, so paid hours only cover what local can't (cross-CPU, x86 numbers).
+- 2026-10-12 · gVisor installed per release under `/opt/gvisor/<release>/`, `runsc` symlinked · old releases stay installed, the basis for upgrade-safe restore.
 
 - 2026-10-12 · Scenario catalog (`spec/`) is the single source of truth for tests, benchmarks, test plan and milestone gates · keeps the plan and the code from drifting.
 - 2026-10-12 · `Runtime` interface with an explicit, capability-reporting `host` dev runtime · build and test API/state/saves/recovery on macOS while gVisor work happens on Linux; tests skip (never pass) on missing capabilities.

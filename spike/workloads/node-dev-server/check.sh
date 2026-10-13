@@ -7,7 +7,7 @@ jq -e -n --slurpfile b "$b" --slurpfile a "$a" '
   if   $a.pid != $b.pid         then error("pid changed: server restarted")
   elif $a.started != $b.started then error("start time changed: server restarted")
   elif $a.hits <= $b.hits       then error("hit counter did not advance")
-  else empty end
+  else true end
 ' >/dev/null
 
 # Edit a watched file inside the restored sandbox; the watcher must notice.

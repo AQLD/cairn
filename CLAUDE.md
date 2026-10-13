@@ -20,6 +20,9 @@ Cairn is an open-source engine (Go, Apache-2.0) that gives every AI agent a priv
 | `client/` | Public Go client. The CLI and the acceptance suite use it, so tests exercise the real API. |
 | `cmd/cairnd`, `cmd/cairn` | Engine daemon and CLI. The CLI talks to the engine only through the API. |
 | `internal/tools/testplan` | Generates `docs/test-plan.md` from the catalog. |
+| `deploy/` | Host setup and pinned versions shared by every Linux host; DigitalOcean create/destroy. |
+| `devenv/` | Local Linux VMs (Lima) and the `dev.sh` entry point, including the DigitalOcean session. |
+| `spike/` | E0 spike: drives `runsc` directly to save/restore real workloads. Throwaway. |
 
 ## Commands
 
@@ -33,7 +36,7 @@ go test ./acceptance -run 'TestEndGoals/G6' -v     # one goal
 CAIRN_CYCLES=10000 go test ./acceptance -run G6.2 -timeout 0   # E1 loop gate
 ```
 
-Go ≥ 1.25 (uses `os.Root`). macOS works for everything except `runsc`, which needs Linux.
+Go ≥ 1.25 (uses `os.Root`). macOS works for everything except `runsc`, which needs Linux: use the local dev VMs (`devenv/dev.sh up`, then `dev.sh test` / `dev.sh spike`). Hosts are set up only by `deploy/host-setup.sh`; versions are pinned only in `deploy/versions.env`. Real-hardware runs on DigitalOcean go through `devenv/dev.sh do-session`; see [devenv/README.md](devenv/README.md).
 
 ## How work is done here (scenario-first)
 
