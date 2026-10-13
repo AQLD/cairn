@@ -7,7 +7,7 @@
 //	GET    /v1/workspaces                   list
 //	GET    /v1/workspaces/{id}              get
 //	DELETE /v1/workspaces/{id}              delete (saves are kept)
-//	POST   /v1/workspaces/{id}/exec         run a command
+//	POST   /v1/workspaces/{id}/exec         run a command ({"stream": true} for live NDJSON output)
 //	PUT    /v1/workspaces/{id}/files?path=  write a file (body is the content)
 //	GET    /v1/workspaces/{id}/files?path=  read a file
 //	POST   /v1/workspaces/{id}/saves        save {"kind": "quick" | "full"}
@@ -20,7 +20,6 @@
 package api
 
 import (
-	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -30,18 +29,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/AQLD/cairn/internal/engine"
-	"github.com/AQLD/cairn/internal/runtime"
 	"github.com/AQLD/cairn/internal/save"
 )
 
 const (
-	maxJSONBody    = 1 << 20  // 1 MiB
-	maxOutputBytes = 4 << 20  // per stream, per command
-	maxFileBytes   = 1 << 30  // 1 GiB per upload
-	defaultTimeout = 10 * time.Minute
+	maxJSONBody  = 1 << 20 // 1 MiB
+	maxFileBytes = 1 << 30 // 1 GiB per upload
 )
 
 type Server struct {
@@ -131,59 +126,6 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// ExecRequest is the body of POST /v1/workspaces/{id}/exec.
-type ExecRequest struct {
-	Command   []string          `json:"command"`
-	Env       map[string]string `json:"env,omitempty"`
-	Dir       string            `json:"dir,omitempty"`
-	Stdin     string            `json:"stdin,omitempty"`
-	TimeoutMS int64             `json:"timeout_ms,omitempty"`
-}
-
-// ExecResponse is the result of a command. Output beyond 4 MiB per stream is
-// cut off and marked truncated.
-type ExecResponse struct {
-	ExitCode        int    `json:"exit_code"`
-	TimedOut        bool   `json:"timed_out"`
-	Stdout          string `json:"stdout"`
-	Stderr          string `json:"stderr"`
-	StdoutTruncated bool   `json:"stdout_truncated,omitempty"`
-	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
-	DurationMS      int64  `json:"duration_ms"`
-}
-
-func (s *Server) exec(w http.ResponseWriter, r *http.Request) {
-	var req ExecRequest
-	if !s.decode(w, r, &req) {
-		return
-	}
-	timeout := defaultTimeout
-	if req.TimeoutMS > 0 {
-		timeout = time.Duration(req.TimeoutMS) * time.Millisecond
-	}
-	stdout, stderr := &capped{max: maxOutputBytes}, &capped{max: maxOutputBytes}
-	start := time.Now()
-	res, err := s.eng.Exec(r.Context(), r.PathValue("id"), runtime.ExecRequest{
-		Argv:    req.Command,
-		Env:     req.Env,
-		Dir:     req.Dir,
-		Stdin:   strings.NewReader(req.Stdin),
-		Stdout:  stdout,
-		Stderr:  stderr,
-		Timeout: timeout,
-	})
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, ExecResponse{
-		ExitCode: res.ExitCode, TimedOut: res.TimedOut,
-		Stdout: stdout.String(), Stderr: stderr.String(),
-		StdoutTruncated: stdout.truncated, StderrTruncated: stderr.truncated,
-		DurationMS: time.Since(start).Milliseconds(),
-	})
 }
 
 func (s *Server) writeFile(w http.ResponseWriter, r *http.Request) {
@@ -313,27 +255,3 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func writeError(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": msg}})
 }
-
-// capped keeps the first max bytes written and notes whether more arrived.
-type capped struct {
-	buf       bytes.Buffer
-	max       int
-	truncated bool
-}
-
-func (c *capped) Write(p []byte) (int, error) {
-	if room := c.max - c.buf.Len(); room > 0 {
-		if len(p) > room {
-			c.buf.Write(p[:room])
-			c.truncated = true
-		} else {
-			c.buf.Write(p)
-		}
-	} else if len(p) > 0 {
-		c.truncated = true
-	}
-	return len(p), nil // keep draining so the command never blocks on a full pipe
-}
-
-func (c *capped) String() string { return c.buf.String() }
-

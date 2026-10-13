@@ -25,6 +25,7 @@ var Catalog = []Scenario{
 					{ID: "G1.6.6", Title: "Huge output is cut off and marked truncated, never blocking the command", Milestone: E1},
 					{ID: "G1.6.7", Title: "An unknown command fails like a shell (exit 127)", Milestone: E1},
 					{ID: "G1.6.8", Title: "Output streams while the command runs", Milestone: E1},
+					{ID: "G1.6.9", Title: "Binary output arrives byte for byte, streamed or not", Milestone: E1},
 				}},
 			{ID: "G1.7", Title: "Golden workloads save and resume correctly", Proves: "Saves work for real agent work, not toy programs.", Milestone: E0, Needs: []Need{NeedFullSave, NeedLinuxBench},
 				Children: []Scenario{

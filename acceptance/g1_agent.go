@@ -1,8 +1,10 @@
 package acceptance
 
 import (
+	"bytes"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AQLD/cairn/client"
 )
@@ -118,6 +120,59 @@ func init() {
 		Equal(e, "truncated", res.StdoutTruncated, true)
 		Equal(e, "kept bytes", len(res.Stdout), 4<<20)
 		Equal(e, "stderr", res.Stderr, "done\n")
+	})
+
+	register("G1.6.8", func(e *Env) {
+		ws := e.Workspace("stream")
+		var stdout, stderr bytes.Buffer
+		var firstAt time.Duration
+		start := time.Now()
+		res, err := e.C.ExecStream(e.Ctx, ws.ID, client.Exec{
+			Command: []string{"sh", "-c", "echo first; sleep 1; echo second >&2; exit 3"},
+		}, func(ev client.ExecEvent) {
+			if firstAt == 0 {
+				firstAt = time.Since(start)
+			}
+			if ev.Stream == "stdout" {
+				stdout.Write(ev.Data)
+			} else {
+				stderr.Write(ev.Data)
+			}
+		})
+		total := time.Since(start)
+		e.Must(err)
+		Equal(e, "exit code", res.ExitCode, 3)
+		Equal(e, "stdout", stdout.String(), "first\n")
+		Equal(e, "stderr", stderr.String(), "second\n")
+		if firstAt == 0 || firstAt > total-500*time.Millisecond {
+			e.T.Fatalf("first output arrived at %v of %v: not streamed", firstAt, total)
+		}
+
+		// errors before the command starts are ordinary API errors
+		_, err = e.C.ExecStream(e.Ctx, "ws_doesnotexist", client.Exec{Command: []string{"true"}}, nil)
+		e.ErrCode(err, "not_found")
+	})
+
+	register("G1.6.9", func(e *Env) {
+		ws := e.Workspace("binary")
+		e.Sh(ws.ID, "head -c 65536 /dev/urandom > blob.bin")
+		want := e.Read(ws.ID, "blob.bin")
+
+		res, err := e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"cat", "blob.bin"}})
+		e.Must(err)
+		Equal(e, "non-streamed bytes", res.Stdout == want, true)
+
+		var got bytes.Buffer
+		_, err = e.C.ExecStream(e.Ctx, ws.ID, client.Exec{Command: []string{"cat", "blob.bin"}}, func(ev client.ExecEvent) {
+			got.Write(ev.Data)
+		})
+		e.Must(err)
+		Equal(e, "streamed bytes", got.String() == want, true)
+
+		// text stays text
+		res, err = e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"printf", "héllo ✓"}})
+		e.Must(err)
+		Equal(e, "utf-8 text", res.Stdout, "héllo ✓")
 	})
 
 	register("G1.6.7", func(e *Env) {

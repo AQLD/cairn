@@ -104,12 +104,16 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 		if len(args) < 3 || args[1] != "--" {
 			return 2, errors.New("usage: cairn exec WORKSPACE -- COMMAND [ARGS...]")
 		}
-		res, err := c.Exec(ctx, args[0], client.Exec{Command: args[2:]})
+		res, err := c.ExecStream(ctx, args[0], client.Exec{Command: args[2:]}, func(ev client.ExecEvent) {
+			if ev.Stream == "stderr" {
+				os.Stderr.Write(ev.Data)
+			} else {
+				os.Stdout.Write(ev.Data)
+			}
+		})
 		if err != nil {
 			return 1, err
 		}
-		fmt.Print(res.Stdout)
-		fmt.Fprint(os.Stderr, res.Stderr)
 		if res.TimedOut {
 			return 124, errors.New("command timed out")
 		}

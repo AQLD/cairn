@@ -7,7 +7,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
 | E0 | 0 | 4 | 1 |
-| E1 | 27 | 11 | 4 |
+| E1 | 29 | 10 | 4 |
 | E2 | 12 | 8 | 1 |
 | E3 | 0 | 4 | 0 |
 | E4 | 0 | 11 | 1 |
@@ -32,7 +32,8 @@ Work done in a workspace is still there, exactly as it was, after a save and res
   - ✅ **G1.6.5** A command that runs too long is stopped and marked timed out · E1
   - ✅ **G1.6.6** Huge output is cut off and marked truncated, never blocking the command · E1
   - ✅ **G1.6.7** An unknown command fails like a shell (exit 127) · E1
-  - ⏳ **G1.6.8** Output streams while the command runs · E1
+  - ✅ **G1.6.8** Output streams while the command runs · E1
+  - ✅ **G1.6.9** Binary output arrives byte for byte, streamed or not · E1
 - 📂 **G1.7** Golden workloads save and resume correctly · E0 · needs full_save, linux_bench
   - ⏳ **G1.7.1** Python script with open files · E0 · needs full_save, linux_bench
   - ⏳ **G1.7.2** Node dev server watching files · E0 · needs full_save, linux_bench
