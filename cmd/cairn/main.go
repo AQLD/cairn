@@ -10,6 +10,8 @@
 //	cairn saves WORKSPACE
 //	cairn resume SAVE
 //	cairn copy SAVE [--count N]
+//	cairn rm-save SAVE
+//	cairn undelete SAVE
 //	cairn rm WORKSPACE
 //	cairn info
 //
@@ -42,6 +44,8 @@ commands:
   saves WORKSPACE                         list a workspace's saves
   resume SAVE                             restore a workspace to a save
   copy SAVE [--count N]                   make workspaces from a save
+  rm-save SAVE                            delete a save (recoverable for the retention window)
+  undelete SAVE                           bring back a deleted save
   rm WORKSPACE                            delete a workspace (saves are kept)
   info                                    show the engine's runtime and capabilities
 
@@ -199,6 +203,28 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 		for _, w := range ws {
 			fmt.Println(w.ID)
 		}
+
+	case "rm-save":
+		if len(args) != 1 {
+			return 2, errors.New("usage: cairn rm-save SAVE")
+		}
+		if err := c.DeleteSave(ctx, args[0]); err != nil {
+			return 1, err
+		}
+		sv, err := c.GetSave(ctx, args[0])
+		if err == nil && sv.PurgeAfter != nil {
+			fmt.Printf("deleted; recoverable with `cairn undelete %s` until %s\n", sv.ID, sv.PurgeAfter.Local().Format(time.DateTime))
+		}
+
+	case "undelete":
+		if len(args) != 1 {
+			return 2, errors.New("usage: cairn undelete SAVE")
+		}
+		sv, err := c.UndeleteSave(ctx, args[0])
+		if err != nil {
+			return 1, err
+		}
+		fmt.Println(sv.ID, sv.State)
 
 	case "rm":
 		if len(args) != 1 {

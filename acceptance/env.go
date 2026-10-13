@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +36,7 @@ type Env struct {
 	// In-process only (nil / empty with CAIRN_ENDPOINT).
 	Engine     *engine.Engine
 	Failpoints *failpoint.Set
+	Clock      *Clock // the engine's clock; Advance it to test retention
 	DataDir    string
 	token      string
 	rt         runtime.Runtime
@@ -62,7 +64,7 @@ func newEnv(t testing.TB, token string) *Env {
 		return e
 	}
 
-	e := &Env{T: t, Ctx: ctx, DataDir: t.TempDir(), Failpoints: failpoint.New(), token: token, rt: testRuntime(t)}
+	e := &Env{T: t, Ctx: ctx, DataDir: t.TempDir(), Failpoints: failpoint.New(), Clock: &Clock{}, token: token, rt: testRuntime(t)}
 	e.start()
 	t.Cleanup(e.stop)
 	return e
@@ -86,7 +88,7 @@ func testRuntime(t testing.TB) runtime.Runtime {
 
 func (e *Env) start() {
 	e.T.Helper()
-	eng, err := engine.Open(e.Ctx, engine.Config{DataDir: e.DataDir, Runtime: e.rt, Failpoints: e.Failpoints})
+	eng, err := engine.Open(e.Ctx, engine.Config{DataDir: e.DataDir, Runtime: e.rt, Failpoints: e.Failpoints, Now: e.Clock.Now})
 	if err != nil {
 		e.T.Fatalf("open engine: %v", err)
 	}
@@ -163,6 +165,25 @@ func (e *Env) loadInfo() {
 		e.T.Fatalf("engine info: %v", err)
 	}
 	e.Info = info
+}
+
+// Clock is real time plus an offset tests can move forward.
+type Clock struct {
+	mu     sync.Mutex
+	offset time.Duration
+}
+
+func (c *Clock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().Add(c.offset)
+}
+
+// Advance moves the clock forward by d.
+func (c *Clock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.offset += d
 }
 
 // --- helpers for scenarios ---

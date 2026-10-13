@@ -182,4 +182,3 @@ func init() {
 		Equal(e, "exit code", res.ExitCode, 127)
 	})
 }
-

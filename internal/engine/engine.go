@@ -40,11 +40,16 @@ var (
 // MaxCopies is the most copies one request may make.
 const MaxCopies = 64
 
+// DefaultRetention is how long a deleted save can be recovered before it is purged.
+const DefaultRetention = 7 * 24 * time.Hour
+
 type Config struct {
 	DataDir    string
 	Runtime    runtime.Runtime
 	Logger     *slog.Logger
-	Failpoints *failpoint.Set // tests only
+	Retention  time.Duration    // how long deleted saves are kept; DefaultRetention if zero
+	Now        func() time.Time // clock; time.Now if nil (tests move it forward)
+	Failpoints *failpoint.Set   // tests only
 }
 
 type Engine struct {
@@ -81,6 +86,8 @@ type Save struct {
 	State       store.SaveState `json:"state"`
 	Size        int64           `json:"size"`
 	CreatedAt   time.Time       `json:"created_at"`
+	DeletedAt   *time.Time      `json:"deleted_at,omitempty"`
+	PurgeAfter  *time.Time      `json:"purge_after,omitempty"` // a deleted save can be undeleted until then
 }
 
 // Info describes the engine and what its runtime can do.
@@ -99,6 +106,12 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
+	if cfg.Retention <= 0 {
+		cfg.Retention = DefaultRetention
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
 	for _, d := range []string{cfg.DataDir, filepath.Join(cfg.DataDir, "workspaces"), filepath.Join(cfg.DataDir, "saves")} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return nil, err
@@ -112,6 +125,10 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if err := e.recover(ctx); err != nil {
 		st.Close()
 		return nil, fmt.Errorf("recover: %w", err)
+	}
+	if _, err := e.PurgeExpired(ctx); err != nil {
+		st.Close()
+		return nil, fmt.Errorf("purge: %w", err)
 	}
 	return e, nil
 }
@@ -455,7 +472,79 @@ func (e *Engine) GetSave(ctx context.Context, id string) (*Save, error) {
 	if sv.State == store.SavePending {
 		return nil, ErrNotFound
 	}
-	return toSave(sv), nil
+	return e.toSave(sv), nil
+}
+
+// DeleteSave hides a save: it can no longer be resumed or copied, but its files
+// are kept for the retention window so it can be undeleted. Deleting an already
+// deleted save does nothing.
+func (e *Engine) DeleteSave(ctx context.Context, id string) error {
+	sv, err := e.store.GetSave(ctx, id)
+	if err != nil {
+		return err
+	}
+	switch sv.State {
+	case store.SavePending:
+		return ErrNotFound
+	case store.SaveDeleted:
+		return nil
+	}
+	return e.store.SoftDeleteSave(ctx, id, e.cfg.Now())
+}
+
+// UndeleteSave brings back a deleted save within its retention window.
+// Undeleting a save that is not deleted does nothing.
+func (e *Engine) UndeleteSave(ctx context.Context, id string) (*Save, error) {
+	sv, err := e.store.GetSave(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	switch sv.State {
+	case store.SavePending:
+		return nil, ErrNotFound
+	case store.SaveDeleted:
+		if e.cfg.Now().After(sv.DeletedAt.Add(e.cfg.Retention)) {
+			return nil, fmt.Errorf("%w: save %s is past its retention window and is being purged", ErrConflict, id)
+		}
+		state := store.SaveReady
+		if _, err := os.Stat(filepath.Join(e.saveDir(id), save.ManifestFile)); err != nil {
+			state = store.SaveMissing
+		}
+		if err := e.store.RestoreSave(ctx, id); err != nil {
+			return nil, err
+		}
+		if state == store.SaveMissing {
+			if err := e.store.SetSaveState(ctx, id, state); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return e.GetSave(ctx, id)
+}
+
+// PurgeExpired permanently removes deleted saves whose retention window has
+// ended. The folder goes first, then the record, so a crash in between leaves a
+// record that the next purge finishes.
+func (e *Engine) PurgeExpired(ctx context.Context) (int, error) {
+	expired, err := e.store.DeletedBefore(ctx, e.cfg.Now().Add(-e.cfg.Retention))
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, sv := range expired {
+		if err := os.RemoveAll(e.saveDir(sv.ID)); err != nil {
+			return n, err
+		}
+		if err := e.cfg.Failpoints.Check(failpoint.PurgeAfterRemove); err != nil {
+			return n, err
+		}
+		if err := e.store.DeleteSave(ctx, sv.ID); err != nil {
+			return n, err
+		}
+		n++
+		e.log.Info("purged deleted save", "save", sv.ID, "deleted_at", sv.DeletedAt)
+	}
+	return n, nil
 }
 
 func (e *Engine) ListSaves(ctx context.Context, workspaceID string) ([]Save, error) {
@@ -468,7 +557,7 @@ func (e *Engine) ListSaves(ctx context.Context, workspaceID string) ([]Save, err
 	}
 	out := make([]Save, 0, len(svs))
 	for i := range svs {
-		out = append(out, *toSave(&svs[i]))
+		out = append(out, *e.toSave(&svs[i]))
 	}
 	return out, nil
 }
@@ -479,7 +568,13 @@ func (e *Engine) readySave(ctx context.Context, saveID string) (*store.Save, *sa
 	if err != nil {
 		return nil, nil, err
 	}
-	if sv.State != store.SaveReady {
+	switch sv.State {
+	case store.SaveReady:
+	case store.SavePending:
+		return nil, nil, ErrNotFound
+	case store.SaveDeleted:
+		return nil, nil, fmt.Errorf("%w: save %s is deleted; undelete it first", ErrConflict, saveID)
+	default:
 		return nil, nil, fmt.Errorf("%w: save %s is %s", ErrConflict, saveID, sv.State)
 	}
 	m, err := save.Verify(e.saveDir(saveID))
@@ -780,10 +875,12 @@ func (e *Engine) runtimeSpec(w *store.Workspace) (runtime.Spec, error) {
 	return runtime.Spec{ID: w.ID, Hostname: w.ID, RootDir: e.rootDir(w.ID), Limits: spec.Limits, Network: spec.Network}, nil
 }
 
-func (e *Engine) workspaceDir(id string) string { return filepath.Join(e.cfg.DataDir, "workspaces", id) }
-func (e *Engine) rootDir(id string) string      { return filepath.Join(e.workspaceDir(id), "rootfs") }
-func (e *Engine) savesDir() string              { return filepath.Join(e.cfg.DataDir, "saves") }
-func (e *Engine) saveDir(id string) string      { return filepath.Join(e.savesDir(), id) }
+func (e *Engine) workspaceDir(id string) string {
+	return filepath.Join(e.cfg.DataDir, "workspaces", id)
+}
+func (e *Engine) rootDir(id string) string { return filepath.Join(e.workspaceDir(id), "rootfs") }
+func (e *Engine) savesDir() string         { return filepath.Join(e.cfg.DataDir, "saves") }
+func (e *Engine) saveDir(id string) string { return filepath.Join(e.savesDir(), id) }
 
 // SaveDir is where a save lives on disk; tests use it to inject corruption.
 func (e *Engine) SaveDir(id string) string { return e.saveDir(id) }
@@ -801,8 +898,13 @@ func toWorkspace(w *store.Workspace) (*Workspace, error) {
 	}, nil
 }
 
-func toSave(sv *store.Save) *Save {
-	return &Save{ID: sv.ID, WorkspaceID: sv.WorkspaceID, Kind: save.Kind(sv.Kind), State: sv.State, Size: sv.Size, CreatedAt: sv.CreatedAt}
+func (e *Engine) toSave(sv *store.Save) *Save {
+	out := &Save{ID: sv.ID, WorkspaceID: sv.WorkspaceID, Kind: save.Kind(sv.Kind), State: sv.State, Size: sv.Size, CreatedAt: sv.CreatedAt}
+	if !sv.DeletedAt.IsZero() {
+		d, p := sv.DeletedAt, sv.DeletedAt.Add(e.cfg.Retention)
+		out.DeletedAt, out.PurgeAfter = &d, &p
+	}
+	return out
 }
 
 func newID(prefix string) string {

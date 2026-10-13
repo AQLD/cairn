@@ -15,6 +15,8 @@
 //	GET    /v1/saves/{id}                   get a save
 //	POST   /v1/saves/{id}/resume            restore the workspace to this save
 //	POST   /v1/saves/{id}/copies            copy {"count": n}
+//	DELETE /v1/saves/{id}                   delete (recoverable until purge_after)
+//	POST   /v1/saves/{id}/undelete          bring back a deleted save
 //
 // Errors are {"error": {"code": "...", "message": "..."}}.
 package api
@@ -87,6 +89,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/saves/{id}", s.getSave)
 	s.mux.HandleFunc("POST /v1/saves/{id}/resume", s.resume)
 	s.mux.HandleFunc("POST /v1/saves/{id}/copies", s.copySave)
+	s.mux.HandleFunc("DELETE /v1/saves/{id}", s.deleteSave)
+	s.mux.HandleFunc("POST /v1/saves/{id}/undelete", s.undeleteSave)
 }
 
 func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -213,6 +217,23 @@ func (s *Server) copySave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"workspaces": ws})
+}
+
+func (s *Server) deleteSave(w http.ResponseWriter, r *http.Request) {
+	if err := s.eng.DeleteSave(r.Context(), r.PathValue("id")); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) undeleteSave(w http.ResponseWriter, r *http.Request) {
+	sv, err := s.eng.UndeleteSave(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sv)
 }
 
 // --- plumbing ---

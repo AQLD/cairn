@@ -38,7 +38,7 @@ type Workspace struct {
 	ID         string          `json:"id"`
 	Name       string          `json:"name"`
 	State      WorkspaceState  `json:"state"`
-	Spec       json.RawMessage `json:"spec"`              // limits, network, template
+	Spec       json.RawMessage `json:"spec"`                  // limits, network, template
 	SourceSave string          `json:"source_save,omitempty"` // set for copies
 	CreatedAt  time.Time       `json:"created_at"`
 	UpdatedAt  time.Time       `json:"updated_at"`
@@ -50,6 +50,7 @@ const (
 	SavePending SaveState = "pending" // being written; never restored from
 	SaveReady   SaveState = "ready"
 	SaveMissing SaveState = "missing" // recorded, but its folder is gone or fails verification
+	SaveDeleted SaveState = "deleted" // hidden; kept until its retention window ends, then purged
 )
 
 type Save struct {
@@ -59,11 +60,18 @@ type Save struct {
 	State       SaveState `json:"state"`
 	Size        int64     `json:"size"`
 	CreatedAt   time.Time `json:"created_at"`
+	DeletedAt   time.Time `json:"deleted_at"` // zero unless deleted
 }
 
 type Store struct{ db *sql.DB }
 
-const schema = `
+// migrations bring a state database up to the current schema. Each runs once,
+// in order, inside a transaction, and is recorded in PRAGMA user_version. Never
+// edit a migration that has shipped: add a new one. A database newer than this
+// engine is refused rather than misread.
+var migrations = []string{
+	// 1: initial schema
+	`
 CREATE TABLE IF NOT EXISTS workspaces (
 	id          TEXT PRIMARY KEY,
 	name        TEXT NOT NULL,
@@ -82,7 +90,16 @@ CREATE TABLE IF NOT EXISTS saves (
 	created_at   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS saves_by_workspace ON saves (workspace_id, created_at);
-`
+`,
+	// 2: soft delete and retention for saves
+	`
+ALTER TABLE saves ADD COLUMN deleted_at INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS saves_deleted ON saves (state, deleted_at);
+`,
+}
+
+// SchemaVersion is the schema this engine writes.
+var SchemaVersion = len(migrations)
 
 // Open opens (or creates) the state database at path.
 func Open(path string) (*Store, error) {
@@ -93,11 +110,47 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1) // SQLite has one writer; serialize here instead of retrying
-	if _, err := db.Exec(schema); err != nil {
+	if err := migrate(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("create schema: %w", err)
+		return nil, err
 	}
 	return &Store{db: db}, nil
+}
+
+func migrate(db *sql.DB) error {
+	var v int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		return err
+	}
+	if v > len(migrations) {
+		return fmt.Errorf("state database is schema version %d, newer than this engine (%d): upgrade the engine", v, len(migrations))
+	}
+	for i := v; i < len(migrations); i++ {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(migrations[i]); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("migrate state database to version %d: %w", i+1, err)
+		}
+		// PRAGMA cannot take a bound parameter; i+1 is our own integer.
+		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, i+1)); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Version returns the database's schema version.
+func (s *Store) Version() (int, error) {
+	var v int
+	err := s.db.QueryRow(`PRAGMA user_version`).Scan(&v)
+	return v, err
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -171,7 +224,7 @@ func (s *Store) CreateSave(ctx context.Context, sv Save) error {
 
 func (s *Store) GetSave(ctx context.Context, id string) (*Save, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, workspace_id, kind, state, size, created_at FROM saves WHERE id = ?`, id)
+		`SELECT id, workspace_id, kind, state, size, created_at, deleted_at FROM saves WHERE id = ?`, id)
 	sv, err := scanSave(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -179,15 +232,34 @@ func (s *Store) GetSave(ctx context.Context, id string) (*Save, error) {
 	return sv, err
 }
 
-// ListSaves returns a workspace's published saves, newest first.
+// ListSaves returns a workspace's published, not deleted saves, newest first.
 func (s *Store) ListSaves(ctx context.Context, workspaceID string) ([]Save, error) {
 	return s.querySaves(ctx,
-		`SELECT id, workspace_id, kind, state, size, created_at FROM saves WHERE workspace_id = ? AND state != ? ORDER BY created_at DESC, id DESC`,
-		workspaceID, SavePending)
+		`SELECT id, workspace_id, kind, state, size, created_at, deleted_at FROM saves WHERE workspace_id = ? AND state NOT IN (?, ?) ORDER BY created_at DESC, id DESC`,
+		workspaceID, SavePending, SaveDeleted)
 }
 
 func (s *Store) AllSaves(ctx context.Context) ([]Save, error) {
-	return s.querySaves(ctx, `SELECT id, workspace_id, kind, state, size, created_at FROM saves`)
+	return s.querySaves(ctx, `SELECT id, workspace_id, kind, state, size, created_at, deleted_at FROM saves`)
+}
+
+// DeletedBefore returns deleted saves whose deletion is older than t.
+func (s *Store) DeletedBefore(ctx context.Context, t time.Time) ([]Save, error) {
+	return s.querySaves(ctx,
+		`SELECT id, workspace_id, kind, state, size, created_at, deleted_at FROM saves WHERE state = ? AND deleted_at <= ?`,
+		SaveDeleted, t.UnixNano())
+}
+
+// SoftDeleteSave marks a save deleted at t. Its files stay until purged.
+func (s *Store) SoftDeleteSave(ctx context.Context, id string, t time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE saves SET state = ?, deleted_at = ? WHERE id = ?`, SaveDeleted, t.UnixNano(), id)
+	return err
+}
+
+// RestoreSave brings a deleted save back to ready.
+func (s *Store) RestoreSave(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE saves SET state = ?, deleted_at = 0 WHERE id = ?`, SaveReady, id)
+	return err
 }
 
 func (s *Store) SetSaveState(ctx context.Context, id string, state SaveState) error {
@@ -240,10 +312,13 @@ func scanWorkspace(r scanner) (*Workspace, error) {
 
 func scanSave(r scanner) (*Save, error) {
 	var sv Save
-	var created int64
-	if err := r.Scan(&sv.ID, &sv.WorkspaceID, &sv.Kind, &sv.State, &sv.Size, &created); err != nil {
+	var created, deleted int64
+	if err := r.Scan(&sv.ID, &sv.WorkspaceID, &sv.Kind, &sv.State, &sv.Size, &created, &deleted); err != nil {
 		return nil, err
 	}
 	sv.CreatedAt = time.Unix(0, created).UTC()
+	if deleted != 0 {
+		sv.DeletedAt = time.Unix(0, deleted).UTC()
+	}
 	return &sv, nil
 }

@@ -8,7 +8,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | --- | --- | --- | --- |
 | E0 | 0 | 4 | 1 |
 | E1 | 29 | 10 | 4 |
-| E2 | 12 | 8 | 1 |
+| E2 | 17 | 7 | 1 |
 | E3 | 0 | 4 | 0 |
 | E4 | 0 | 11 | 1 |
 | E5 | 0 | 2 | 0 |
@@ -104,7 +104,12 @@ Every save either restores exactly or is refused with a clear error. Gate: **E2*
   - ⏳ **G6.5.2** Downloaded saves are verified before use · E2 · needs object_storage
 - ⏳ **G6.6** Saves restore on another CPU type · E2 · needs full_save, linux_bench
 - ⏳ **G6.7** Saves restore after a gVisor upgrade · E2 · needs full_save, linux_bench
-- ⏳ **G6.8** Deleted saves can be recovered within the retention window · E2
+- 📂 **G6.8** Deleted saves can be recovered within the retention window · E2
+  - ✅ **G6.8.1** A deleted save is hidden and cannot be resumed or copied · E2
+  - ✅ **G6.8.2** Undelete within the window brings the save back intact · E2
+  - ✅ **G6.8.3** After the window the save is purged for good · E2 · needs in_process
+  - ✅ **G6.8.4** Delete and undelete are safe to retry · E2
+  - ✅ **G6.8.5** A crash mid-purge is finished by the next purge · E2 · needs in_process
 - ✅ **G6.9** Saves outlive their workspace · E1
 
 ## G7 The engine survives crashes and lost servers

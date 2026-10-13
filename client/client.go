@@ -98,12 +98,14 @@ const (
 )
 
 type Save struct {
-	ID          string    `json:"id"`
-	WorkspaceID string    `json:"workspace_id"`
-	Kind        SaveKind  `json:"kind"`
-	State       string    `json:"state"`
-	Size        int64     `json:"size"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string     `json:"id"`
+	WorkspaceID string     `json:"workspace_id"`
+	Kind        SaveKind   `json:"kind"`
+	State       string     `json:"state"` // ready, missing, deleted
+	Size        int64      `json:"size"`
+	CreatedAt   time.Time  `json:"created_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
+	PurgeAfter  *time.Time `json:"purge_after,omitempty"` // a deleted save can be undeleted until then
 }
 
 type Exec struct {
@@ -290,6 +292,17 @@ func (c *Client) ListSaves(ctx context.Context, workspaceID string) ([]Save, err
 func (c *Client) GetSave(ctx context.Context, id string) (*Save, error) {
 	var out Save
 	return &out, c.do(ctx, http.MethodGet, "/v1/saves/"+url.PathEscape(id), nil, &out)
+}
+
+// DeleteSave hides a save. It can be undeleted until its PurgeAfter time.
+func (c *Client) DeleteSave(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/saves/"+url.PathEscape(id), nil, nil)
+}
+
+// UndeleteSave brings back a deleted save within its retention window.
+func (c *Client) UndeleteSave(ctx context.Context, id string) (*Save, error) {
+	var out Save
+	return &out, c.do(ctx, http.MethodPost, "/v1/saves/"+url.PathEscape(id)+"/undelete", nil, &out)
 }
 
 func (c *Client) Resume(ctx context.Context, saveID string) (*Workspace, error) {

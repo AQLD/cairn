@@ -179,4 +179,3 @@ func mustRefuseCorrupt(e *Env, ws *client.Workspace, sv *client.Save) {
 	e.Must(err)
 	Equal(e, "workspace state", got.State, "running")
 }
-
