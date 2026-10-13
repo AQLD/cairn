@@ -50,7 +50,7 @@ devenv/dev.sh do-down                                   # delete the droplets wh
 jq -r '[.mode, .workload, .verdict, .checkpoint_ms, .restore_ms, .image_bytes, .detail] | @tsv' spike/results/runs.jsonl
 ```
 
-The gate passes when all four workloads pass `cross` in both directions. Record the outcome, the measured times (they become the G9.6 targets) and the CPU baseline decision in [docs/status.md](../docs/status.md). If cross-CPU restores fail, the failure message says which CPU features differ; that is the input to the CPU-baseline decision, not a reason to stop.
+The gate passes when all four workloads pass `cross` in both directions. The measured times become the G9.6 targets, and the cross-CPU results decide the CPU baseline every full save is pinned to. If cross-CPU restores fail, the failure message says which CPU features differ; that is the input to the CPU-baseline decision, not a reason to stop.
 
 ## Known risks this spike is meant to surface
 
