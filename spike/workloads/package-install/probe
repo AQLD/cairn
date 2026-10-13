@@ -1,0 +1,11 @@
+#!/bin/sh
+# Bytes downloaded so far count pip's temporary files as well as the finished wheel.
+bytes=$(du -sb /tmp /data/dl /root/.cache 2>/dev/null | awk '{s+=$1} END {print s+0}')
+exit_code=$(cat /spike/exit_code 2>/dev/null || echo null)
+attempts=$(cat /spike/attempts 2>/dev/null || echo 0)
+wheel=$(ls /data/dl 2>/dev/null | grep -c '\.whl$')
+ready=false
+# checkpoint once at least 20 MB are in, i.e. mid-download
+[ "$bytes" -gt 20000000 ] && [ "$exit_code" = null ] && ready=true
+printf '{"ready":%s,"started":%s,"installer_pid":%s,"bytes":%s,"attempts":%s,"exit_code":%s,"wheels":%s}\n' \
+  "$ready" "$(cat /spike/started)" "$(cat /spike/installer_pid)" "$bytes" "$attempts" "$exit_code" "$wheel"

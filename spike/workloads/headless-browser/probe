@@ -1,0 +1,9 @@
+#!/bin/sh
+# Read the page's live title through the DevTools endpoint.
+title=$(curl -sf http://127.0.0.1:9222/json/list | jq -r '[.[] | select(.type=="page")][0].title // ""')
+count=$(echo "$title" | sed -n 's/^count:\([0-9]*\).*/\1/p')
+started=$(echo "$title" | sed -n 's/.*started:\([0-9]*\).*/\1/p')
+[ -n "$count" ] || count=0
+[ -n "$started" ] || started=0
+ready=false; [ "$count" -ge 10 ] && ready=true
+printf '{"ready":%s,"browser_pid":%s,"count":%s,"page_started":%s}\n' "$ready" "$(cat /spike/browser_pid)" "$count" "$started"

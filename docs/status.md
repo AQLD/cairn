@@ -9,11 +9,11 @@ The working log for whoever (person or agent) picks up the engine next. Read it 
 
 One line per active task: `scenario/feature · owner (person, agent or branch) · started`. Claim a task here before starting so parallel agents don't collide.
 
-- _none_
+- E0 spike scripts (`spike/`) · written, not yet run · 2026-10-12. Local Multipass VM failed to boot (Multipass 1.12.2); next is a Linux VM or the two droplets.
 
 ## Next up (in order)
 
-1. **E0 spike on Linux:** two droplets with different CPU types; script `runsc checkpoint` / `runsc restore` for the golden workloads (G1.7.1–G1.7.4); record save/resume times (G9.6). Output: numbers + the CPU baseline decision below.
+1. **Run the E0 spike** ([spike/README.md](../spike/README.md)): stage A on any Linux machine (`run.sh local-all`), then stage B on two droplets (`provision.sh`, `cross.sh all`, `destroy.sh`). Output: pass/fail per workload and direction, save/resume times (G9.6), and the CPU baseline decision below.
 2. **`runsc` runtime driver** (`internal/runtime/runsc.go`): start/exec/stop, then checkpoint/restore. Turn on capabilities one at a time as their scenarios pass on the Linux bench.
 3. **Streaming exec output** (G1.6.8): NDJSON or SSE on the exec endpoint; client support.
 4. **Kill -9 harness** (G7.6): run `cairnd` as a subprocess and kill it at each failpoint for real.
