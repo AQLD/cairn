@@ -2,3 +2,8 @@ bin/
 data/
 *.test
 .DS_Store
+
+# Local agent context (imports private notes); not part of the repo
+CLAUDE.md
+CLAUDE.local.md
+.claude/
