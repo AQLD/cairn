@@ -35,6 +35,7 @@ func run() error {
 	rt := flag.String("runtime", "runsc", "workspace runtime: runsc (gVisor) or host (development only, no isolation)")
 	runscPath := flag.String("runsc", "runsc", "path to the runsc binary")
 	token := flag.String("token", os.Getenv("CAIRN_TOKEN"), "API token required on every request (env CAIRN_TOKEN)")
+	retention := flag.Duration("retention", engine.DefaultRetention, "how long deleted saves can be undeleted before they are purged")
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -61,11 +62,27 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log})
+	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention})
 	if err != nil {
 		return err
 	}
 	defer eng.Close()
+
+	// Purge deleted saves whose retention window has ended (also done at startup).
+	go func() {
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if _, err := eng.PurgeExpired(ctx); err != nil {
+					log.Error("purge failed", "err", err)
+				}
+			}
+		}
+	}()
 
 	srv := &http.Server{
 		Addr:              *listen,

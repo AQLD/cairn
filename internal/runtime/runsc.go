@@ -32,6 +32,6 @@ func (*Runsc) Start(context.Context, Spec) error { return notYet("start", "E1") 
 func (*Runsc) Exec(context.Context, Spec, ExecRequest) (ExecResult, error) {
 	return ExecResult{}, notYet("exec", "E1")
 }
-func (*Runsc) Stop(context.Context, Spec) error                   { return notYet("stop", "E1") }
-func (*Runsc) Checkpoint(context.Context, Spec, string) error     { return notYet("checkpoint", "E1") }
-func (*Runsc) Restore(context.Context, Spec, string) error        { return notYet("restore", "E1") }
+func (*Runsc) Stop(context.Context, Spec) error               { return notYet("stop", "E1") }
+func (*Runsc) Checkpoint(context.Context, Spec, string) error { return notYet("checkpoint", "E1") }
+func (*Runsc) Restore(context.Context, Spec, string) error    { return notYet("restore", "E1") }

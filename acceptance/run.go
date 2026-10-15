@@ -85,4 +85,3 @@ func Status(s spec.Scenario) string {
 		return "pending"
 	}
 }
-

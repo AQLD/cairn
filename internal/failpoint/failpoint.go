@@ -14,12 +14,13 @@ var ErrCrash = errors.New("failpoint: simulated crash")
 
 // Names of the points the engine checks. Each is covered by a kill test.
 const (
-	SaveBeforeCommit   = "save/before-commit"   // save files written, not yet published
-	SaveAfterCommit    = "save/after-commit"    // save published, state not yet updated
-	ResumeBeforeSwap   = "resume/before-swap"   // new filesystem extracted, not yet swapped in
-	ResumeAfterSwap    = "resume/after-swap"    // filesystem swapped, workspace not yet running
-	CopyBeforeRunning  = "copy/before-running"  // copy's filesystem extracted, not yet running
-	CreateBeforeReady  = "create/before-ready"  // workspace recorded, not yet running
+	SaveBeforeCommit  = "save/before-commit"  // save files written, not yet published
+	SaveAfterCommit   = "save/after-commit"   // save published, state not yet updated
+	ResumeBeforeSwap  = "resume/before-swap"  // new filesystem extracted, not yet swapped in
+	ResumeAfterSwap   = "resume/after-swap"   // filesystem swapped, workspace not yet running
+	CopyBeforeRunning = "copy/before-running" // copy's filesystem extracted, not yet running
+	CreateBeforeReady = "create/before-ready" // workspace recorded, not yet running
+	PurgeAfterRemove  = "purge/after-remove"  // save folder removed, record not yet deleted
 )
 
 type Set struct {

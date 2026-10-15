@@ -7,8 +7,8 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
 | E0 | 0 | 4 | 1 |
-| E1 | 27 | 11 | 4 |
-| E2 | 12 | 8 | 1 |
+| E1 | 30 | 9 | 4 |
+| E2 | 17 | 7 | 1 |
 | E3 | 0 | 4 | 0 |
 | E4 | 0 | 11 | 1 |
 | E5 | 0 | 2 | 0 |
@@ -32,7 +32,8 @@ Work done in a workspace is still there, exactly as it was, after a save and res
   - ✅ **G1.6.5** A command that runs too long is stopped and marked timed out · E1
   - ✅ **G1.6.6** Huge output is cut off and marked truncated, never blocking the command · E1
   - ✅ **G1.6.7** An unknown command fails like a shell (exit 127) · E1
-  - ⏳ **G1.6.8** Output streams while the command runs · E1
+  - ✅ **G1.6.8** Output streams while the command runs · E1
+  - ✅ **G1.6.9** Binary output arrives byte for byte, streamed or not · E1
 - 📂 **G1.7** Golden workloads save and resume correctly · E0 · needs full_save, linux_bench
   - ⏳ **G1.7.1** Python script with open files · E0 · needs full_save, linux_bench
   - ⏳ **G1.7.2** Node dev server watching files · E0 · needs full_save, linux_bench
@@ -103,7 +104,12 @@ Every save either restores exactly or is refused with a clear error. Gate: **E2*
   - ⏳ **G6.5.2** Downloaded saves are verified before use · E2 · needs object_storage
 - ⏳ **G6.6** Saves restore on another CPU type · E2 · needs full_save, linux_bench
 - ⏳ **G6.7** Saves restore after a gVisor upgrade · E2 · needs full_save, linux_bench
-- ⏳ **G6.8** Deleted saves can be recovered within the retention window · E2
+- 📂 **G6.8** Deleted saves can be recovered within the retention window · E2
+  - ✅ **G6.8.1** A deleted save is hidden and cannot be resumed or copied · E2
+  - ✅ **G6.8.2** Undelete within the window brings the save back intact · E2
+  - ✅ **G6.8.3** After the window the save is purged for good · E2 · needs in_process
+  - ✅ **G6.8.4** Delete and undelete are safe to retry · E2
+  - ✅ **G6.8.5** A crash mid-purge is finished by the next purge · E2 · needs in_process
 - ✅ **G6.9** Saves outlive their workspace · E1
 
 ## G7 The engine survives crashes and lost servers
@@ -117,7 +123,7 @@ However the engine stops, it comes back knowing every workspace and save, and ne
   - ✅ **G7.3.2** Crash after the filesystem swap completes · E1 · needs in_process
 - ✅ **G7.4** A crash mid-create leaves a usable workspace · E1 · needs in_process
 - ✅ **G7.5** A crash mid-copy discards the unfinished copy · E2 · needs in_process
-- ⏳ **G7.6** kill -9 of the engine mid-operation recovers · E1 · needs linux_bench
+- ✅ **G7.6** kill -9 of the engine mid-operation recovers · E1 · needs in_process
 - ⏳ **G7.7** A lost server's workspaces resume elsewhere from their last save · E5 · needs multi_server, object_storage
 - ⏳ **G7.8** A workspace never runs on two servers at once · E5 · needs multi_server
 

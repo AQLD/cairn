@@ -1,0 +1,9 @@
+<!doctype html>
+<title>count:0</title>
+<script>
+  // In-page state the browser holds only in memory: a counter shown in the title.
+  const started = Date.now();
+  let n = 0;
+  setInterval(() => { n++; document.title = `count:${n} started:${started}`; }, 200);
+</script>
+<p>Cairn E0 spike: a page with live JavaScript state.</p>

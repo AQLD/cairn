@@ -8,8 +8,10 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -96,12 +98,14 @@ const (
 )
 
 type Save struct {
-	ID          string    `json:"id"`
-	WorkspaceID string    `json:"workspace_id"`
-	Kind        SaveKind  `json:"kind"`
-	State       string    `json:"state"`
-	Size        int64     `json:"size"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string     `json:"id"`
+	WorkspaceID string     `json:"workspace_id"`
+	Kind        SaveKind   `json:"kind"`
+	State       string     `json:"state"` // ready, missing, deleted
+	Size        int64      `json:"size"`
+	CreatedAt   time.Time  `json:"created_at"`
+	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
+	PurgeAfter  *time.Time `json:"purge_after,omitempty"` // a deleted save can be undeleted until then
 }
 
 type Exec struct {
@@ -112,11 +116,15 @@ type Exec struct {
 	TimeoutMS int64             `json:"timeout_ms,omitempty"`
 }
 
+// ExecResult is how a command ended. Stdout and Stderr hold the exact bytes the
+// command wrote (binary output included), up to 4 MiB each.
 type ExecResult struct {
 	ExitCode        int    `json:"exit_code"`
 	TimedOut        bool   `json:"timed_out"`
 	Stdout          string `json:"stdout"`
 	Stderr          string `json:"stderr"`
+	StdoutEncoding  string `json:"stdout_encoding,omitempty"`
+	StderrEncoding  string `json:"stderr_encoding,omitempty"`
 	StdoutTruncated bool   `json:"stdout_truncated,omitempty"`
 	StderrTruncated bool   `json:"stderr_truncated,omitempty"`
 	DurationMS      int64  `json:"duration_ms"`
@@ -154,7 +162,94 @@ func (c *Client) DeleteWorkspace(ctx context.Context, id string) error {
 
 func (c *Client) Exec(ctx context.Context, id string, req Exec) (*ExecResult, error) {
 	var out ExecResult
-	return &out, c.do(ctx, http.MethodPost, "/v1/workspaces/"+url.PathEscape(id)+"/exec", req, &out)
+	if err := c.do(ctx, http.MethodPost, "/v1/workspaces/"+url.PathEscape(id)+"/exec", req, &out); err != nil {
+		return nil, err
+	}
+	// binary output arrives base64-encoded; hand back the exact bytes
+	for _, f := range []struct {
+		enc *string
+		val *string
+	}{{&out.StdoutEncoding, &out.Stdout}, {&out.StderrEncoding, &out.Stderr}} {
+		if *f.enc == "base64" {
+			b, err := base64.StdEncoding.DecodeString(*f.val)
+			if err != nil {
+				return nil, fmt.Errorf("decode output: %w", err)
+			}
+			*f.val, *f.enc = string(b), ""
+		}
+	}
+	return &out, nil
+}
+
+// ExecEvent is one piece of a streamed command: output from Stream ("stdout" or
+// "stderr") as it was written.
+type ExecEvent struct {
+	Stream string
+	Data   []byte
+}
+
+// ExecStream runs a command and calls fn with its output as it is produced,
+// then returns how it ended. ExecResult's Stdout and Stderr are empty: the
+// output went to fn. fn is called from one goroutine, in order.
+func (c *Client) ExecStream(ctx context.Context, id string, req Exec, fn func(ExecEvent)) (*ExecResult, error) {
+	body := struct {
+		Exec
+		Stream bool `json:"stream"`
+	}{req, true}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/v1/workspaces/"+url.PathEscape(id)+"/exec", bytes.NewReader(data))
+	if err != nil {
+		return nil, err
+	}
+	hreq.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		hreq.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(hreq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, readError(resp)
+	}
+
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 0, 64<<10), 16<<20)
+	for sc.Scan() {
+		var ev struct {
+			Type       string            `json:"type"`
+			Data       []byte            `json:"data"`
+			ExitCode   *int              `json:"exit_code"`
+			TimedOut   bool              `json:"timed_out"`
+			DurationMS int64             `json:"duration_ms"`
+			Error      map[string]string `json:"error"`
+		}
+		if err := json.Unmarshal(sc.Bytes(), &ev); err != nil {
+			return nil, fmt.Errorf("bad stream event: %w", err)
+		}
+		switch ev.Type {
+		case "stdout", "stderr":
+			if fn != nil {
+				fn(ExecEvent{Stream: ev.Type, Data: ev.Data})
+			}
+		case "exit":
+			res := &ExecResult{TimedOut: ev.TimedOut, DurationMS: ev.DurationMS}
+			if ev.ExitCode != nil {
+				res.ExitCode = *ev.ExitCode
+			}
+			return res, nil
+		case "error":
+			return nil, &Error{Status: resp.StatusCode, Code: ev.Error["code"], Message: ev.Error["message"]}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return nil, fmt.Errorf("stream ended without an exit event")
 }
 
 // Run is Exec for the common case: run argv and return stdout, failing on a
@@ -197,6 +292,17 @@ func (c *Client) ListSaves(ctx context.Context, workspaceID string) ([]Save, err
 func (c *Client) GetSave(ctx context.Context, id string) (*Save, error) {
 	var out Save
 	return &out, c.do(ctx, http.MethodGet, "/v1/saves/"+url.PathEscape(id), nil, &out)
+}
+
+// DeleteSave hides a save. It can be undeleted until its PurgeAfter time.
+func (c *Client) DeleteSave(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/saves/"+url.PathEscape(id), nil, nil)
+}
+
+// UndeleteSave brings back a deleted save within its retention window.
+func (c *Client) UndeleteSave(ctx context.Context, id string) (*Save, error) {
+	var out Save
+	return &out, c.do(ctx, http.MethodPost, "/v1/saves/"+url.PathEscape(id)+"/undelete", nil, &out)
 }
 
 func (c *Client) Resume(ctx context.Context, saveID string) (*Workspace, error) {
@@ -247,20 +353,24 @@ func (c *Client) doRaw(ctx context.Context, method, path string, body io.Reader,
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		var e struct {
-			Error struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		if json.Unmarshal(data, &e) != nil || e.Error.Code == "" {
-			return &Error{Status: resp.StatusCode, Code: "http_error", Message: strings.TrimSpace(string(data))}
-		}
-		return &Error{Status: resp.StatusCode, Code: e.Error.Code, Message: e.Error.Message}
+		return readError(resp)
 	}
 	if out != nil {
 		_, err = io.Copy(out, resp.Body)
 	}
 	return err
+}
+
+func readError(resp *http.Response) error {
+	var e struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if json.Unmarshal(data, &e) != nil || e.Error.Code == "" {
+		return &Error{Status: resp.StatusCode, Code: "http_error", Message: strings.TrimSpace(string(data))}
+	}
+	return &Error{Status: resp.StatusCode, Code: e.Error.Code, Message: e.Error.Message}
 }

@@ -1,0 +1,15 @@
+#!/bin/sh
+# probe          current state (not ready until memory is filled and hashed)
+# probe verify   ask the worker to re-hash its memory, wait for the answer
+if [ "${1:-}" = verify ]; then
+  t0=$(date +%s)
+  touch /spike/verify-request
+  i=0
+  while [ $i -lt 600 ]; do
+    if python3 -c "import json,sys; s=json.load(open('/spike/state.json')); sys.exit(0 if s['verified_at'] >= $t0 else 1)" 2>/dev/null; then
+      break
+    fi
+    sleep 0.2; i=$((i + 1))
+  done
+fi
+cat /spike/state.json 2>/dev/null || echo '{"ready":false}'
