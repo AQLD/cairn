@@ -57,9 +57,12 @@ type ledger struct {
 }
 
 type pendingOp struct {
-	kind      string // resume, delete, undelete
+	kind      string // create, save, copy (retried with their key); resume, delete, undelete
+	key       string // idempotency key for create, save and copy
 	save      string
 	workspace string
+	count     int
+	files     map[string]string // what a save in flight would hold
 }
 
 type savedState struct {
@@ -78,8 +81,11 @@ func copyFiles(m map[string]string) map[string]string {
 func killNine(e *Env) {
 	bin := buildCairnd(e)
 	data := e.T.TempDir()
+	e.T.Cleanup(func() { unmountRunsc(data) }) // runs before TempDir's removal
 	l := &ledger{files: map[string]map[string]string{}, saves: map[string]savedState{}, deleted: map[string]bool{}}
-	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 7))
+	seed := uint64(time.Now().UnixNano())
+	rng := rand.New(rand.NewPCG(seed, 7))      // the workload's choices
+	killRng := rand.New(rand.NewPCG(seed, 13)) // when to kill (separate: used concurrently)
 	e.T.Logf("kill rounds: %d", KillRounds())
 
 	for round := 0; round < KillRounds(); round++ {
@@ -90,9 +96,14 @@ func killNine(e *Env) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			runRandomOps(ctx, c, l, rng)
+			runRandomOps(ctx, c, l, rng, e.Info.Capabilities.FullSave)
 		}()
-		time.Sleep(time.Duration(30+rng.IntN(400)) * time.Millisecond)
+		// kill somewhere inside an operation: sandbox operations take seconds
+		window := 400
+		if os.Getenv("CAIRN_TEST_RUNTIME") == "runsc" {
+			window = 4000
+		}
+		time.Sleep(time.Duration(30+killRng.IntN(window)) * time.Millisecond)
 		_ = proc.Process.Kill() // SIGKILL: no cleanup, no deferred functions
 		_ = proc.Wait()
 		stop()
@@ -103,6 +114,13 @@ func killNine(e *Env) {
 	proc, c := startCairnd(e, bin, data)
 	defer func() { _ = proc.Process.Kill(); _ = proc.Wait() }()
 	verifyAfterRestart(e, c, data, l, KillRounds())
+	// sandboxes outlive cairnd: stop them
+	defer func() {
+		ws, _ := c.ListWorkspaces(e.Ctx)
+		for _, w := range ws {
+			_ = c.DeleteWorkspace(e.Ctx, w.ID)
+		}
+	}()
 	l.mu.Lock()
 	e.T.Logf("acknowledged: %d workspaces, %d saves (%d deleted)", len(l.files), len(l.saves), len(l.deleted))
 	l.mu.Unlock()
@@ -111,7 +129,7 @@ func killNine(e *Env) {
 // runRandomOps performs operations one at a time and records each in the ledger
 // only once the engine has acknowledged it. It stops at the first error, which
 // is how it notices the kill.
-func runRandomOps(ctx context.Context, c *client.Client, l *ledger, rng *rand.Rand) {
+func runRandomOps(ctx context.Context, c *client.Client, l *ledger, rng *rand.Rand, pausable bool) {
 	for ctx.Err() == nil {
 		l.mu.Lock()
 		ws := keys(l.files)
@@ -129,10 +147,13 @@ func runRandomOps(ctx context.Context, c *client.Client, l *ledger, rng *rand.Ra
 		var err error
 		switch op := rng.IntN(100); {
 		case len(ws) == 0 || op < 8:
+			key := fmt.Sprintf("create-%d", n)
+			l.setInFlight(&pendingOp{kind: "create", key: key})
 			var w *client.Workspace
-			if w, err = c.CreateWorkspace(ctx, client.CreateWorkspace{}); err == nil {
+			if w, err = c.CreateWorkspace(client.WithIdempotencyKey(ctx, key), client.CreateWorkspace{}); err == nil {
 				l.mu.Lock()
 				l.files[w.ID] = map[string]string{}
+				l.inFlight = nil
 				l.mu.Unlock()
 			}
 		case op < 45:
@@ -147,13 +168,16 @@ func runRandomOps(ctx context.Context, c *client.Client, l *ledger, rng *rand.Ra
 			}
 		case op < 70:
 			id := ws[rng.IntN(len(ws))]
+			key := fmt.Sprintf("save-%d", n)
 			l.mu.Lock()
 			snapshot := copyFiles(l.files[id])
 			l.mu.Unlock()
+			l.setInFlight(&pendingOp{kind: "save", key: key, workspace: id, files: snapshot})
 			var sv *client.Save
-			if sv, err = c.Save(ctx, id, client.QuickSave); err == nil {
+			if sv, err = c.Save(client.WithIdempotencyKey(ctx, key), id, client.QuickSave); err == nil {
 				l.mu.Lock()
 				l.saves[sv.ID] = savedState{workspace: id, files: snapshot}
+				l.inFlight = nil
 				l.mu.Unlock()
 			}
 		case op < 80 && len(live) > 0:
@@ -167,14 +191,21 @@ func runRandomOps(ctx context.Context, c *client.Client, l *ledger, rng *rand.Ra
 			}
 		case op < 88 && len(live) > 0:
 			id := live[rng.IntN(len(live))]
+			key, count := fmt.Sprintf("copy-%d", n), 1+rng.IntN(2)
+			l.setInFlight(&pendingOp{kind: "copy", key: key, save: id, count: count})
 			var copies []client.Workspace
-			if copies, err = c.Copy(ctx, id, 1+rng.IntN(2)); err == nil {
+			if copies, err = c.Copy(client.WithIdempotencyKey(ctx, key), id, count); err == nil {
 				l.mu.Lock()
 				for _, w := range copies {
 					l.files[w.ID] = copyFiles(l.saves[id].files)
 				}
+				l.inFlight = nil
 				l.mu.Unlock()
 			}
+		case op < 92 && pausable:
+			// pausing changes nothing a caller can see (files, saves); the next
+			// write wakes the workspace
+			_, err = c.PauseWorkspace(ctx, ws[rng.IntN(len(ws))])
 		case op < 95 && len(live) > 0:
 			id := live[rng.IntN(len(live))]
 			l.setInFlight(&pendingOp{kind: "delete", save: id})
@@ -215,6 +246,31 @@ func settleInFlight(e *Env, c *client.Client, l *ledger, fail func(string, ...an
 		return
 	}
 	switch op.kind {
+	// Keyed operations: retry with the same key. The engine must return the
+	// original result if the first attempt took effect, or do it now if not,
+	// and never both (the exact counts below catch a duplicate).
+	case "create":
+		w, err := c.CreateWorkspace(client.WithIdempotencyKey(e.Ctx, op.key), client.CreateWorkspace{})
+		if err != nil {
+			fail("retry of interrupted create %s: %v", op.key, err)
+		}
+		if l.files[w.ID] == nil {
+			l.files[w.ID] = map[string]string{}
+		}
+	case "save":
+		sv, err := c.Save(client.WithIdempotencyKey(e.Ctx, op.key), op.workspace, client.QuickSave)
+		if err != nil {
+			fail("retry of interrupted save %s: %v", op.key, err)
+		}
+		l.saves[sv.ID] = savedState{workspace: op.workspace, files: op.files}
+	case "copy":
+		copies, err := c.Copy(client.WithIdempotencyKey(e.Ctx, op.key), op.save, op.count)
+		if err != nil {
+			fail("retry of interrupted copy %s: %v", op.key, err)
+		}
+		for _, w := range copies {
+			l.files[w.ID] = copyFiles(l.saves[op.save].files)
+		}
 	case "resume":
 		before, after := l.files[op.workspace], l.saves[op.save].files
 		got := map[string]string{}
@@ -286,13 +342,34 @@ func verifyAfterRestart(e *Env, c *client.Client, data string, l *ledger, round 
 	byID := map[string]client.Workspace{}
 	for _, w := range listed {
 		byID[w.ID] = w
-		if w.State != "running" && w.State != "stopped" {
+		if w.State != "running" && w.State != "stopped" && w.State != "paused" {
 			fail("workspace %s left %s", w.ID, w.State)
 		}
+	}
+	if len(listed) != len(l.files) {
+		fail("%d workspaces listed, %d acknowledged: a retry duplicated one or one was lost", len(listed), len(l.files))
 	}
 	for id, files := range l.files {
 		if _, ok := byID[id]; !ok {
 			fail("acknowledged workspace %s is gone", id)
+		}
+		listedSaves, err := c.ListSaves(e.Ctx, id)
+		if err != nil {
+			fail("list saves of %s: %v", id, err)
+		}
+		want, got := 0, 0
+		for sid, st := range l.saves {
+			if st.workspace == id && !l.deleted[sid] {
+				want++
+			}
+		}
+		for _, sv := range listedSaves {
+			if !sv.Auto { // a paused workspace's own save is the engine's
+				got++
+			}
+		}
+		if got != want {
+			fail("workspace %s has %d saves, %d acknowledged", id, got, want)
 		}
 		for path, want := range files {
 			got, err := c.ReadFile(e.Ctx, id, path)
@@ -387,6 +464,21 @@ func buildCairnd(e *Env) string {
 }
 
 // startCairnd runs cairnd on data and waits until it answers.
+// cairndRuntimeArgs runs cairnd on the same runtime as the rest of the suite.
+func cairndRuntimeArgs(e *Env) []string {
+	if os.Getenv("CAIRN_TEST_RUNTIME") != "runsc" {
+		return []string{"--runtime", "host"}
+	}
+	args := []string{"--runtime", "runsc"}
+	if bin := os.Getenv("CAIRN_RUNSC"); bin != "" {
+		args = append(args, "--runsc", bin)
+	}
+	if tmpl := os.Getenv("CAIRN_TEST_TEMPLATE"); tmpl != "" {
+		args = append(args, "--import-template", "base="+tmpl, "--default-template", "base")
+	}
+	return args
+}
+
 func startCairnd(e *Env, bin, data string) (*exec.Cmd, *client.Client) {
 	e.T.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -394,11 +486,11 @@ func startCairnd(e *Env, bin, data string) (*exec.Cmd, *client.Client) {
 	addr := ln.Addr().String()
 	ln.Close()
 
-	cmd := exec.Command(bin, "--runtime", "host", "--data", data, "--listen", addr)
+	cmd := exec.Command(bin, append(cairndRuntimeArgs(e), "--data", data, "--listen", addr, "--pause-on-shutdown=false")...)
 	cmd.Stdout, cmd.Stderr = nil, nil
 	e.Must(cmd.Start())
 	c := client.New("http://"+addr, "")
-	deadline := time.Now().Add(15 * time.Second)
+	deadline := time.Now().Add(60 * time.Second) // recovery restarts every sandbox
 	for c.Health(e.Ctx) != nil {
 		if time.Now().After(deadline) {
 			_ = cmd.Process.Kill()

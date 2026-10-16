@@ -1,4 +1,4 @@
-.PHONY: build test accept bench chaos plan run lint clean
+.PHONY: build test race fuzz accept bench chaos plan run lint clean
 
 build:
 	go build -o bin/ ./cmd/...
@@ -6,6 +6,16 @@ build:
 # Unit tests and the acceptance suite (host runtime, quick loop counts).
 test: lint
 	go test -short -count=1 ./...
+
+# Everything under the race detector.
+race:
+	go test -race -short -count=1 ./...
+
+# Fuzz the parsers of untrusted input (FUZZTIME=5m make fuzz for longer).
+fuzz:
+	go test ./internal/save -run XXX -fuzz FuzzUntarDir -fuzztime $${FUZZTIME:-30s}
+	go test ./internal/save -run XXX -fuzz FuzzVerify -fuzztime $${FUZZTIME:-30s}
+	go test ./internal/engine -run XXX -fuzz FuzzWorkspacePath -fuzztime $${FUZZTIME:-30s}
 
 # Full acceptance run with a pass/skip summary per scenario.
 accept:

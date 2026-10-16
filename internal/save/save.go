@@ -6,7 +6,9 @@
 //	<save-id>/
 //	  manifest.json   versioned description of the save, with a checksum per file
 //	  rootfs.tar      the workspace filesystem
-//	  memory.img      memory and process state (full saves only, written by the runtime)
+//	  memory/         memory and process state (full saves only): the files the
+//	                  runtime's checkpoint wrote (for gVisor: checkpoint.img,
+//	                  pages.img, pages_meta.img), each listed in the manifest
 //
 // Saves are built in a temporary folder next to the final one and renamed into
 // place only when complete and synced, so a crash never leaves a half-written
@@ -33,7 +35,7 @@ const FormatVersion = 1
 const (
 	ManifestFile = "manifest.json"
 	RootfsFile   = "rootfs.tar"
-	MemoryFile   = "memory.img"
+	MemoryDir    = "memory"
 	tmpPrefix    = ".tmp-"
 )
 
@@ -136,12 +138,49 @@ func (b *Builder) WriteFile(name string, r io.Reader) error {
 	return nil
 }
 
+// MemoryDir creates and returns the folder a runtime writes a checkpoint into.
+// Record its files with AddMemory once the runtime is done.
+func (b *Builder) MemoryDir() (string, error) {
+	dir := filepath.Join(b.tmp, MemoryDir)
+	return dir, os.MkdirAll(dir, 0o700)
+}
+
+// AddMemory records every file the runtime wrote into MemoryDir.
+func (b *Builder) AddMemory() error {
+	entries, err := os.ReadDir(filepath.Join(b.tmp, MemoryDir))
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		return errors.New("runtime wrote no checkpoint files")
+	}
+	for _, e := range entries {
+		if !e.Type().IsRegular() {
+			return fmt.Errorf("unexpected %s in checkpoint", e.Name())
+		}
+		if err := b.AddFile(MemoryDir + "/" + e.Name()); err != nil {
+			return err
+		}
+	}
+	return syncDir(filepath.Join(b.tmp, MemoryDir))
+}
+
+// HasMemory reports whether the save holds memory and process state.
+func (m *Manifest) HasMemory() bool {
+	for _, f := range m.Files {
+		if strings.HasPrefix(f.Name, MemoryDir+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // AddFile records a file that something else already wrote into Dir.
 func (b *Builder) AddFile(name string) error {
 	if err := validName(name); err != nil {
 		return err
 	}
-	sum, size, err := hashFile(filepath.Join(b.tmp, name))
+	sum, size, err := hashFile(filepath.Join(b.tmp, filepath.FromSlash(name)))
 	if err != nil {
 		return err
 	}
@@ -215,7 +254,7 @@ func Verify(dir string) (*Manifest, error) {
 		if err := validName(f.Name); err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
 		}
-		sum, size, err := hashFile(filepath.Join(dir, f.Name))
+		sum, size, err := hashFile(filepath.Join(dir, filepath.FromSlash(f.Name)))
 		if err != nil {
 			return nil, fmt.Errorf("%w: %s: %v", ErrCorrupt, f.Name, err)
 		}
@@ -246,8 +285,11 @@ func CleanupTemp(root string) (removed int, err error) {
 	return removed, nil
 }
 
+// validName allows a plain file name, or one inside the memory folder:
+// nothing that could point outside the save.
 func validName(name string) error {
-	if name == "" || name != filepath.Base(name) || name == "." || name == ".." {
+	base := strings.TrimPrefix(name, MemoryDir+"/")
+	if base == "" || base != filepath.Base(base) || base == "." || base == ".." || strings.Contains(base, "\\") {
 		return fmt.Errorf("invalid file name %q", name)
 	}
 	return nil

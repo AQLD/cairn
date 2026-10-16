@@ -117,3 +117,52 @@ func init() {
 		Equal(e, "original state", got.State, "running")
 	})
 }
+
+func init() {
+	// G2.6: copies of a full save are distinct machines: their own hostname,
+	// their own address, their own kernel randomness, and working network.
+	register("G2.6", func(e *Env) {
+		src, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "source", Network: true})
+		e.Must(err)
+		identity := `python3 -c "
+import os, socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    s.connect(('1.1.1.1', 53)); ip = s.getsockname()[0]
+except OSError as e:
+    ip = 'none'
+print(socket.gethostname(), ip, os.urandom(8).hex())"`
+		online := `python3 -c "
+import socket
+try:
+    socket.create_connection(('1.1.1.1', 443), timeout=5); print('online')
+except OSError as e:
+    print('offline', e)"`
+		e.Sh(src.ID, "true")
+		sv, err := e.C.Save(e.Ctx, src.ID, client.FullSave)
+		e.Must(err)
+		copies, err := e.C.Copy(e.Ctx, sv.ID, 3)
+		e.Must(err)
+		e.Resume(sv.ID) // the original runs alongside its copies
+
+		ips, rnd := map[string]string{}, map[string]string{}
+		for _, ws := range append([]client.Workspace{{ID: src.ID}}, copies...) {
+			f := strings.Fields(e.Sh(ws.ID, identity))
+			if len(f) != 3 {
+				e.T.Fatalf("%s: identity %q", ws.ID, f)
+			}
+			Equal(e, ws.ID+" hostname", f[0], ws.ID)
+			for what, seen := range map[string]map[string]string{"address": ips, "randomness": rnd} {
+				v := f[1]
+				if what == "randomness" {
+					v = f[2]
+				}
+				if other, dup := seen[v]; dup {
+					e.T.Fatalf("%s and %s share the %s %s", other, ws.ID, what, v)
+				}
+				seen[v] = ws.ID
+			}
+			Equal(e, ws.ID+" network", e.Sh(ws.ID, online), "online\n")
+		}
+	})
+}
