@@ -125,7 +125,7 @@ var Catalog = []Scenario{
 				Children: []Scenario{
 					{ID: "G6.4.1", Title: "A save that would not fit is refused before anything is written", Milestone: E2, Needs: []Need{NeedInProcess}},
 					{ID: "G6.4.2", Title: "Running out of disk mid-save aborts cleanly and the workspace keeps running", Milestone: E2, Needs: []Need{NeedInProcess}},
-					{ID: "G6.4.3", Title: "A real full disk on a server", Milestone: E2, Needs: []Need{NeedLinuxBench}},
+					{ID: "G6.4.3", Title: "A real full disk on a server", Milestone: E2, Needs: []Need{NeedInProcess}},
 				}},
 			{ID: "G6.5", Title: "Saves live in object storage and survive the server", Proves: "A save outlives the server that made it.", Milestone: E2, Needs: []Need{NeedObjectStorage},
 				Children: []Scenario{

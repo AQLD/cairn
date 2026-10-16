@@ -59,6 +59,68 @@ func Create(img string, sizeMB int64) error {
 	return nil
 }
 
+// Damaged reports whether the filesystem mounted at dir has hit errors. ext4
+// records them (and stops writing: an aborted journal makes it read-only) when
+// a write fails underneath it, for instance when the volume holding a sparse
+// image runs out of space. The mount still says "rw", so this reads ext4's
+// own error count.
+func Damaged(dir string) (bool, error) {
+	dev, err := mountSource(dir)
+	if err != nil || dev == "" {
+		return false, err
+	}
+	b, err := os.ReadFile(filepath.Join("/sys/fs/ext4", filepath.Base(dev), "errors_count"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil // not ext4
+	}
+	if err != nil {
+		return false, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	return n > 0, err
+}
+
+// mountSource is the device mounted at dir ("" if nothing is).
+func mountSource(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	f, err := os.Open("/proc/self/mountinfo")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 64<<10), 1<<20)
+	for sc.Scan() {
+		// id parent major:minor root mountpoint options ... - fstype source superoptions
+		fields := strings.Fields(sc.Text())
+		if len(fields) < 5 || unescape(fields[4]) != abs {
+			continue
+		}
+		for i, f := range fields {
+			if f == "-" && i+2 < len(fields) {
+				return fields[i+2], nil
+			}
+		}
+	}
+	return "", sc.Err()
+}
+
+// Repair checks and fixes the unmounted image's filesystem (e2fsck -fy).
+func Repair(img string) error {
+	out, err := exec.Command("e2fsck", "-f", "-y", img).CombinedOutput()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() < 4 {
+		return nil // 1: errors fixed; 2: fixed, reboot advised (not for an image)
+	}
+	if err != nil {
+		return fmt.Errorf("e2fsck: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // Mount attaches img to a free loop device and mounts it at dir, which must
 // exist. The loop device is released when the filesystem is unmounted.
 func Mount(img, dir string) error {

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/AQLD/cairn/internal/disk"
+	"github.com/AQLD/cairn/internal/store"
 )
 
 // DefaultDiskMB is the disk size of a workspace created without one.
@@ -164,3 +166,58 @@ func diskFull(err error, spec Spec) error {
 	}
 	return fmt.Errorf("%w: the workspace's disk is full (limit %d MB)", ErrInsufficientStorage, spec.Limits.DiskMB)
 }
+
+// checkDisk makes sure a workspace's disk is healthy before it is used. When
+// the volume holding the sparse disk images fills up, a workspace writing at
+// that moment gets I/O errors and its filesystem aborts its journal (it goes
+// read-only, though the mount still says rw), and stays so after space is
+// freed. Once there is room again, checkDisk repairs
+// it: the sandbox is stopped, the filesystem checked and mounted again, and
+// the workspace restarted, like a machine after a crash (files are kept,
+// processes are not). Until there is room, it says the volume is full.
+func (e *Engine) checkDisk(ctx context.Context, id string) error {
+	w, err := e.liveWorkspace(ctx, id)
+	if err != nil || w.State != store.Running {
+		return nil // the operation itself reports the state
+	}
+	ws, err := specOf(w)
+	if err != nil || !ws.DiskImage {
+		return err
+	}
+	root := e.volume(id, "rootfs", ws)
+	if ro, err := disk.Damaged(root.path); err != nil || !ro {
+		return err
+	}
+	if err := e.needSpace("repairing the workspace's disk", 0); err != nil {
+		return fmt.Errorf("%w (the volume holding workspaces filled up and this workspace's disk hit write errors; it is repaired on first use once space is freed)", err)
+	}
+	l := e.lock(id)
+	if err := l.lockAlone(ctx, e.cfg.ExclusiveWait, "repairing its disk"); err != nil {
+		return err
+	}
+	defer l.Unlock()
+	if ro, err := disk.Damaged(root.path); err != nil || !ro {
+		return err // repaired meanwhile
+	}
+	e.log.Warn("repairing a workspace disk that hit write errors (its volume filled up); processes restart", "workspace", id)
+	spec, err := e.runtimeSpec(w)
+	if err != nil {
+		return err
+	}
+	if err := e.cfg.Runtime.Stop(ctx, spec); err != nil {
+		return err
+	}
+	if err := root.release(); err != nil {
+		return err
+	}
+	if err := disk.Repair(root.img()); err != nil {
+		return err
+	}
+	if err := root.attach(); err != nil {
+		return err
+	}
+	return e.cfg.Runtime.Start(ctx, spec)
+}
+
+// VolumeFree is the free space on the volume holding workspaces and saves.
+func (e *Engine) VolumeFree() (uint64, error) { return freeBytes(e.cfg.DataDir) }

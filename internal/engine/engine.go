@@ -299,10 +299,16 @@ func (e *Engine) CreateWorkspace(ctx context.Context, req CreateRequest) (*Works
 	if template == "" {
 		template = e.cfg.DefaultTemplate
 	}
+	var templateSize int64
 	if template != "" {
-		if _, err := e.GetTemplate(ctx, template); err != nil {
+		t, err := e.GetTemplate(ctx, template)
+		if err != nil {
 			return nil, err
 		}
+		templateSize = t.Size
+	}
+	if err := e.needSpace("the workspace", templateSize); err != nil {
+		return nil, err
 	}
 	release, err := e.heavy(ctx)
 	if err != nil {
@@ -327,7 +333,7 @@ func (e *Engine) CreateWorkspace(ctx context.Context, req CreateRequest) (*Works
 		_ = e.store.SetWorkspaceState(ctx, id, store.Deleted)
 		_ = e.store.ReleaseWorkspaceRequestKey(ctx, id)
 		_ = e.removeWorkspaceDir(id, spec)
-		return nil, err
+		return nil, noSpace(err)
 	}
 	if err := e.cfg.Failpoints.Check(failpoint.CreateBeforeReady); err != nil {
 		return nil, err
@@ -371,7 +377,7 @@ func (e *Engine) insertWorkspace(ctx context.Context, id, name string, spec Spec
 		return nil, err
 	}
 	if err := e.writeRecord(&w); err != nil {
-		return nil, err
+		return nil, noSpace(err)
 	}
 	return &w, nil
 }
@@ -453,6 +459,9 @@ func (e *Engine) Exec(ctx context.Context, id string, req ExecRequest) (ExecResu
 	if len(req.Argv) == 0 {
 		return ExecResult{}, fmt.Errorf("%w: command is empty", ErrInvalid)
 	}
+	if err := e.checkDisk(ctx, id); err != nil {
+		return ExecResult{}, err
+	}
 	l, w, err := e.useRunning(ctx, id)
 	if err != nil {
 		return ExecResult{}, err
@@ -477,6 +486,9 @@ func (e *Engine) Exec(ctx context.Context, id string, req ExecRequest) (ExecResu
 func (e *Engine) WriteFile(ctx context.Context, id, name string, r io.Reader, mode os.FileMode) error {
 	rel, err := workspacePath(name)
 	if err != nil {
+		return err
+	}
+	if err := e.checkDisk(ctx, id); err != nil {
 		return err
 	}
 	// a paused workspace's processes may hold this file: wake them first
@@ -694,6 +706,31 @@ func (e *Engine) checkSpace(spec runtime.Spec) error {
 			ErrInsufficientStorage, size>>20, e.cfg.MinFreeBytes>>20, free>>20)
 	}
 	return nil
+}
+
+// needSpace refuses work that would write about size bytes to the engine's
+// volume and leave less than MinFreeBytes free. Workspace disks are sparse,
+// so their sizes do not reserve space: this check is what keeps a full volume
+// from turning into I/O errors inside workspaces.
+func (e *Engine) needSpace(what string, size int64) error {
+	free, err := freeBytes(e.cfg.DataDir)
+	if err != nil {
+		return err
+	}
+	if need := uint64(size) + uint64(e.cfg.MinFreeBytes); free < need {
+		return fmt.Errorf("%w: %s needs about %d MB plus %d MB headroom, %d MB free",
+			ErrInsufficientStorage, what, size>>20, e.cfg.MinFreeBytes>>20, free>>20)
+	}
+	return nil
+}
+
+// noSpace reports a host volume running out during a write as insufficient
+// storage (a workspace's own full disk is diskFull's business).
+func noSpace(err error) error {
+	if err != nil && errors.Is(err, syscall.ENOSPC) && !errors.Is(err, ErrInsufficientStorage) {
+		return fmt.Errorf("%w: %v", ErrInsufficientStorage, err)
+	}
+	return err
 }
 
 func (e *Engine) writeSave(ctx context.Context, spec runtime.Spec, saveID string, kind save.Kind, now time.Time) (*save.Manifest, error) {
@@ -1026,6 +1063,11 @@ func (e *Engine) Resume(ctx context.Context, saveID string) (*Workspace, error) 
 // recovery finishes the swap or rolls it back.
 func (e *Engine) restoreInto(ctx context.Context, spec runtime.Spec, ws Spec, saveID string, m *save.Manifest, beforeSwap string) error {
 	root, next, prev := e.volume(spec.ID, "rootfs", ws), e.volume(spec.ID, "rootfs.next", ws), e.volume(spec.ID, "rootfs.prev", ws)
+	if info, err := os.Stat(filepath.Join(e.saveDir(saveID), save.RootfsFile)); err == nil {
+		if err := e.needSpace("restoring the save", info.Size()); err != nil {
+			return err
+		}
+	}
 	err := e.extractSave(saveID, next, ws)
 	if errors.Is(err, ErrInsufficientStorage) && next.image {
 		// A save of a full disk can need a few more blocks than it had once
@@ -1037,7 +1079,7 @@ func (e *Engine) restoreInto(ctx context.Context, spec runtime.Spec, ws Spec, sa
 		err = e.extractSave(saveID, next, ws)
 	}
 	if err != nil {
-		return err
+		return noSpace(err)
 	}
 	if err := e.cfg.Failpoints.Check(beforeSwap); err != nil {
 		return err

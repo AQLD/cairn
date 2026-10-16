@@ -8,7 +8,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | --- | --- | --- | --- |
 | E0 | 4 | 0 | 1 |
 | E1 | 53 | 0 | 4 |
-| E2 | 26 | 4 | 1 |
+| E2 | 27 | 3 | 1 |
 | E3 | 8 | 3 | 0 |
 | E4 | 7 | 5 | 1 |
 | E5 | 0 | 2 | 0 |
@@ -113,7 +113,7 @@ Every save either restores exactly or is refused with a clear error. Gate: **E2*
 - 📂 **G6.4** A full disk during a save fails cleanly · E2
   - ✅ **G6.4.1** A save that would not fit is refused before anything is written · E2 · needs in_process
   - ✅ **G6.4.2** Running out of disk mid-save aborts cleanly and the workspace keeps running · E2 · needs in_process
-  - ⏳ **G6.4.3** A real full disk on a server · E2 · needs linux_bench
+  - ✅ **G6.4.3** A real full disk on a server · E2 · needs in_process
 - 📂 **G6.5** Saves live in object storage and survive the server · E2 · needs object_storage
   - ⏳ **G6.5.1** A dropped storage connection mid-upload is retried or fails cleanly · E2 · needs object_storage
   - ⏳ **G6.5.2** Downloaded saves are verified before use · E2 · needs object_storage
