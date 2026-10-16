@@ -81,6 +81,10 @@ type Config struct {
 	// MaxOps is how many heavy operations run at once (DefaultMaxOps if 0);
 	// more wait for a slot.
 	MaxOps int
+	// RestoreState rebuilds the state database from its last backup and the
+	// data folder (see state.go) if it is missing or damaged; a healthy one is
+	// left alone, so the setting is safe to leave on.
+	RestoreState bool
 }
 
 type Engine struct {
@@ -175,11 +179,27 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 			return nil, err
 		}
 	}
-	st, err := store.Open(filepath.Join(cfg.DataDir, "state.db"))
+	e := &Engine{cfg: cfg, log: cfg.Logger}
+	restore := false
+	if cfg.RestoreState {
+		var err error
+		if restore, err = e.stateNeedsRestore(); err != nil {
+			return nil, err
+		}
+	}
+	if restore {
+		if err := e.restoreStateFiles(); err != nil {
+			return nil, fmt.Errorf("restore state: %w", err)
+		}
+	}
+	st, err := store.Open(e.statePath())
+	if errors.Is(err, store.ErrDamaged) {
+		return nil, e.damagedState(err)
+	}
 	if err != nil {
 		return nil, err
 	}
-	e := &Engine{cfg: cfg, log: cfg.Logger, store: st, locks: map[string]*wsLock{}, activity: map[string]time.Time{}, ops: make(chan struct{}, cfg.MaxOps)}
+	e = &Engine{cfg: cfg, log: cfg.Logger, store: st, locks: map[string]*wsLock{}, activity: map[string]time.Time{}, ops: make(chan struct{}, cfg.MaxOps)}
 	if cfg.NoDiskImages {
 		e.diskErr = errors.New("disk images switched off")
 	} else {
@@ -187,6 +207,13 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	}
 	if e.diskErr != nil {
 		e.log.Warn("workspace disk sizes are not enforced", "reason", e.diskErr.Error())
+	}
+	if restore {
+		if err := e.reconcile(ctx); err != nil {
+			st.Close()
+			return nil, fmt.Errorf("restore state: %w", err)
+		}
+		e.log.Info("state database rebuilt from its backup and the data folder")
 	}
 	if err := e.recover(ctx); err != nil {
 		st.Close()
@@ -341,6 +368,9 @@ func (e *Engine) insertWorkspace(ctx context.Context, id, name string, spec Spec
 	now := time.Now().UTC()
 	w := store.Workspace{ID: id, Name: name, State: store.Creating, Spec: raw, SourceSave: sourceSave, RequestKey: requestKey, CreatedAt: now, UpdatedAt: now}
 	if err := e.store.CreateWorkspace(ctx, w); err != nil {
+		return nil, err
+	}
+	if err := e.writeRecord(&w); err != nil {
 		return nil, err
 	}
 	return &w, nil

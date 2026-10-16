@@ -51,6 +51,8 @@ func run() error {
 	diskMB := flag.Int64("disk-mb", engine.DefaultDiskMB, "disk size of workspaces created without one, in MB (images are sparse: they use host space only for what is stored)")
 	maxCommands := flag.Int("max-commands", engine.DefaultMaxCommands, "commands one workspace may run at once; more are refused with too_many_requests")
 	maxOps := flag.Int("max-operations", engine.DefaultMaxOps(), "heavy operations (create, save, resume, copy, template import) run at once; more wait their turn")
+	restoreState := flag.Bool("restore-state", false, "rebuild a lost or damaged state database from its last backup and the data folder, then run as usual")
+	backupEvery := flag.Duration("state-backup-interval", time.Hour, "how often to back up the state database (state.db.backup; 0 disables)")
 	diskImages := flag.Bool("disk-images", true, "enforce workspace disk sizes with an ext4 image per workspace (needs root, mkfs.ext4 and loop devices)")
 	var imports templateImports
 	flag.Var(&imports, "import-template", "NAME=ROOTFS.tar to import at startup if missing or changed (repeatable)")
@@ -86,7 +88,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, MaxCommands: *maxCommands, MaxOps: *maxOps})
+	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, MaxCommands: *maxCommands, MaxOps: *maxOps, RestoreState: *restoreState})
 	if err != nil {
 		return err
 	}
@@ -97,6 +99,28 @@ func run() error {
 			return fmt.Errorf("--import-template %s: %w", imp.name, err)
 		}
 		log.Info("template ready", "template", imp.name)
+	}
+
+	// Back up the state database now and regularly, so a damaged one can be
+	// rebuilt (--restore-state) with little to reconcile.
+	if *backupEvery > 0 {
+		if err := eng.BackupState(ctx); err != nil {
+			log.Error("state backup failed", "err", err)
+		}
+		go func() {
+			t := time.NewTicker(*backupEvery)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					if err := eng.BackupState(ctx); err != nil {
+						log.Error("state backup failed", "err", err)
+					}
+				}
+			}
+		}()
 	}
 
 	// Re-verify saves in the background, so damage is found before a restore needs them.

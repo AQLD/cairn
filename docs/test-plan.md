@@ -8,7 +8,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | --- | --- | --- | --- |
 | E0 | 4 | 0 | 1 |
 | E1 | 53 | 0 | 4 |
-| E2 | 25 | 4 | 1 |
+| E2 | 26 | 4 | 1 |
 | E3 | 8 | 3 | 0 |
 | E4 | 7 | 5 | 1 |
 | E5 | 0 | 2 | 0 |
@@ -128,6 +128,7 @@ Every save either restores exactly or is refused with a clear error. Gate: **E2*
 - 📂 **G6.10** Damaged saves are found by scrubbing before anyone restores them · E2
   - ✅ **G6.10.1** A scrub marks a damaged save corrupt and leaves good saves ready · E2 · needs in_process
   - ✅ **G6.10.2** Verify on demand reports a save's real state · E2 · needs in_process
+- ✅ **G6.11** A damaged state database is detected and rebuilt from its backup and the data folder · E2 · needs in_process
 - ✅ **G6.9** Saves outlive their workspace · E1
 
 ## G7 The engine survives crashes and lost servers

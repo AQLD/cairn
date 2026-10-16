@@ -147,6 +147,7 @@ var Catalog = []Scenario{
 					{ID: "G6.10.1", Title: "A scrub marks a damaged save corrupt and leaves good saves ready", Milestone: E2, Needs: []Need{NeedInProcess}},
 					{ID: "G6.10.2", Title: "Verify on demand reports a save's real state", Milestone: E2, Needs: []Need{NeedInProcess}},
 				}},
+			{ID: "G6.11", Title: "A damaged state database is detected and rebuilt from its backup and the data folder", Proves: "The engine's own records are never the only copy of what exists.", Milestone: E2, Needs: []Need{NeedInProcess}},
 			{ID: "G6.9", Title: "Saves outlive their workspace", Proves: "Deleting a workspace keeps its saves, which can still be copied.", Milestone: E1},
 		},
 	},
