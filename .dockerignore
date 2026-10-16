@@ -1,0 +1,6 @@
+.git
+bin
+data
+spike/results
+devenv/.ssh.config
+CLAUDE.md

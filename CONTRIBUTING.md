@@ -21,7 +21,7 @@ Start with [ROADMAP.md](ROADMAP.md) (milestones E0–E5 and their gates) and [do
 | `cmd/cairnd`, `cmd/cairn` | Engine daemon and CLI. The CLI talks to the engine only through the API. |
 | `cmd/cairn-init` | Process 1 inside every gVisor workspace: starts commands, reaps orphans, enforces the memory limit. Installed next to `cairnd`. |
 | `internal/tools/testplan` | Generates `docs/test-plan.md` from the catalog. |
-| `deploy/` | Host setup and pinned versions shared by every Linux host; DigitalOcean create/destroy. |
+| `deploy/` | Host setup and pinned versions shared by every Linux host; DigitalOcean create/destroy; container image (`deploy/docker`) and Helm chart (`deploy/helm`). |
 | `devenv/` | Local Linux VMs (Lima) and the `dev.sh` entry point, including the DigitalOcean session. |
 | `spike/` | E0 spike: drives `runsc` directly to save/restore real workloads. Throwaway. |
 

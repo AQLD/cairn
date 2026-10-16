@@ -1,0 +1,13 @@
+Cairn is starting. Templates: {{ range .Values.templates }}{{ .name }} {{ end }}(default: {{ .Values.defaultTemplate }})
+
+Talk to it from your machine:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "cairn.fullname" . }} 7420:{{ .Values.service.port }}
+  export CAIRN_ENDPOINT=http://127.0.0.1:7420
+  export CAIRN_TOKEN=$(kubectl -n {{ .Release.Namespace }} get secret {{ include "cairn.tokenSecret" . }} -o jsonpath='{.data.token}' | base64 -d)
+  cairn info
+  WS=$(cairn create)
+  cairn exec $WS -- python3 -c 'print("hello from a gVisor workspace")'
+
+In the cluster, the API is http://{{ include "cairn.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+with "Authorization: Bearer <token>". Metrics: /metrics (Prometheus).
