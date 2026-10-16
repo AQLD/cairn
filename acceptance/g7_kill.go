@@ -469,7 +469,7 @@ func cairndRuntimeArgs(e *Env) []string {
 	if os.Getenv("CAIRN_TEST_RUNTIME") != "runsc" {
 		return []string{"--runtime", "host"}
 	}
-	args := []string{"--runtime", "runsc"}
+	args := []string{"--runtime", "runsc", "--init", testInit(e.T)}
 	if bin := os.Getenv("CAIRN_RUNSC"); bin != "" {
 		args = append(args, "--runsc", bin)
 	}

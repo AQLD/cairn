@@ -16,7 +16,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -38,6 +40,7 @@ func run() error {
 	data := flag.String("data", "/var/lib/cairn", "data folder: state, workspaces and saves")
 	rt := flag.String("runtime", "runsc", "workspace runtime: runsc (gVisor) or host (development only, no isolation)")
 	runscPath := flag.String("runsc", "runsc", "path to the runsc binary")
+	initPath := flag.String("init", "", "path to cairn-init, process 1 of every runsc workspace (default: next to cairnd, then PATH)")
 	token := flag.String("token", os.Getenv("CAIRN_TOKEN"), "API token required on every request (env CAIRN_TOKEN)")
 	retention := flag.Duration("retention", engine.DefaultRetention, "how long deleted saves can be undeleted before they are purged")
 	scrubEvery := flag.Duration("scrub-interval", 6*time.Hour, "how often to re-verify every save's checksums (0 disables)")
@@ -54,7 +57,13 @@ func run() error {
 	var r runtime.Runtime
 	switch *rt {
 	case "runsc":
-		r = runtime.NewRunsc(*runscPath)
+		ip, err := findInit(*initPath)
+		if err != nil {
+			return err
+		}
+		rs := runtime.NewRunsc(*runscPath, filepath.Join(*data, "runsc"), ip)
+		rs.Log = log
+		r = rs
 	case "host":
 		log.Warn("using the host runtime: commands run directly on this machine with NO isolation; development only")
 		r = runtime.NewHost()
@@ -208,4 +217,21 @@ func importTemplate(ctx context.Context, eng *engine.Engine, name, path string) 
 	}
 	_, err = eng.ImportTemplate(ctx, name, f)
 	return err
+}
+
+// findInit locates cairn-init: the flag, then next to this binary, then PATH.
+func findInit(flagValue string) (string, error) {
+	if flagValue != "" {
+		return flagValue, nil
+	}
+	if self, err := os.Executable(); err == nil {
+		p := filepath.Join(filepath.Dir(self), "cairn-init")
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	if p, err := exec.LookPath("cairn-init"); err == nil {
+		return p, nil
+	}
+	return "", errors.New("cairn-init not found: install it next to cairnd or pass --init (build it with `go build ./cmd/cairn-init`)")
 }

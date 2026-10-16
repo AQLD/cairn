@@ -32,6 +32,13 @@ devenv/dev.sh delete        # remove them
 
 The repo is mounted into both VMs at the same path as on your Mac, so edit on the Mac and run on Linux with no copying.
 
+To run the acceptance suite on gVisor inside a VM (as root, with Docker for the base template):
+
+```sh
+devenv/dev.sh shell
+sudo devenv/accept-runsc.sh "$PWD" -run TestEndGoals/G3   # extra args go to go test
+```
+
 ## DigitalOcean: one paid hour, used fully
 
 Queue work locally until it passes and `devenv/dev.sh rehearse` (the same session on the local VMs) is clean, then rent the droplets for one sitting:

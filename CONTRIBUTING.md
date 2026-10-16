@@ -19,6 +19,7 @@ Start with [ROADMAP.md](ROADMAP.md) (milestones E0–E5 and their gates) and [do
 | `internal/failpoint/` | Named crash points for recovery tests. |
 | `client/` | Public Go client. The CLI and the acceptance suite use it, so tests exercise the real API. |
 | `cmd/cairnd`, `cmd/cairn` | Engine daemon and CLI. The CLI talks to the engine only through the API. |
+| `cmd/cairn-init` | Process 1 inside every gVisor workspace: starts commands, reaps orphans, enforces the memory limit. Installed next to `cairnd`. |
 | `internal/tools/testplan` | Generates `docs/test-plan.md` from the catalog. |
 | `deploy/` | Host setup and pinned versions shared by every Linux host; DigitalOcean create/destroy. |
 | `devenv/` | Local Linux VMs (Lima) and the `dev.sh` entry point, including the DigitalOcean session. |
@@ -55,6 +56,8 @@ A scenario that cannot run in the current environment must **skip with the reaso
 - **The save format is a contract.** Changing it means bumping `save.FormatVersion` and keeping a reader for every older version, with a scenario proving old saves still restore.
 - **No path escapes.** Every workspace file access goes through `os.Root`; tar extraction rejects paths outside the target.
 - **Capabilities are honest.** A runtime reports only what it enforces; unsupported operations return `ErrUnsupported` (`unsupported_by_runtime`), never a fake success.
+- **Commands are children of the workspace's init.** gVisor restores only processes descended from the sandbox's init, so `runsc` workspaces never run commands with a bare `runsc exec`; they go through `cairn-init exec` (see `spike/experiments/exec-restore-variants.sh`). Full saves carry their own copy of `cairn-init`.
+- **Running out of memory costs processes, never files.** The limit is enforced inside the sandbox (cairn-init kills the biggest process); the host limit is a backstop, and a sandbox that dies anyway is restarted from its filesystem on next use.
 - **Pausing is invisible to callers.** A paused workspace (idle, or paused for an engine shutdown) wakes on the next command, write or save; reads never wake it. Waking restores memory only, so nothing may change a paused workspace's files; its pause save is removed once it is awake. New code paths that need a running sandbox call `e.wake` first.
 - **The `host` runtime is not a sandbox.** Never make it the default or recommend it for untrusted code; `cairnd` refuses non-localhost without `--token`.
 - **Stable error codes** (`not_found`, `invalid_argument`, `conflict`, `save_corrupt`, `insufficient_storage`, `unsupported_by_runtime`, `unauthorized`, `internal`). Adding one is an API change.
