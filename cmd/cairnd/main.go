@@ -25,6 +25,7 @@ import (
 
 	"github.com/AQLD/cairn/internal/api"
 	"github.com/AQLD/cairn/internal/engine"
+	"github.com/AQLD/cairn/internal/objstore"
 	"github.com/AQLD/cairn/internal/runtime"
 )
 
@@ -51,6 +52,7 @@ func run() error {
 	diskMB := flag.Int64("disk-mb", engine.DefaultDiskMB, "disk size of workspaces created without one, in MB (images are sparse: they use host space only for what is stored)")
 	maxCommands := flag.Int("max-commands", engine.DefaultMaxCommands, "commands one workspace may run at once; more are refused with too_many_requests")
 	maxOps := flag.Int("max-operations", engine.DefaultMaxOps(), "heavy operations (create, save, resume, copy, template import) run at once; more wait their turn")
+	saveStore := flag.String("save-store", "", "keep a copy of every save in S3-compatible object storage: s3://bucket/prefix?endpoint=https://host&region=r (credentials from AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)")
 	restoreState := flag.Bool("restore-state", false, "rebuild a lost or damaged state database from its last backup and the data folder, then run as usual")
 	backupEvery := flag.Duration("state-backup-interval", time.Hour, "how often to back up the state database (state.db.backup; 0 disables)")
 	diskImages := flag.Bool("disk-images", true, "enforce workspace disk sizes with an ext4 image per workspace (needs root, mkfs.ext4 and loop devices)")
@@ -88,7 +90,13 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, MaxCommands: *maxCommands, MaxOps: *maxOps, RestoreState: *restoreState})
+	var objects objstore.Store
+	if *saveStore != "" {
+		if objects, err = objstore.Open(*saveStore); err != nil {
+			return err
+		}
+	}
+	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, MaxCommands: *maxCommands, MaxOps: *maxOps, RestoreState: *restoreState, Objects: objects})
 	if err != nil {
 		return err
 	}

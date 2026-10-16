@@ -8,10 +8,10 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | --- | --- | --- | --- |
 | E0 | 4 | 0 | 1 |
 | E1 | 53 | 0 | 4 |
-| E2 | 27 | 3 | 1 |
+| E2 | 29 | 1 | 1 |
 | E3 | 8 | 3 | 0 |
 | E4 | 8 | 4 | 1 |
-| E5 | 0 | 2 | 0 |
+| E5 | 1 | 1 | 0 |
 
 Legend: ✅ implemented · ⏳ pending · 📏 benchmark · needs = what the environment must provide (skipped without it)
 
@@ -114,9 +114,9 @@ Every save either restores exactly or is refused with a clear error. Gate: **E2*
   - ✅ **G6.4.1** A save that would not fit is refused before anything is written · E2 · needs in_process
   - ✅ **G6.4.2** Running out of disk mid-save aborts cleanly and the workspace keeps running · E2 · needs in_process
   - ✅ **G6.4.3** A real full disk on a server · E2 · needs in_process
-- 📂 **G6.5** Saves live in object storage and survive the server · E2 · needs object_storage
-  - ⏳ **G6.5.1** A dropped storage connection mid-upload is retried or fails cleanly · E2 · needs object_storage
-  - ⏳ **G6.5.2** Downloaded saves are verified before use · E2 · needs object_storage
+- 📂 **G6.5** Saves live in object storage and survive the server · E2 · needs in_process
+  - ✅ **G6.5.1** A dropped storage connection mid-upload is retried or fails cleanly · E2 · needs in_process
+  - ✅ **G6.5.2** Downloaded saves are verified before use · E2 · needs in_process
 - ⏳ **G6.6** Saves restore on another CPU type · E2 · needs full_save, linux_bench
 - ✅ **G6.7** Saves restore after a gVisor upgrade · E2 · needs full_save, in_process
 - 📂 **G6.8** Deleted saves can be recovered within the retention window · E2
@@ -154,7 +154,7 @@ However the engine stops, it comes back knowing every workspace and save, and ne
 - ✅ **G7.11** A long-running command never freezes its workspace · E3 · needs in_process
 - ✅ **G7.12** A power cut mid-operation loses nothing acknowledged · E2
 - ✅ **G7.13** A flood of requests is refused or queued, never fails or takes the engine down · E1 · needs in_process
-- ⏳ **G7.7** A lost server's workspaces resume elsewhere from their last save · E5 · needs multi_server, object_storage
+- ✅ **G7.7** A lost server's workspaces resume elsewhere from their last save · E5 · needs in_process
 - ⏳ **G7.8** A workspace never runs on two servers at once · E5 · needs multi_server
 
 ## G8 One workspace cannot hurt another or the host

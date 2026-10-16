@@ -73,6 +73,16 @@ type Manifest struct {
 	// CPUProfile is the CPU feature baseline a full save is pinned to.
 	CPUProfile string `json:"cpu_profile,omitempty"`
 	Files      []File `json:"files"`
+	// Workspace describes the workspace saved, so another server can make
+	// copies of the save without this one's records (saves in object storage).
+	// Absent in saves made before it existed.
+	Workspace *WorkspaceInfo `json:"workspace,omitempty"`
+}
+
+// WorkspaceInfo is what a copy of a save needs to know about its workspace.
+type WorkspaceInfo struct {
+	Name string          `json:"name"`
+	Spec json.RawMessage `json:"spec"`
 }
 
 // Size is the total size of the files in the save.

@@ -80,6 +80,7 @@ func (e *Engine) pauseLocked(ctx context.Context, id string) error {
 	if err := e.cfg.Failpoints.Check(failpoint.PauseAfterCommit); err != nil {
 		return err
 	}
+	defer e.kickUploads()
 	if err := e.store.MarkSaveReady(ctx, saveID, m.Size()); err != nil {
 		return err
 	}
@@ -115,6 +116,9 @@ func (e *Engine) wakeLocked(ctx context.Context, id string) error {
 	}
 	if err := e.store.SetWorkspaceState(ctx, id, store.Resuming); err != nil {
 		return err
+	}
+	if psv, err := e.store.GetSave(ctx, w.PausedSave); err == nil {
+		_ = e.ensureLocal(ctx, psv) // a pause save kept only in object storage
 	}
 	_, verr := save.Verify(e.saveDir(w.PausedSave))
 	if verr == nil {
@@ -178,6 +182,9 @@ func errAutoSave(id string) error {
 func (e *Engine) dropAutoSave(ctx context.Context, id string) {
 	if id == "" {
 		return
+	}
+	if err := e.deleteRemote(ctx, id); err != nil {
+		e.log.Error("could not remove pause save from object storage", "save", id, "err", err)
 	}
 	if err := os.RemoveAll(e.saveDir(id)); err != nil {
 		e.log.Error("could not remove pause save", "save", id, "err", err)

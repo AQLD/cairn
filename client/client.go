@@ -134,6 +134,7 @@ type Save struct {
 	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 	PurgeAfter  *time.Time `json:"purge_after,omitempty"` // a deleted save can be undeleted until then
 	Auto        bool       `json:"auto,omitempty"`        // made by the engine to pause the workspace
+	Uploaded    bool       `json:"uploaded,omitempty"`    // a copy is in object storage
 }
 
 type Exec struct {

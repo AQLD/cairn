@@ -94,6 +94,15 @@ the pod itself are unreachable from workspaces regardless.
   `cairn_http_request_duration_seconds`.
 - **Logs**: one JSON line per request with a `request_id`, also returned to the
   caller in the `X-Request-Id` header.
+- **Saves in object storage** (`saveStore`): every save is copied to an
+  S3-compatible bucket in the background (retried until it succeeds), so saves
+  outlive the node and the volume. A save missing locally is downloaded and
+  checked against its checksums before use; one damaged locally is fetched
+  again. A new install on the same bucket learns its saves and can copy them
+  into new workspaces, running processes included: a lost cluster loses only
+  the work since the last save. `kubectl create secret generic cairn-s3
+  --from-literal=AWS_ACCESS_KEY_ID=... --from-literal=AWS_SECRET_ACCESS_KEY=...`
+  then `--set saveStore.url=s3://bucket/cairn?region=...,saveStore.existingSecret=cairn-s3`.
 - **State database**: checked at startup and backed up every hour
   (`state.db.backup` on the volume, consistent and written atomically). If the
   disk ever damages it, the engine refuses to start rather than act on wrong
@@ -148,6 +157,8 @@ workspace wakes with its files but not its processes.
 ## Limits today
 
 - One replica. A single engine owns its workspaces and saves; running more than
-  one engine against the same data is not supported yet.
+  one engine against the same data is not supported yet. Two installs may share
+  a bucket only if they use different prefixes, except to take over from a
+  lost one.
 - Workspaces created before disk limits existed keep plain folders without a
   size limit.
