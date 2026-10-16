@@ -7,8 +7,8 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
 | E0 | 0 | 4 | 1 |
-| E1 | 51 | 0 | 4 |
-| E2 | 23 | 5 | 1 |
+| E1 | 52 | 0 | 4 |
+| E2 | 24 | 4 | 1 |
 | E3 | 8 | 3 | 0 |
 | E4 | 7 | 5 | 1 |
 | E5 | 0 | 2 | 0 |
@@ -190,5 +190,6 @@ An operator can install, observe and upgrade Cairn without surprises. Gate: **E4
   - ✅ **G10.4.1** Metrics count and time every API operation and report workspaces and saves by state · E4
   - ✅ **G10.4.2** Every request is logged with an ID the client also sees · E4 · needs in_process
 - ⏳ **G10.5** 72 hours of mixed load shows no leaks · E4 · needs linux_bench
-- ⏳ **G10.6** Upgrading the engine keeps all workspaces and saves · E2 · needs linux_bench
+- ✅ **G10.6** Upgrading the engine keeps all workspaces and saves · E2 · needs in_process
+- ✅ **G10.7** Deleting workspaces leaves nothing behind on the host · E1 · needs in_process
 

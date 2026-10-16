@@ -37,15 +37,27 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the previous engine is built from history (G10.6)
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - name: Install gVisor (deploy/versions.env)
         run: sudo deploy/install-gvisor.sh
+      - name: Build the previous engine (what this change upgrades from)
+        shell: bash
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/previous" "$BASE"
+          (cd "$RUNNER_TEMP/previous" && CGO_ENABLED=0 go build -o "$RUNNER_TEMP/previous-bin/" ./cmd/cairnd ./cmd/cairn-init)
+          echo "upgrading from $(git log -1 --format='%h %s' "$BASE")" >> "$GITHUB_STEP_SUMMARY"
       - name: Acceptance suite on gVisor
         shell: bash
         run: |
-          sudo env "PATH=$PATH" devenv/accept-runsc.sh "$PWD" -v -timeout 35m -run TestEndGoals 2>&1 | tee accept.log
+          sudo env "PATH=$PATH" \
+            CAIRN_PREVIOUS_CAIRND="$RUNNER_TEMP/previous-bin/cairnd" CAIRN_PREVIOUS_INIT="$RUNNER_TEMP/previous-bin/cairn-init" \
+            devenv/accept-runsc.sh "$PWD" -v -timeout 35m -run TestEndGoals 2>&1 | tee accept.log
       - name: Summary
         if: always()
         shell: bash

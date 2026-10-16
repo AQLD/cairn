@@ -463,13 +463,13 @@ func buildCairnd(e *Env) string {
 	return cairndBin
 }
 
-// startCairnd runs cairnd on data and waits until it answers.
-// cairndRuntimeArgs runs cairnd on the same runtime as the rest of the suite.
-func cairndRuntimeArgs(e *Env) []string {
+// cairndRuntimeArgs runs cairnd on the same runtime as the rest of the suite,
+// with the given cairn-init.
+func cairndRuntimeArgs(init string) []string {
 	if os.Getenv("CAIRN_TEST_RUNTIME") != "runsc" {
 		return []string{"--runtime", "host"}
 	}
-	args := []string{"--runtime", "runsc", "--init", testInit(e.T)}
+	args := []string{"--runtime", "runsc", "--init", init}
 	if bin := os.Getenv("CAIRN_RUNSC"); bin != "" {
 		args = append(args, "--runsc", bin)
 	}
@@ -479,14 +479,21 @@ func cairndRuntimeArgs(e *Env) []string {
 	return args
 }
 
+// startCairnd runs cairnd on data and waits until it answers.
 func startCairnd(e *Env, bin, data string) (*exec.Cmd, *client.Client) {
+	e.T.Helper()
+	return startCairndWith(e, bin, testInit(e.T), data)
+}
+
+// startCairndWith is startCairnd with a given cairn-init (another build's).
+func startCairndWith(e *Env, bin, init, data string) (*exec.Cmd, *client.Client) {
 	e.T.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	e.Must(err)
 	addr := ln.Addr().String()
 	ln.Close()
 
-	cmd := exec.Command(bin, append(cairndRuntimeArgs(e), "--data", data, "--listen", addr, "--pause-on-shutdown=false")...)
+	cmd := exec.Command(bin, append(cairndRuntimeArgs(init), "--data", data, "--listen", addr, "--pause-on-shutdown=false")...)
 	cmd.Stdout, cmd.Stderr = nil, nil
 	e.Must(cmd.Start())
 	c := client.New("http://"+addr, "")

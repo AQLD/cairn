@@ -223,7 +223,8 @@ var Catalog = []Scenario{
 					{ID: "G10.4.2", Title: "Every request is logged with an ID the client also sees", Milestone: E4, Needs: []Need{NeedInProcess}},
 				}},
 			{ID: "G10.5", Title: "72 hours of mixed load shows no leaks", Proves: "No memory, file-handle or disk leaks.", Milestone: E4, Needs: []Need{NeedLinuxBench}},
-			{ID: "G10.6", Title: "Upgrading the engine keeps all workspaces and saves", Proves: "State and save formats are read by newer engines.", Milestone: E2, Needs: []Need{NeedLinuxBench}},
+			{ID: "G10.6", Title: "Upgrading the engine keeps all workspaces and saves", Proves: "State and save formats are read by newer engines.", Milestone: E2, Needs: []Need{NeedInProcess}},
+			{ID: "G10.7", Title: "Deleting workspaces leaves nothing behind on the host", Proves: "Every operation cleans up its mounts, devices, network, cgroups and sandboxes.", Milestone: E1, Needs: []Need{NeedInProcess}},
 		},
 	},
 }
