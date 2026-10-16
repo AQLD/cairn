@@ -10,6 +10,7 @@ package acceptance
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"os"
@@ -124,11 +125,41 @@ func testRuntime(t testing.TB, dataDir string) runtime.Runtime {
 		if bin == "" {
 			bin = "runsc"
 		}
-		return runtime.NewRunsc(bin)
+		return runtime.NewRunsc(bin, filepath.Join(dataDir, "runsc"), testInit(t))
 	default:
 		t.Fatalf("unknown CAIRN_TEST_RUNTIME %q", name)
 		return nil
 	}
+}
+
+var (
+	initOnce sync.Once
+	initPath string
+	initErr  error
+)
+
+// testInit builds cairn-init once per test binary (or uses CAIRN_INIT).
+func testInit(t testing.TB) string {
+	if p := os.Getenv("CAIRN_INIT"); p != "" {
+		return p
+	}
+	initOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "cairn-init-")
+		if err != nil {
+			initErr = err
+			return
+		}
+		initPath = filepath.Join(dir, "cairn-init")
+		cmd := exec.Command("go", "build", "-o", initPath, "github.com/AQLD/cairn/cmd/cairn-init")
+		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			initErr = fmt.Errorf("build cairn-init: %v: %s", err, out)
+		}
+	})
+	if initErr != nil {
+		t.Fatal(initErr)
+	}
+	return initPath
 }
 
 func (e *Env) start() {
