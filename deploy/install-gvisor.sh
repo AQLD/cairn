@@ -40,7 +40,11 @@ install() {
     zstd -dc "$tmp/gvisor.tar.zstd" | tar -x -C "$dir"
     rm -rf "$tmp"
   fi
-  "$dir/runsc" --version | head -1
+  # first line of the version (not "| head -1": with pipefail, the SIGPIPE
+  # runsc may get when head exits early fails the script)
+  local version
+  version=$("$dir/runsc" --version)
+  echo "${version%%$'\n'*}"
 }
 
 if [[ $# -gt 0 ]]; then
