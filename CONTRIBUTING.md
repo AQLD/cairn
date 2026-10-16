@@ -61,7 +61,7 @@ A scenario that cannot run in the current environment must **skip with the reaso
 - **A workspace's disk is an image, renamed into place.** With a disk limit, each filesystem is `rootfs*.img` loop-mounted at `rootfs*`; it is built under its own name and committed by renaming the image file, never while mounted. Code that moves or deletes workspace files goes through `volume` (`internal/engine/volume.go`), never `os.Rename`/`os.RemoveAll` on a mount point.
 - **Pausing is invisible to callers.** A paused workspace (idle, or paused for an engine shutdown) wakes on the next command, write or save; reads never wake it. Waking restores memory only, so nothing may change a paused workspace's files; its pause save is removed once it is awake. New code paths that need a running sandbox call `e.wake` first.
 - **The `host` runtime is not a sandbox.** Never make it the default or recommend it for untrusted code; `cairnd` refuses non-localhost without `--token`.
-- **Stable error codes** (`not_found`, `invalid_argument`, `conflict`, `save_corrupt`, `insufficient_storage`, `unsupported_by_runtime`, `unauthorized`, `internal`). Adding one is an API change.
+- **Stable error codes** (`not_found`, `invalid_argument`, `conflict`, `save_corrupt`, `insufficient_storage`, `too_many_requests`, `unsupported_by_runtime`, `unauthorized`, `internal`). Adding one is an API change.
 
 ## Conventions
 

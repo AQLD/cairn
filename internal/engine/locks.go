@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	goruntime "runtime"
 	"sync"
 	"time"
 )
@@ -23,9 +24,14 @@ type wsLock struct {
 }
 
 // command registers a running command; the returned function unregisters it.
-func (l *wsLock) command(cancel context.CancelFunc) func() {
+// A workspace runs at most max commands at once: each costs a runsc process on
+// the host, so an unbounded burst would hurt the host, not just the workspace.
+func (l *wsLock) command(cancel context.CancelFunc, max int) (func(), error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if len(l.commands) >= max {
+		return nil, fmt.Errorf("%w: %d commands are already running in this workspace", ErrBusy, max)
+	}
 	if l.commands == nil {
 		l.commands = map[int]context.CancelFunc{}
 	}
@@ -36,7 +42,7 @@ func (l *wsLock) command(cancel context.CancelFunc) func() {
 		l.mu.Lock()
 		defer l.mu.Unlock()
 		delete(l.commands, n)
-	}
+	}, nil
 }
 
 func (l *wsLock) cancelCommands() {
@@ -74,4 +80,23 @@ func (e *Engine) lock(id string) *wsLock {
 		e.locks[id] = l
 	}
 	return l
+}
+
+// DefaultMaxCommands is how many commands one workspace may run at once.
+const DefaultMaxCommands = 64
+
+// DefaultMaxOps is how many heavy operations (create, save, resume, copy,
+// template import) run at once; more wait their turn. They are disk- and
+// CPU-bound, so running dozens at once makes every one of them slower.
+func DefaultMaxOps() int { return max(4, 2*goruntime.NumCPU()) }
+
+// heavy waits for a slot for a heavy operation (or for ctx to end) and returns
+// the function that frees it.
+func (e *Engine) heavy(ctx context.Context) (func(), error) {
+	select {
+	case e.ops <- struct{}{}:
+		return func() { <-e.ops }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }

@@ -40,6 +40,8 @@ var (
 	// ErrInsufficientStorage: the save would not fit (checked up front) or the
 	// disk filled while writing it. Nothing is left half written.
 	ErrInsufficientStorage = errors.New("insufficient storage")
+	// ErrBusy: a limit on concurrent work was reached; retry shortly.
+	ErrBusy = errors.New("too many requests")
 )
 
 // DefaultMinFreeBytes is the free space a save must leave on the disk.
@@ -73,6 +75,12 @@ type Config struct {
 	DiskMB int64
 	// NoDiskImages keeps new workspaces in plain folders, with no disk limit.
 	NoDiskImages bool
+	// MaxCommands is how many commands one workspace may run at once
+	// (DefaultMaxCommands if 0); more are refused with ErrBusy.
+	MaxCommands int
+	// MaxOps is how many heavy operations run at once (DefaultMaxOps if 0);
+	// more wait for a slot.
+	MaxOps int
 }
 
 type Engine struct {
@@ -84,6 +92,7 @@ type Engine struct {
 	diskErr  error                // why new workspaces get no disk image; nil if they do
 	locks    map[string]*wsLock   // per workspace
 	activity map[string]time.Time // last use per workspace, for pausing idle ones
+	ops      chan struct{}        // slots for heavy operations
 }
 
 // Spec is the part of a workspace the caller chooses.
@@ -152,6 +161,12 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if cfg.DiskMB == 0 {
 		cfg.DiskMB = DefaultDiskMB
 	}
+	if cfg.MaxCommands <= 0 {
+		cfg.MaxCommands = DefaultMaxCommands
+	}
+	if cfg.MaxOps <= 0 {
+		cfg.MaxOps = DefaultMaxOps()
+	}
 	if cfg.DiskMB < disk.MinSizeMB {
 		return nil, fmt.Errorf("engine: disk size must be at least %d MB", disk.MinSizeMB)
 	}
@@ -164,7 +179,7 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	e := &Engine{cfg: cfg, log: cfg.Logger, store: st, locks: map[string]*wsLock{}, activity: map[string]time.Time{}}
+	e := &Engine{cfg: cfg, log: cfg.Logger, store: st, locks: map[string]*wsLock{}, activity: map[string]time.Time{}, ops: make(chan struct{}, cfg.MaxOps)}
 	if cfg.NoDiskImages {
 		e.diskErr = errors.New("disk images switched off")
 	} else {
@@ -262,6 +277,11 @@ func (e *Engine) CreateWorkspace(ctx context.Context, req CreateRequest) (*Works
 			return nil, err
 		}
 	}
+	release, err := e.heavy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	id := newID("ws")
 	name := req.Name
 	if name == "" {
@@ -411,7 +431,11 @@ func (e *Engine) Exec(ctx context.Context, id string, req ExecRequest) (ExecResu
 	defer e.touch(id)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	defer l.command(cancel)()
+	done, err := l.command(cancel, e.cfg.MaxCommands)
+	if err != nil {
+		return ExecResult{}, err
+	}
+	defer done()
 	spec, err := e.runtimeSpec(w)
 	if err != nil {
 		return ExecResult{}, err
@@ -453,10 +477,33 @@ func (e *Engine) WriteFile(ctx context.Context, id, name string, r io.Reader, mo
 		return fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	_, err = io.Copy(f, r)
+	if err == nil {
+		err = fsync(f) // acknowledged means on disk: it survives a power cut
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
+	if err == nil {
+		err = syncDirsIn(root, path.Dir(rel)) // and so do the entries naming it
+	}
 	return diskFull(err, spec)
+}
+
+// syncDirsIn syncs dir and every folder above it inside root, so a file just
+// created there (and any folder created for it) is durably named.
+func syncDirsIn(root *os.Root, dir string) error {
+	for {
+		d, err := root.Open(dir)
+		if err != nil {
+			return err
+		}
+		err = fsync(d)
+		d.Close()
+		if err != nil || dir == "." {
+			return err
+		}
+		dir = path.Dir(dir)
+	}
 }
 
 // OpenFile opens a file inside the workspace for reading. The caller closes it.
@@ -530,6 +577,11 @@ func (e *Engine) Save(ctx context.Context, id string, kind save.Kind, requestKey
 	if kind == save.Full && !e.cfg.Runtime.Capabilities().FullSave {
 		return nil, fmt.Errorf("full save: %w (runtime %s)", ErrUnsupported, e.cfg.Runtime.Name())
 	}
+	release, err := e.heavy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := e.wake(ctx, id); err != nil {
 		return nil, err
 	}
@@ -887,6 +939,11 @@ func (e *Engine) Resume(ctx context.Context, saveID string) (*Workspace, error) 
 	if err != nil {
 		return nil, err
 	}
+	release, err := e.heavy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	id := sv.WorkspaceID
 	if err := e.wake(ctx, id); err != nil {
 		return nil, err
@@ -1016,6 +1073,11 @@ func (e *Engine) Copy(ctx context.Context, saveID string, count int, requestKey 
 	if err != nil {
 		return nil, err
 	}
+	release, err := e.heavy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	src, err := e.store.GetWorkspace(ctx, sv.WorkspaceID)
 	if err != nil {
 		return nil, err

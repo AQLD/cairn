@@ -78,49 +78,88 @@ func copyFiles(m map[string]string) map[string]string {
 	return out
 }
 
+// A crasher runs cairnd somewhere and can take it down without warning.
+type crasher interface {
+	start(e *Env) *client.Client // start cairnd (recovering) and wait until it answers
+	crash(e *Env)                // take it down with no chance to clean up
+	stop(e *Env)                 // stop it at the end: sandboxes included
+	dataDir() string             // its data folder, if this process can read it
+	window() time.Duration       // how long to let the workload run before crashing
+}
+
+// processKill runs cairnd here and SIGKILLs it.
+type processKill struct {
+	bin, data string
+	proc      *exec.Cmd
+	c         *client.Client
+}
+
+func (k *processKill) start(e *Env) *client.Client {
+	k.proc, k.c = startCairnd(e, k.bin, k.data)
+	return k.c
+}
+
+func (k *processKill) crash(e *Env) {
+	_ = k.proc.Process.Kill() // SIGKILL: no cleanup, no deferred functions
+	_ = k.proc.Wait()
+}
+
+func (k *processKill) stop(e *Env) {
+	ws, _ := k.c.ListWorkspaces(e.Ctx) // sandboxes outlive cairnd: stop them
+	for _, w := range ws {
+		_ = k.c.DeleteWorkspace(e.Ctx, w.ID)
+	}
+	k.crash(e)
+}
+
+func (k *processKill) dataDir() string { return k.data }
+
+func (k *processKill) window() time.Duration {
+	if os.Getenv("CAIRN_TEST_RUNTIME") == "runsc" {
+		return 4 * time.Second // sandbox operations take seconds
+	}
+	return 400 * time.Millisecond
+}
+
 func killNine(e *Env) {
-	bin := buildCairnd(e)
 	data := e.T.TempDir()
 	e.T.Cleanup(func() { unmountAll(data) }) // runs before TempDir's removal
+	crashTest(e, &processKill{bin: buildCairnd(e), data: data}, KillRounds())
+}
+
+// crashTest runs random operations against cairnd, crashes it at a random
+// moment, restarts it and checks that everything it acknowledged is exactly
+// as acknowledged, round after round.
+func crashTest(e *Env, cr crasher, rounds int) {
 	l := &ledger{files: map[string]map[string]string{}, saves: map[string]savedState{}, deleted: map[string]bool{}}
 	seed := uint64(time.Now().UnixNano())
-	rng := rand.New(rand.NewPCG(seed, 7))      // the workload's choices
-	killRng := rand.New(rand.NewPCG(seed, 13)) // when to kill (separate: used concurrently)
-	e.T.Logf("kill rounds: %d", KillRounds())
+	rng := rand.New(rand.NewPCG(seed, 7))       // the workload's choices
+	crashRng := rand.New(rand.NewPCG(seed, 13)) // when to crash (separate: used concurrently)
+	e.T.Logf("crash rounds: %d (seed %d)", rounds, seed)
 
-	for round := 0; round < KillRounds(); round++ {
-		proc, c := startCairnd(e, bin, data)
-		verifyAfterRestart(e, c, data, l, round)
+	for round := 0; round < rounds; round++ {
+		c := cr.start(e)
+		verifyAfterRestart(e, c, cr.dataDir(), l, round)
+		info, err := c.Info(e.Ctx)
+		e.Must(err)
 
 		ctx, stop := context.WithCancel(e.Ctx)
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			runRandomOps(ctx, c, l, rng, e.Info.Capabilities.FullSave)
+			runRandomOps(ctx, c, l, rng, info.Capabilities.FullSave)
 		}()
-		// kill somewhere inside an operation: sandbox operations take seconds
-		window := 400
-		if os.Getenv("CAIRN_TEST_RUNTIME") == "runsc" {
-			window = 4000
-		}
-		time.Sleep(time.Duration(30+killRng.IntN(window)) * time.Millisecond)
-		_ = proc.Process.Kill() // SIGKILL: no cleanup, no deferred functions
-		_ = proc.Wait()
+		// crash somewhere inside an operation
+		time.Sleep(30*time.Millisecond + time.Duration(crashRng.Int64N(int64(cr.window()))))
+		cr.crash(e)
 		stop()
 		<-done
 	}
 
 	// a final clean start must see everything
-	proc, c := startCairnd(e, bin, data)
-	defer func() { _ = proc.Process.Kill(); _ = proc.Wait() }()
-	verifyAfterRestart(e, c, data, l, KillRounds())
-	// sandboxes outlive cairnd: stop them
-	defer func() {
-		ws, _ := c.ListWorkspaces(e.Ctx)
-		for _, w := range ws {
-			_ = c.DeleteWorkspace(e.Ctx, w.ID)
-		}
-	}()
+	c := cr.start(e)
+	defer cr.stop(e)
+	verifyAfterRestart(e, c, cr.dataDir(), l, rounds)
 	l.mu.Lock()
 	e.T.Logf("acknowledged: %d workspaces, %d saves (%d deleted)", len(l.files), len(l.saves), len(l.deleted))
 	l.mu.Unlock()
@@ -394,18 +433,21 @@ func verifyAfterRestart(e *Env, c *client.Client, data string, l *ledger, round 
 		_ = st
 	}
 
-	// no half-written saves or half-swapped filesystems left on disk
-	entries, _ := os.ReadDir(filepath.Join(data, "saves"))
-	for _, d := range entries {
-		if strings.HasPrefix(d.Name(), ".tmp-") {
-			fail("half-written save left: %s", d.Name())
+	// no half-written saves or half-swapped filesystems left on disk (when the
+	// data folder is readable from here)
+	if data != "" {
+		entries, _ := os.ReadDir(filepath.Join(data, "saves"))
+		for _, d := range entries {
+			if strings.HasPrefix(d.Name(), ".tmp-") {
+				fail("half-written save left: %s", d.Name())
+			}
 		}
-	}
-	wsDirs, _ := os.ReadDir(filepath.Join(data, "workspaces"))
-	for _, d := range wsDirs {
-		for _, leftover := range []string{"rootfs.next", "rootfs.prev"} {
-			if _, err := os.Stat(filepath.Join(data, "workspaces", d.Name(), leftover)); err == nil {
-				fail("%s left in %s", leftover, d.Name())
+		wsDirs, _ := os.ReadDir(filepath.Join(data, "workspaces"))
+		for _, d := range wsDirs {
+			for _, leftover := range []string{"rootfs.next", "rootfs.prev", "rootfs.new", "rootfs.next.img", "rootfs.prev.img", "rootfs.new.img"} {
+				if _, err := os.Stat(filepath.Join(data, "workspaces", d.Name(), leftover)); err == nil {
+					fail("%s left in %s", leftover, d.Name())
+				}
 			}
 		}
 	}

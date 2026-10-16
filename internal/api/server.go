@@ -368,6 +368,9 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 	case errors.Is(err, engine.ErrInsufficientStorage):
 		writeError(w, http.StatusInsufficientStorage, "insufficient_storage", err.Error())
+	case errors.Is(err, engine.ErrBusy):
+		w.Header().Set("Retry-After", "1")
+		writeError(w, http.StatusTooManyRequests, "too_many_requests", err.Error())
 	case errors.Is(err, engine.ErrUnsupported):
 		writeError(w, http.StatusNotImplemented, "unsupported_by_runtime", err.Error())
 	default:

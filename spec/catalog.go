@@ -176,6 +176,8 @@ var Catalog = []Scenario{
 				}},
 			{ID: "G7.10", Title: "Concurrent operations never corrupt state", Proves: "Many clients saving, resuming, copying and writing at once, on the same workspaces, leave every workspace and save consistent.", Milestone: E1},
 			{ID: "G7.11", Title: "A long-running command never freezes its workspace", Proves: "A save or resume that needs the workspace idle answers conflict promptly instead of hanging; other commands keep running; deleting the workspace stops the command.", Milestone: E3, Needs: []Need{NeedInProcess}},
+			{ID: "G7.12", Title: "A power cut mid-operation loses nothing acknowledged", Proves: "Everything the engine acknowledged was on disk, not just in memory.", Milestone: E2},
+			{ID: "G7.13", Title: "A flood of requests is refused or queued, never fails or takes the engine down", Proves: "One caller's burst cannot exhaust the host or starve other workspaces.", Milestone: E1, Needs: []Need{NeedInProcess}},
 			{ID: "G7.7", Title: "A lost server's workspaces resume elsewhere from their last save", Proves: "Losing a server loses at most the work since the last save.", Milestone: E5, Needs: []Need{NeedMultiServer, NeedObjectStorage}},
 			{ID: "G7.8", Title: "A workspace never runs on two servers at once", Proves: "Leases and fencing hold under partitions and slow servers.", Milestone: E5, Needs: []Need{NeedMultiServer}},
 		},

@@ -49,6 +49,8 @@ func run() error {
 	pauseOnShutdown := flag.Bool("pause-on-shutdown", true, "pause every running workspace on SIGTERM so its processes survive a restart or a moved pod (needs runsc)")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 2*time.Minute, "how long shutdown may take (pausing workspaces included)")
 	diskMB := flag.Int64("disk-mb", engine.DefaultDiskMB, "disk size of workspaces created without one, in MB (images are sparse: they use host space only for what is stored)")
+	maxCommands := flag.Int("max-commands", engine.DefaultMaxCommands, "commands one workspace may run at once; more are refused with too_many_requests")
+	maxOps := flag.Int("max-operations", engine.DefaultMaxOps(), "heavy operations (create, save, resume, copy, template import) run at once; more wait their turn")
 	diskImages := flag.Bool("disk-images", true, "enforce workspace disk sizes with an ext4 image per workspace (needs root, mkfs.ext4 and loop devices)")
 	var imports templateImports
 	flag.Var(&imports, "import-template", "NAME=ROOTFS.tar to import at startup if missing or changed (repeatable)")
@@ -84,7 +86,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages})
+	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, MaxCommands: *maxCommands, MaxOps: *maxOps})
 	if err != nil {
 		return err
 	}
@@ -158,6 +160,9 @@ func run() error {
 		Addr:              *listen,
 		Handler:           api.New(eng, log, *token),
 		ReadHeaderTimeout: 10 * time.Second,
+		// close idle keep-alive connections; no read or write timeout: uploads
+		// and streamed command output legitimately take long
+		IdleTimeout: 2 * time.Minute,
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()

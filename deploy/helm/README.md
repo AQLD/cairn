@@ -111,6 +111,11 @@ the pod itself are unreachable from workspaces regardless.
 - **Memory limits** are enforced inside each sandbox: over its limit, a
   workspace's biggest process is killed (exit 137, with a message saying why);
   the workspace and its files stay.
+- **Bursts of requests**: a workspace runs at most 64 commands at once
+  (`--max-commands`); more are refused with `429 too_many_requests` and a
+  `Retry-After` header. Heavy operations (create, save, resume, copy, template
+  import) run a few at a time (`--max-operations`, default twice the CPUs);
+  more wait their turn instead of failing.
 - **Disk limits**: each workspace's files live in a sparse ext4 image of its
   size (`disk_mb`, default `disk.defaultMB`), loop-mounted inside the pod.
   Writing past it fails with "No space left on device" in the workspace and
