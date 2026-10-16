@@ -110,10 +110,17 @@ metadata addresses (169.254.0.0/16) are blocked for workspaces regardless.
 - **Memory limits** are enforced inside each sandbox: over its limit, a
   workspace's biggest process is killed (exit 137, with a message saying why);
   the workspace and its files stay.
+- **Disk limits**: each workspace's files live in a sparse ext4 image of its
+  size (`disk_mb`, default `disk.defaultMB`), loop-mounted inside the pod.
+  Writing past it fails with "No space left on device" in the workspace and
+  `insufficient_storage` through the API; other workspaces are unaffected. The
+  images take volume space only for what is stored, so their sizes may add up
+  to more than the volume: the engine's own free-space check still guards the
+  volume as a whole.
 
 ## Limits today
 
 - One replica. A single engine owns its workspaces and saves; running more than
   one engine against the same data is not supported yet.
-- Per-workspace disk quotas are not enforced yet (memory, CPU and process
-  limits are).
+- Workspaces created before disk limits existed keep plain folders without a
+  size limit.

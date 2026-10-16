@@ -16,13 +16,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/AQLD/cairn/client"
 	"github.com/AQLD/cairn/internal/api"
+	"github.com/AQLD/cairn/internal/disk"
 	"github.com/AQLD/cairn/internal/engine"
 	"github.com/AQLD/cairn/internal/failpoint"
 	"github.com/AQLD/cairn/internal/runtime"
@@ -86,29 +89,32 @@ func newEnv(t testing.TB, token string) *Env {
 }
 
 // shutdown ends the scenario: sandboxes are stopped (they outlive the engine
-// by design) and runsc's namespace mount is released, so the folder can go.
+// by design) and what the engine mounted is released, so the folder can go.
 func (e *Env) shutdown() {
 	if e.Engine != nil {
 		_ = e.Engine.StopAll(context.Background())
 	}
 	e.stop()
-	if e.rt != nil && e.rt.Name() == "runsc" {
-		unmountRunsc(e.DataDir)
-	}
+	unmountAll(e.DataDir)
 }
 
-// unmountRunsc removes the mounts runsc leaves in an engine's data folder, so
-// the test can delete it.
-func unmountRunsc(dataDir string) {
-	for _, m := range []string{"null-netns"} {
-		p := filepath.Join(dataDir, "runsc", m)
-		// a sandbox still exiting can hold it for a moment; then detach lazily
-		for i := 0; i < 20 && exec.Command("mountpoint", "-q", p).Run() == nil; i++ {
-			if exec.Command("umount", p).Run() != nil {
-				time.Sleep(100 * time.Millisecond)
-			}
+// unmountAll unmounts everything mounted inside an engine's data folder
+// (workspace disks, runsc's network namespace), deepest first, so the test can
+// delete it.
+func unmountAll(dataDir string) {
+	b, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return // not Linux: nothing is ever mounted
+	}
+	var points []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if f := strings.Fields(line); len(f) > 4 && strings.HasPrefix(f[4], dataDir+"/") {
+			points = append(points, f[4])
 		}
-		_ = exec.Command("umount", "-l", p).Run()
+	}
+	sort.Slice(points, func(i, j int) bool { return len(points[i]) > len(points[j]) })
+	for _, p := range points {
+		_ = disk.Unmount(p) // retries while busy (a sandbox still exiting), then detaches
 	}
 }
 
@@ -162,9 +168,17 @@ func testInit(t testing.TB) string {
 	return initPath
 }
 
+// removeTestInit deletes the cairn-init testInit built, if it built one.
+func removeTestInit() {
+	if initPath != "" {
+		_ = os.RemoveAll(filepath.Dir(initPath))
+	}
+}
+
 func (e *Env) start() {
 	e.T.Helper()
 	cfg := engine.Config{DataDir: e.DataDir, Runtime: e.rt, Failpoints: e.Failpoints, Now: e.Clock.Now}
+	cfg.NoDiskImages = os.Getenv("CAIRN_TEST_DISK_IMAGES") == "0" // compare with plain folders
 	tmpl := os.Getenv("CAIRN_TEST_TEMPLATE")
 	if tmpl != "" {
 		cfg.DefaultTemplate = "base"

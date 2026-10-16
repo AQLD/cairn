@@ -81,7 +81,7 @@ func copyFiles(m map[string]string) map[string]string {
 func killNine(e *Env) {
 	bin := buildCairnd(e)
 	data := e.T.TempDir()
-	e.T.Cleanup(func() { unmountRunsc(data) }) // runs before TempDir's removal
+	e.T.Cleanup(func() { unmountAll(data) }) // runs before TempDir's removal
 	l := &ledger{files: map[string]map[string]string{}, saves: map[string]savedState{}, deleted: map[string]bool{}}
 	seed := uint64(time.Now().UnixNano())
 	rng := rand.New(rand.NewPCG(seed, 7))      // the workload's choices

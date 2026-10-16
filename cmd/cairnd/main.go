@@ -48,6 +48,8 @@ func run() error {
 	idlePause := flag.Duration("idle-pause", 0, "pause workspaces unused this long: full save, memory freed, woken on next use (0 disables; needs runsc)")
 	pauseOnShutdown := flag.Bool("pause-on-shutdown", true, "pause every running workspace on SIGTERM so its processes survive a restart or a moved pod (needs runsc)")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 2*time.Minute, "how long shutdown may take (pausing workspaces included)")
+	diskMB := flag.Int64("disk-mb", engine.DefaultDiskMB, "disk size of workspaces created without one, in MB (images are sparse: they use host space only for what is stored)")
+	diskImages := flag.Bool("disk-images", true, "enforce workspace disk sizes with an ext4 image per workspace (needs root, mkfs.ext4 and loop devices)")
 	var imports templateImports
 	flag.Var(&imports, "import-template", "NAME=ROOTFS.tar to import at startup if missing or changed (repeatable)")
 	flag.Parse()
@@ -82,7 +84,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, DefaultTemplate: *defaultTemplate})
+	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages})
 	if err != nil {
 		return err
 	}

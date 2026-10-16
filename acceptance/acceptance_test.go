@@ -1,10 +1,17 @@
 package acceptance
 
 import (
+	"os"
 	"testing"
 
 	"github.com/AQLD/cairn/spec"
 )
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	removeTestInit()
+	os.Exit(code)
+}
 
 // TestEndGoals runs every end-goal scenario in the catalog.
 //

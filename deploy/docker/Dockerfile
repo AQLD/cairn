@@ -16,11 +16,11 @@ FROM ubuntu:24.04
 ARG RUNSC_RELEASE=20261005
 ARG TARGETARCH
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl zstd iproute2 iptables \
+ && apt-get install -y --no-install-recommends ca-certificates curl zstd iproute2 iptables e2fsprogs \
  && rm -rf /var/lib/apt/lists/*
 # gVisor, verified against its published checksum, kept per release (upgrade-safe restore)
 RUN set -eu; \
-    case "${TARGETARCH:-amd64}" in amd64) a=x86_64 ;; arm64) a=aarch64 ;; *) echo "unsupported arch $TARGETARCH"; exit 1 ;; esac; \
+    case "${TARGETARCH:-$(dpkg --print-architecture)}" in amd64) a=x86_64 ;; arm64) a=aarch64 ;; *) echo "unsupported arch $TARGETARCH"; exit 1 ;; esac; \
     url="https://storage.googleapis.com/gvisor/releases/release/${RUNSC_RELEASE}/${a}/gvisor.tar.zstd"; \
     cd /tmp && curl -fsSLO --retry 3 "$url" && curl -fsSLO --retry 3 "$url.sha512" && sha512sum -c gvisor.tar.zstd.sha512; \
     mkdir -p /opt/gvisor/${RUNSC_RELEASE} && zstd -dc gvisor.tar.zstd | tar -x -C /opt/gvisor/${RUNSC_RELEASE}; \

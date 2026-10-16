@@ -28,11 +28,11 @@ How the order is chosen:
 
 | # | Builds | Status |
 | --- | --- | --- |
-| 3 | Workspace lifecycle with CPU, memory and disk limits | lifecycle done; limits need `runsc` |
+| 3 | Workspace lifecycle with CPU, memory and disk limits | done (CPU and memory on `runsc`; disk with an image per workspace) |
 | 4 | State store and crash recovery | done (SQLite, failpoint-tested) |
-| 5 | Commands with streamed output and exit codes | exit codes, output, stdin, timeouts done; streaming to do |
+| 5 | Commands with streamed output and exit codes | done |
 | 6 | Files: read, write, upload, download | done |
-| 7 | Full save and resume on the same server | needs `runsc` |
+| 7 | Full save and resume on the same server | done (`runsc`) |
 | 8 | Quick save of files while running | done |
 | 9 | Save manifest: runtime version, CPU profile, sizes, checksums | done (format v1) |
 | 10 | Minimal REST API and command-line tool | done |

@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AQLD/cairn/internal/disk"
 	"github.com/AQLD/cairn/internal/failpoint"
 	"github.com/AQLD/cairn/internal/runtime"
 	"github.com/AQLD/cairn/internal/save"
@@ -66,6 +67,12 @@ type Config struct {
 	// DefaultTemplate is used when a create request names none. Runtimes that
 	// boot a real sandbox (runsc) need one: an empty filesystem has no shell.
 	DefaultTemplate string
+	// DiskMB is the disk size of a workspace created without one
+	// (DefaultDiskMB if 0). Sizes are enforced with a disk image per workspace
+	// where the machine supports them (Linux, root, mkfs.ext4, loop devices).
+	DiskMB int64
+	// NoDiskImages keeps new workspaces in plain folders, with no disk limit.
+	NoDiskImages bool
 }
 
 type Engine struct {
@@ -74,6 +81,7 @@ type Engine struct {
 	store *store.Store
 
 	mu       sync.Mutex
+	diskErr  error                // why new workspaces get no disk image; nil if they do
 	locks    map[string]*wsLock   // per workspace
 	activity map[string]time.Time // last use per workspace, for pausing idle ones
 }
@@ -83,6 +91,9 @@ type Spec struct {
 	Limits   runtime.Limits `json:"limits"`
 	Network  bool           `json:"network"`
 	Template string         `json:"template,omitempty"`
+	// DiskImage: the files live in an image of Limits.DiskMB (see volume).
+	// Decided at creation; workspaces made before disk limits have none.
+	DiskImage bool `json:"disk_image,omitempty"`
 }
 
 // Workspace is what the engine reports about a workspace.
@@ -138,6 +149,12 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if cfg.MinFreeBytes <= 0 {
 		cfg.MinFreeBytes = DefaultMinFreeBytes
 	}
+	if cfg.DiskMB == 0 {
+		cfg.DiskMB = DefaultDiskMB
+	}
+	if cfg.DiskMB < disk.MinSizeMB {
+		return nil, fmt.Errorf("engine: disk size must be at least %d MB", disk.MinSizeMB)
+	}
 	for _, d := range []string{cfg.DataDir, filepath.Join(cfg.DataDir, "workspaces"), filepath.Join(cfg.DataDir, "saves")} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return nil, err
@@ -148,6 +165,14 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 		return nil, err
 	}
 	e := &Engine{cfg: cfg, log: cfg.Logger, store: st, locks: map[string]*wsLock{}, activity: map[string]time.Time{}}
+	if cfg.NoDiskImages {
+		e.diskErr = errors.New("disk images switched off")
+	} else {
+		e.diskErr = disk.Supported()
+	}
+	if e.diskErr != nil {
+		e.log.Warn("workspace disk sizes are not enforced", "reason", e.diskErr.Error())
+	}
 	if err := e.recover(ctx); err != nil {
 		st.Close()
 		return nil, fmt.Errorf("recover: %w", err)
@@ -187,10 +212,12 @@ func (e *Engine) StopAll(ctx context.Context) error {
 func (e *Engine) Counts(ctx context.Context) (*store.Counts, error) { return e.store.Counts(ctx) }
 
 func (e *Engine) Info() Info {
+	caps := e.cfg.Runtime.Capabilities()
+	caps.DiskLimits = e.diskErr == nil // enforced by the engine, whatever the runtime
 	return Info{
 		Runtime:        e.cfg.Runtime.Name(),
 		RuntimeVersion: e.cfg.Runtime.Version(),
-		Capabilities:   e.cfg.Runtime.Capabilities(),
+		Capabilities:   caps,
 		SaveFormat:     save.FormatVersion,
 	}
 }
@@ -210,6 +237,12 @@ type CreateRequest struct {
 func (e *Engine) CreateWorkspace(ctx context.Context, req CreateRequest) (*Workspace, error) {
 	if req.Limits.CPUs < 0 || req.Limits.MemoryMB < 0 || req.Limits.DiskMB < 0 {
 		return nil, fmt.Errorf("%w: limits cannot be negative", ErrInvalid)
+	}
+	if req.Limits.DiskMB != 0 && req.Limits.DiskMB < disk.MinSizeMB {
+		return nil, fmt.Errorf("%w: disk_mb must be at least %d", ErrInvalid, disk.MinSizeMB)
+	}
+	if req.Limits.DiskMB != 0 && e.diskErr != nil {
+		e.log.Warn("workspace disk size is not enforced", "reason", e.diskErr.Error())
 	}
 	if !e.cfg.Runtime.Capabilities().NetworkControl {
 		// The setting is recorded either way; Info reports that it is not enforced.
@@ -235,6 +268,7 @@ func (e *Engine) CreateWorkspace(ctx context.Context, req CreateRequest) (*Works
 		name = id
 	}
 	spec := Spec{Limits: req.Limits, Network: req.Network, Template: template}
+	e.diskFor(&spec)
 	w, err := e.insertWorkspace(ctx, id, name, spec, "", req.RequestKey)
 	if errors.Is(err, store.ErrDuplicateKey) {
 		return e.workspaceForKey(ctx, req.RequestKey, "") // lost a race with the same key
@@ -242,10 +276,10 @@ func (e *Engine) CreateWorkspace(ctx context.Context, req CreateRequest) (*Works
 	if err != nil {
 		return nil, err
 	}
-	if err := e.createRootfs(id, template); err != nil {
+	if err := e.createRootfs(id, spec); err != nil {
 		_ = e.store.SetWorkspaceState(ctx, id, store.Deleted)
 		_ = e.store.ReleaseWorkspaceRequestKey(ctx, id)
-		_ = os.RemoveAll(e.workspaceDir(id))
+		_ = e.removeWorkspaceDir(id, spec)
 		return nil, err
 	}
 	if err := e.cfg.Failpoints.Check(failpoint.CreateBeforeReady); err != nil {
@@ -353,7 +387,11 @@ func (e *Engine) DeleteWorkspace(ctx context.Context, id string) error {
 	if err := e.store.SetWorkspaceState(ctx, id, store.Deleted); err != nil {
 		return err
 	}
-	return os.RemoveAll(e.workspaceDir(id))
+	ws, err := specOf(w)
+	if err != nil {
+		return err
+	}
+	return e.removeWorkspaceDir(id, ws)
 }
 
 // --- commands and files ---
@@ -388,11 +426,15 @@ func (e *Engine) WriteFile(ctx context.Context, id, name string, r io.Reader, mo
 		return err
 	}
 	// a paused workspace's processes may hold this file: wake them first
-	l, _, err := e.useRunning(ctx, id)
+	l, w, err := e.useRunning(ctx, id)
 	if err != nil {
 		return err
 	}
 	defer l.RUnlock()
+	spec, err := specOf(w)
+	if err != nil {
+		return err
+	}
 	root, err := os.OpenRoot(e.rootDir(id))
 	if err != nil {
 		return err
@@ -414,7 +456,7 @@ func (e *Engine) WriteFile(ctx context.Context, id, name string, r io.Reader, mo
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
-	return err
+	return diskFull(err, spec)
 }
 
 // OpenFile opens a file inside the workspace for reading. The caller closes it.
@@ -872,7 +914,11 @@ func (e *Engine) Resume(ctx context.Context, saveID string) (*Workspace, error) 
 	if err := e.cfg.Runtime.Stop(ctx, spec); err != nil {
 		return nil, err
 	}
-	if err := e.restoreInto(ctx, spec, saveID, m, failpoint.ResumeBeforeSwap); err != nil {
+	ws, err := specOf(w)
+	if err != nil {
+		return nil, err
+	}
+	if err := e.restoreInto(ctx, spec, ws, saveID, m, failpoint.ResumeBeforeSwap); err != nil {
 		if !failpoint.Crashed(err) {
 			_ = e.store.SetWorkspaceState(ctx, id, store.Running)
 		}
@@ -891,10 +937,11 @@ func (e *Engine) Resume(ctx context.Context, saveID string) (*Workspace, error) 
 // swaps it in, then starts the workspace (restoring memory for a full save).
 // A crash at any point leaves either the old or the new filesystem in place;
 // recovery finishes the swap or rolls it back.
-func (e *Engine) restoreInto(ctx context.Context, spec runtime.Spec, saveID string, m *save.Manifest, beforeSwap string) error {
-	dir := e.workspaceDir(spec.ID)
-	next, prev := filepath.Join(dir, "rootfs.next"), filepath.Join(dir, "rootfs.prev")
-	_ = os.RemoveAll(next)
+func (e *Engine) restoreInto(ctx context.Context, spec runtime.Spec, ws Spec, saveID string, m *save.Manifest, beforeSwap string) error {
+	root, next, prev := e.volume(spec.ID, "rootfs", ws), e.volume(spec.ID, "rootfs.next", ws), e.volume(spec.ID, "rootfs.prev", ws)
+	if err := next.remove(); err != nil {
+		return err
+	}
 	f, err := os.Open(filepath.Join(e.saveDir(saveID), save.RootfsFile))
 	if err != nil {
 		return err
@@ -903,24 +950,33 @@ func (e *Engine) restoreInto(ctx context.Context, spec runtime.Spec, saveID stri
 	if info, statErr := f.Stat(); statErr == nil {
 		limit = info.Size()
 	}
-	err = save.UntarDir(f, next, limit)
+	err = next.prepare()
+	if err == nil {
+		err = diskFull(save.UntarDir(f, next.path, limit), ws)
+	}
 	f.Close()
+	if err == nil {
+		err = next.release()
+	}
 	if err != nil {
-		_ = os.RemoveAll(next)
+		_ = next.remove()
 		return err
 	}
 	if err := e.cfg.Failpoints.Check(beforeSwap); err != nil {
 		return err
 	}
-	if _, err := os.Stat(spec.RootDir); err == nil {
-		if err := os.Rename(spec.RootDir, prev); err != nil {
+	if root.exists() {
+		if err := root.renameTo(prev); err != nil {
 			return err
 		}
 	}
-	if err := os.Rename(next, spec.RootDir); err != nil {
+	if err := next.renameTo(root); err != nil {
 		return err
 	}
-	_ = os.RemoveAll(prev)
+	if err := root.attach(); err != nil {
+		return err
+	}
+	_ = prev.remove()
 
 	if m.Kind == save.Full {
 		return e.cfg.Runtime.Restore(ctx, spec, filepath.Join(e.saveDir(saveID), save.MemoryDir))
@@ -946,10 +1002,11 @@ func (e *Engine) Copy(ctx context.Context, saveID string, count int, requestKey 
 	if err != nil {
 		return nil, err
 	}
-	var spec Spec
-	if err := json.Unmarshal(src.Spec, &spec); err != nil {
+	spec, err := specOf(src)
+	if err != nil {
 		return nil, err
 	}
+	e.diskFor(&spec) // the copy keeps the original's size, in this engine's kind of disk
 
 	out := make([]Workspace, 0, count)
 	for i := 0; i < count; i++ {
@@ -977,7 +1034,7 @@ func (e *Engine) Copy(ctx context.Context, saveID string, count int, requestKey 
 		if err := os.MkdirAll(e.workspaceDir(id), 0o700); err != nil {
 			return out, err
 		}
-		if err := e.restoreInto(ctx, rs, saveID, m, failpoint.CopyBeforeRunning); err != nil {
+		if err := e.restoreInto(ctx, rs, spec, saveID, m, failpoint.CopyBeforeRunning); err != nil {
 			return out, err
 		}
 		if err := e.store.SetWorkspaceState(ctx, id, store.Running); err != nil {
@@ -1056,19 +1113,28 @@ func (e *Engine) recover(ctx context.Context) error {
 			if err := e.store.ReleaseWorkspaceRequestKey(ctx, w.ID); err != nil {
 				return err
 			}
-			_ = os.RemoveAll(e.workspaceDir(w.ID))
+			if spec, err := specOf(w); err == nil {
+				_ = e.removeWorkspaceDir(w.ID, spec)
+			}
 			e.log.Info("discarded interrupted copy", "workspace", w.ID)
 			continue
 		}
-		if err := e.finishSwap(w.ID); err != nil {
+		spec, err := specOf(w)
+		if err != nil {
 			return err
 		}
-		_ = os.RemoveAll(e.rootDir(w.ID) + ".new") // a template copy cut off mid-extraction
-		var spec Spec
-		_ = json.Unmarshal(w.Spec, &spec)
-		if err := e.createRootfs(w.ID, spec.Template); err != nil {
+		if err := e.finishSwap(w.ID, spec); err != nil {
+			return err
+		}
+		// a template copy cut off mid-extraction
+		if err := e.volume(w.ID, "rootfs.new", spec).remove(); err != nil {
+			return err
+		}
+		if err := e.createRootfs(w.ID, spec); err != nil {
 			e.log.Error("could not rebuild workspace filesystem", "workspace", w.ID, "err", err)
-			if err := os.MkdirAll(e.rootDir(w.ID), 0o755); err != nil {
+			empty := spec
+			empty.Template = "" // keep the workspace usable, with an empty filesystem of its kind
+			if err := e.createRootfs(w.ID, empty); err != nil {
 				return err
 			}
 		}
@@ -1084,6 +1150,16 @@ func (e *Engine) recover(ctx context.Context) error {
 		return err
 	}
 	for i := range live {
+		// every workspace's files must be in place, stopped and paused ones
+		// included: they can be read, and the host may have rebooted since
+		ws, err := specOf(&live[i])
+		if err != nil {
+			return err
+		}
+		if err := e.volume(live[i].ID, "rootfs", ws).attach(); err != nil {
+			e.log.Error("could not mount workspace disk", "workspace", live[i].ID, "err", err)
+			continue
+		}
 		if live[i].State != store.Running {
 			continue
 		}
@@ -1099,24 +1175,24 @@ func (e *Engine) recover(ctx context.Context) error {
 }
 
 // finishSwap completes or rolls back a filesystem swap a crash interrupted.
-func (e *Engine) finishSwap(id string) error {
-	dir := e.workspaceDir(id)
-	root, next, prev := e.rootDir(id), filepath.Join(dir, "rootfs.next"), filepath.Join(dir, "rootfs.prev")
-	if _, err := os.Stat(root); errors.Is(err, os.ErrNotExist) {
+func (e *Engine) finishSwap(id string, spec Spec) error {
+	root, next, prev := e.volume(id, "rootfs", spec), e.volume(id, "rootfs.next", spec), e.volume(id, "rootfs.prev", spec)
+	if !root.exists() {
 		// crashed between the two renames: the new filesystem is complete, finish
-		if _, err := os.Stat(next); err == nil {
-			if err := os.Rename(next, root); err != nil {
+		if next.exists() {
+			if err := next.renameTo(root); err != nil {
 				return err
 			}
-		} else if _, err := os.Stat(prev); err == nil {
-			if err := os.Rename(prev, root); err != nil {
+		} else if prev.exists() {
+			if err := prev.renameTo(root); err != nil {
 				return err
 			}
 		}
 	}
-	_ = os.RemoveAll(next) // never swapped in: the old filesystem stays
-	_ = os.RemoveAll(prev)
-	return nil
+	if err := next.remove(); err != nil { // never swapped in: the old filesystem stays
+		return err
+	}
+	return prev.remove()
 }
 
 // --- helpers ---
@@ -1162,6 +1238,17 @@ func (e *Engine) saveDir(id string) string { return filepath.Join(e.savesDir(), 
 
 // SaveDir is where a save lives on disk; tests use it to inject corruption.
 func (e *Engine) SaveDir(id string) string { return e.saveDir(id) }
+
+// specOf decodes what a workspace was created with.
+func specOf(w *store.Workspace) (Spec, error) {
+	var spec Spec
+	if len(w.Spec) > 0 {
+		if err := json.Unmarshal(w.Spec, &spec); err != nil {
+			return Spec{}, err
+		}
+	}
+	return spec, nil
+}
 
 func toWorkspace(w *store.Workspace) (*Workspace, error) {
 	var spec Spec

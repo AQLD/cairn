@@ -7,7 +7,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
 | E0 | 0 | 4 | 1 |
-| E1 | 49 | 1 | 4 |
+| E1 | 51 | 0 | 4 |
 | E2 | 22 | 6 | 1 |
 | E3 | 8 | 3 | 0 |
 | E4 | 6 | 6 | 1 |
@@ -69,9 +69,10 @@ A platform can give each end user a walled-off workspace with limits it sets. Ga
 - 📂 **G3.2** CPU, memory and disk limits are enforced · E1 · needs resource_limits
   - ✅ **G3.2.1** CPU limit caps throughput · E1 · needs resource_limits
   - ✅ **G3.2.2** Memory limit stops the workspace's own processes, not the host · E1 · needs resource_limits
-  - ⏳ **G3.2.3** Disk limit stops writes with a clear error · E1 · needs disk_limits
+  - ✅ **G3.2.3** Disk limit stops writes with a clear error · E1 · needs disk_limits
   - ✅ **G3.2.4** Running out of memory never loses the workspace or its files · E1 · needs resource_limits
   - ✅ **G3.2.5** Only processes over the memory limit are stopped · E1 · needs resource_limits
+  - ✅ **G3.2.6** A workspace keeps its disk size through resume, copy and restart · E1 · needs disk_limits
 - ⏳ **G3.3** Hitting a quota saves the work instead of killing it · E4
 - ⏳ **G3.4** Quotas apply per workspace and per project · E4
 - ✅ **G3.5** Workspaces are listed and managed independently · E1
