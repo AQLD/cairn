@@ -209,7 +209,7 @@ var Catalog = []Scenario{
 			{ID: "G9.5", Title: "Copy fan-out scales", Milestone: E2, Bench: "BenchmarkCopy"},
 			{ID: "G9.6", Title: "Full save and resume meet the targets set in E0", Milestone: E0, Needs: []Need{NeedFullSave, NeedLinuxBench}, Bench: "BenchmarkFullSaveResume"},
 			{ID: "G9.7", Title: "Seven workspaces fit on an 8 vCPU / 32 GiB server under agent-like load", Proves: "The density behind the cost model holds.", Milestone: E4, Needs: []Need{NeedLinuxBench}, Bench: "BenchmarkDensity"},
-			{ID: "G9.8", Title: "A stopped workspace costs only its storage", Milestone: E4, Needs: []Need{NeedFullSave, NeedLinuxBench}},
+			{ID: "G9.8", Title: "A stopped workspace costs only its storage", Milestone: E4, Needs: []Need{NeedFullSave, NeedInProcess}},
 		},
 	},
 	{

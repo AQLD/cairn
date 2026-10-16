@@ -10,7 +10,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E1 | 53 | 0 | 4 |
 | E2 | 27 | 3 | 1 |
 | E3 | 8 | 3 | 0 |
-| E4 | 7 | 5 | 1 |
+| E4 | 8 | 4 | 1 |
 | E5 | 0 | 2 | 0 |
 
 Legend: ✅ implemented · ⏳ pending · 📏 benchmark · needs = what the environment must provide (skipped without it)
@@ -180,7 +180,7 @@ Save, resume and copy are quick, and enough workspaces fit on a server for the e
 - 📏 **G9.5** Copy fan-out scales · E2 · `BenchmarkCopy`
 - 📏 **G9.6** Full save and resume meet the targets set in E0 · E0 · needs full_save, linux_bench · `BenchmarkFullSaveResume`
 - 📏 **G9.7** Seven workspaces fit on an 8 vCPU / 32 GiB server under agent-like load · E4 · needs linux_bench · `BenchmarkDensity`
-- ⏳ **G9.8** A stopped workspace costs only its storage · E4 · needs full_save, linux_bench
+- ✅ **G9.8** A stopped workspace costs only its storage · E4 · needs full_save, in_process
 
 ## G10 Easy to run and operate
 
