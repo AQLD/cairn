@@ -243,6 +243,23 @@ func (r *Runsc) run(ctx context.Context, spec Spec, args ...string) error {
 	return nil
 }
 
+// runDir holds small transient files (exec pid files): /run/cairn, a tmpfs on
+// systemd hosts and in containers, else the system's temp folder.
+func runDir() string {
+	runDirOnce.Do(func() {
+		runDirPath = "/run/cairn"
+		if err := os.MkdirAll(runDirPath, 0o700); err != nil {
+			runDirPath = os.TempDir()
+		}
+	})
+	return runDirPath
+}
+
+var (
+	runDirOnce sync.Once
+	runDirPath string
+)
+
 // containerID is the sandbox name for a workspace.
 func containerID(spec Spec) string { return "cairn-" + spec.ID }
 
@@ -393,7 +410,8 @@ func (r *Runsc) Exec(ctx context.Context, spec Spec, req ExecRequest) (ExecResul
 			return ExecResult{}, err
 		}
 	}
-	pidFile := filepath.Join(filepath.Dir(spec.RootDir), fmt.Sprintf("exec-%d.pid", time.Now().UnixNano()))
+	// on tmpfs, not the data volume: a command must run even when that is full
+	pidFile := filepath.Join(runDir(), fmt.Sprintf("exec-%s-%d.pid", spec.ID, time.Now().UnixNano()))
 	defer os.Remove(pidFile)
 
 	args := []string{"exec", "--cwd", cwd, "--internal-pid-file", pidFile}

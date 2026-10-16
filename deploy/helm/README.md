@@ -105,8 +105,11 @@ the pod itself are unreachable from workspaces regardless.
   (default 6h); a save that fails is marked `corrupt` and never resumed.
   `cairn verify SAVE` checks one on demand.
 - **Disk**: the engine refuses new work with `507 insufficient_storage` before
-  the volume fills, instead of writing broken saves. Size the volume for your
-  saves plus headroom.
+  the volume fills, instead of writing broken saves. Workspace disks are
+  sparse, so their sizes can add up to more than the volume: alert on
+  `cairn_volume_free_bytes`. If the volume does fill, a workspace writing at
+  that moment loses that write and its disk is repaired automatically on its
+  next use once there is room (its processes restart, its files stay).
 - **Pod restarts and node drains**: on shutdown the engine pauses every running
   workspace (a full save each), so after the pod comes back each workspace wakes
   on first use with its processes as they were. Give the pod time to do it

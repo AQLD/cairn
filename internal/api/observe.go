@@ -127,4 +127,12 @@ func (s *Server) registerGauges() {
 		}
 		return []metrics.Sample{{Value: float64(c.SaveBytes)}}
 	})
+	// workspace disks are sparse: alert on this before it reaches zero
+	s.metrics.Gauge("cairn_volume_free_bytes", "Free space on the volume holding workspaces and saves.", func() []metrics.Sample {
+		free, err := s.eng.VolumeFree()
+		if err != nil {
+			return nil
+		}
+		return []metrics.Sample{{Value: float64(free)}}
+	})
 }
