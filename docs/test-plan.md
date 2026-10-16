@@ -8,9 +8,9 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | --- | --- | --- | --- |
 | E0 | 0 | 4 | 1 |
 | E1 | 51 | 0 | 4 |
-| E2 | 22 | 6 | 1 |
+| E2 | 23 | 5 | 1 |
 | E3 | 8 | 3 | 0 |
-| E4 | 6 | 6 | 1 |
+| E4 | 7 | 5 | 1 |
 | E5 | 0 | 2 | 0 |
 
 Legend: ✅ implemented · ⏳ pending · 📏 benchmark · needs = what the environment must provide (skipped without it)
@@ -118,7 +118,7 @@ Every save either restores exactly or is refused with a clear error. Gate: **E2*
   - ⏳ **G6.5.1** A dropped storage connection mid-upload is retried or fails cleanly · E2 · needs object_storage
   - ⏳ **G6.5.2** Downloaded saves are verified before use · E2 · needs object_storage
 - ⏳ **G6.6** Saves restore on another CPU type · E2 · needs full_save, linux_bench
-- ⏳ **G6.7** Saves restore after a gVisor upgrade · E2 · needs full_save, linux_bench
+- ✅ **G6.7** Saves restore after a gVisor upgrade · E2 · needs full_save, in_process
 - 📂 **G6.8** Deleted saves can be recovered within the retention window · E2
   - ✅ **G6.8.1** A deleted save is hidden and cannot be resumed or copied · E2
   - ✅ **G6.8.2** Undelete within the window brings the save back intact · E2
@@ -162,7 +162,7 @@ Untrusted, even hostile, code stays inside its workspace. Gate: **E4**.
 - ✅ **G8.2** The file API does not follow symlinks out of the workspace · E1
 - ✅ **G8.3** A fork bomb is contained · E4 · needs isolation, resource_limits
 - ✅ **G8.4** A memory hog is contained · E4 · needs isolation, resource_limits
-- ⏳ **G8.5** A disk fill is contained · E4 · needs isolation, disk_limits
+- ✅ **G8.5** A disk fill is contained · E4 · needs isolation, disk_limits, in_process
 - ✅ **G8.6** Cloud metadata and the host network are unreachable · E4 · needs network_control
 - ✅ **G8.7** Host files and processes are invisible · E4 · needs isolation
 

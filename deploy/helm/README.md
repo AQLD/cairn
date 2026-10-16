@@ -82,7 +82,8 @@ template never changes an existing workspace.
 
 Workspaces with network switched on reach the outside through the engine pod's
 network, so the pod's NetworkPolicies and egress rules apply to them. Cloud
-metadata addresses (169.254.0.0/16) are blocked for workspaces regardless.
+metadata services (169.254.0.0/16, and 100.100.100.200 on Alibaba Cloud) and
+the pod itself are unreachable from workspaces regardless.
 
 ## Operating it
 
@@ -117,6 +118,17 @@ metadata addresses (169.254.0.0/16) are blocked for workspaces regardless.
   images take volume space only for what is stored, so their sizes may add up
   to more than the volume: the engine's own free-space check still guards the
   volume as a whole.
+
+## Upgrading gVisor
+
+A full save (and so every workspace paused for a shutdown) restores only with
+the gVisor release that made it. The image installs the release pinned in
+`deploy/versions.env` plus every release listed in `RUNSC_KEEP`; when you
+upgrade `RUNSC_RELEASE`, move the old one into `RUNSC_KEEP` so workspaces
+paused before the rollout wake with their processes. Workspaces are always
+started fresh on the newest release. If a save's release is missing, resuming
+it fails with `unsupported_by_runtime` naming the release, and a paused
+workspace wakes with its files but not its processes.
 
 ## Limits today
 

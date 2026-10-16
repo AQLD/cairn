@@ -939,27 +939,17 @@ func (e *Engine) Resume(ctx context.Context, saveID string) (*Workspace, error) 
 // recovery finishes the swap or rolls it back.
 func (e *Engine) restoreInto(ctx context.Context, spec runtime.Spec, ws Spec, saveID string, m *save.Manifest, beforeSwap string) error {
 	root, next, prev := e.volume(spec.ID, "rootfs", ws), e.volume(spec.ID, "rootfs.next", ws), e.volume(spec.ID, "rootfs.prev", ws)
-	if err := next.remove(); err != nil {
-		return err
-	}
-	f, err := os.Open(filepath.Join(e.saveDir(saveID), save.RootfsFile))
-	if err != nil {
-		return err
-	}
-	var limit int64
-	if info, statErr := f.Stat(); statErr == nil {
-		limit = info.Size()
-	}
-	err = next.prepare()
-	if err == nil {
-		err = diskFull(save.UntarDir(f, next.path, limit), ws)
-	}
-	f.Close()
-	if err == nil {
-		err = next.release()
+	err := e.extractSave(saveID, next, ws)
+	if errors.Is(err, ErrInsufficientStorage) && next.image {
+		// A save of a full disk can need a few more blocks than it had once
+		// extracted into a fresh filesystem, which allocates differently. Give
+		// it that room rather than strand the save: the workspace comes back
+		// exactly as full as it was.
+		next.sizeMB += max(64, next.sizeMB/16)
+		e.log.Info("save needs more room than its disk once extracted; growing the disk", "save", saveID, "disk_mb", next.sizeMB)
+		err = e.extractSave(saveID, next, ws)
 	}
 	if err != nil {
-		_ = next.remove()
 		return err
 	}
 	if err := e.cfg.Failpoints.Check(beforeSwap); err != nil {
@@ -982,6 +972,34 @@ func (e *Engine) restoreInto(ctx context.Context, spec runtime.Spec, ws Spec, sa
 		return e.cfg.Runtime.Restore(ctx, spec, filepath.Join(e.saveDir(saveID), save.MemoryDir))
 	}
 	return e.cfg.Runtime.Start(ctx, spec)
+}
+
+// extractSave builds the save's filesystem in v, unmounted when done. On
+// failure nothing of v is left.
+func (e *Engine) extractSave(saveID string, v volume, ws Spec) error {
+	if err := v.remove(); err != nil {
+		return err
+	}
+	f, err := os.Open(filepath.Join(e.saveDir(saveID), save.RootfsFile))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	var limit int64
+	if info, statErr := f.Stat(); statErr == nil {
+		limit = info.Size()
+	}
+	err = v.prepare()
+	if err == nil {
+		err = diskFull(save.UntarDir(f, v.path, limit), ws)
+	}
+	if err == nil {
+		err = v.release()
+	}
+	if err != nil {
+		_ = v.remove()
+	}
+	return err
 }
 
 // Copy makes count new workspaces from one save. Each copy has its own ID and

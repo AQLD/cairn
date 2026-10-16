@@ -2,6 +2,7 @@ package acceptance
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -269,12 +270,7 @@ while True: x.append(b'x' * (64 << 20))" & done; wait`},
 
 	// G5.3: network is off unless switched on per workspace.
 	register("G5.3", func(e *Env) {
-		probe := `python3 -c "
-import socket, sys
-try:
-    socket.create_connection(('1.1.1.1', 443), timeout=3); print('reachable')
-except OSError as e:
-    print('unreachable')"`
+		probe := probeInternet
 		off := e.Workspace("offline")
 		Equal(e, "default workspace", e.Sh(off.ID, probe), "unreachable\n")
 		on, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "online", Network: true})
@@ -282,16 +278,55 @@ except OSError as e:
 		Equal(e, "network switched on", e.Sh(on.ID, probe), "reachable\n")
 	})
 
-	// G8.6: cloud metadata is unreachable even with network on.
+	// G8.6: cloud metadata is unreachable even with network on, including
+	// for a workspace adopted by a restarted engine.
 	register("G8.6", func(e *Env) {
 		on, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "online", Network: true})
 		e.Must(err)
-		out := e.Sh(on.ID, `python3 -c "
+		checkMetadataBlocked(e, on.ID)
+		if e.Engine != nil {
+			e.Restart() // the sandbox keeps running and is adopted
+			checkMetadataBlocked(e, on.ID)
+			Equal(e, "network after the restart", e.Sh(on.ID, probeInternet), "reachable\n")
+		}
+	})
+}
+
+const probeInternet = `python3 -c "
+import socket
+try:
+    socket.create_connection(('1.1.1.1', 443), timeout=3); print('reachable')
+except OSError:
+    print('unreachable')"`
+
+// checkMetadataBlocked probes the cloud metadata address from the workspace.
+// Where nothing answers there (a dev VM) the probe passes either way, so as
+// root it also checks the firewall itself: the block must come before the
+// rule letting the workspace's traffic through.
+func checkMetadataBlocked(e *Env, ws string) {
+	e.T.Helper()
+	out := e.Sh(ws, `python3 -c "
 import socket
 try:
     socket.create_connection(('169.254.169.254', 80), timeout=3); print('reachable')
 except OSError:
     print('blocked')"`)
-		Equal(e, "cloud metadata", out, "blocked\n")
-	})
+	Equal(e, "cloud metadata", out, "blocked\n")
+	if os.Geteuid() != 0 || e.Engine == nil {
+		return
+	}
+	rules, err := exec.Command("iptables", "-S", "FORWARD").Output()
+	e.Must(err)
+	drop, accept := -1, -1
+	for i, line := range strings.Split(string(rules), "\n") {
+		if drop < 0 && strings.Contains(line, "-d 169.254.0.0/16") && strings.HasSuffix(line, "-j DROP") {
+			drop = i
+		}
+		if accept < 0 && strings.Contains(line, "-i ch") && strings.HasSuffix(line, "-j ACCEPT") {
+			accept = i
+		}
+	}
+	if drop < 0 || accept < 0 || drop > accept {
+		e.T.Fatalf("metadata block must precede the workspace's accept rule:\n%s", rules)
+	}
 }

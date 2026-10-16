@@ -40,13 +40,18 @@ import (
 //     `runsc exec` started is killed on restore. So every workspace runs
 //     cairn-init as process 1, and commands are started by it (see cmd/cairn-init).
 type Runsc struct {
-	Binary   string // path to runsc
+	Binary   string // path to runsc: the release new sandboxes boot with
 	StateDir string // runsc --root: its record of running sandboxes
 	Init     string // path to the cairn-init binary for new sandboxes
 	Log      *slog.Logger
+	// Releases is the folder holding one subfolder per installed gVisor
+	// release (<Releases>/<release>/runsc), searched when a full save made
+	// with another release is restored. Default: two levels up from Binary's
+	// real path, i.e. /opt/gvisor for /opt/gvisor/<release>/runsc.
+	Releases string
 
-	versionOnce sync.Once
-	version     string
+	versionMu sync.Mutex
+	versions  map[string]string // runsc path -> version
 
 	mu sync.Mutex // serializes network setup
 }
@@ -112,19 +117,96 @@ func (r *Runsc) heal(ctx context.Context, spec Spec, why string) error {
 	return r.Start(ctx, spec)
 }
 
-// Version is runsc's release, recorded in every save: a full save restores only
-// with the build that made it.
-func (r *Runsc) Version() string {
-	r.versionOnce.Do(func() {
-		out, err := exec.Command(r.Binary, "--version").Output()
-		if err != nil {
-			r.version = "unknown"
-			return
-		}
+// Version is the release new sandboxes boot with, recorded in every save.
+func (r *Runsc) Version() string { return r.versionOf(r.Binary) }
+
+// versionOf is a runsc binary's release ("release-20261005.0").
+func (r *Runsc) versionOf(bin string) string {
+	r.versionMu.Lock()
+	defer r.versionMu.Unlock()
+	if v, ok := r.versions[bin]; ok {
+		return v
+	}
+	v := "unknown"
+	if out, err := exec.Command(bin, "--version").Output(); err == nil {
 		first := strings.SplitN(string(out), "\n", 2)[0]
-		r.version = strings.TrimSpace(strings.TrimPrefix(first, "runsc version"))
-	})
-	return r.version
+		v = strings.TrimSpace(strings.TrimPrefix(first, "runsc version"))
+	}
+	if r.versions == nil {
+		r.versions = map[string]string{}
+	}
+	r.versions[bin] = v
+	return v
+}
+
+// --- which runsc runs a sandbox ----------------------------------------------
+//
+// A checkpoint restores only with the gVisor release that made it, and a
+// sandbox must be driven (exec, checkpoint, kill) by the release running it.
+// So each workspace records the binary its sandbox runs on; a fresh boot uses
+// the current release, a restore the release the checkpoint names. Releases
+// are kept side by side (deploy/install-gvisor.sh RELEASE), so upgrading
+// gVisor never strands a full save or a paused workspace.
+
+// binaryFile records the real path of the runsc running the workspace's sandbox.
+func binaryFile(spec Spec) string { return filepath.Join(filepath.Dir(spec.RootDir), "runsc-binary") }
+
+// versionFile, inside a checkpoint, names the release that made it.
+const versionFile = "runsc-version"
+
+// binaryFor is the runsc that drives the workspace's sandbox.
+func (r *Runsc) binaryFor(spec Spec) string {
+	if b, err := os.ReadFile(binaryFile(spec)); err == nil {
+		if p := strings.TrimSpace(string(b)); p != "" {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
+	}
+	return r.Binary
+}
+
+// useBinary records bin (by its real path, so relinking runsc to a newer
+// release later does not change it) as the workspace's runsc.
+func (r *Runsc) useBinary(spec Spec, bin string) error {
+	if p, err := exec.LookPath(bin); err == nil {
+		bin = p
+	}
+	if p, err := filepath.EvalSymlinks(bin); err == nil {
+		bin = p
+	}
+	tmp := binaryFile(spec) + ".tmp"
+	if err := os.WriteFile(tmp, []byte(bin+"\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, binaryFile(spec))
+}
+
+// release finds the installed runsc of the given version.
+func (r *Runsc) release(version string) (string, error) {
+	if version == "" || version == r.Version() {
+		return r.Binary, nil
+	}
+	dir := r.Releases
+	if dir == "" {
+		bin := r.Binary
+		if p, err := exec.LookPath(bin); err == nil {
+			bin = p
+		}
+		if p, err := filepath.EvalSymlinks(bin); err == nil {
+			bin = p
+		}
+		dir = filepath.Dir(filepath.Dir(bin))
+	}
+	candidates, _ := filepath.Glob(filepath.Join(dir, "*", "runsc"))
+	for _, c := range candidates {
+		if r.versionOf(c) == version {
+			return c, nil
+		}
+	}
+	folder := strings.TrimSuffix(strings.TrimPrefix(version, "release-"), ".0")
+	return "", fmt.Errorf("%w: this full save was made with gVisor %s, which is not installed in %s (install it with deploy/install-gvisor.sh %s)",
+		ErrUnsupported, version, dir, folder)
 }
 
 func (r *Runsc) Capabilities() Capabilities {
@@ -149,7 +231,7 @@ func (r *Runsc) flags(spec Spec) []string {
 }
 
 func (r *Runsc) cmd(ctx context.Context, spec Spec, args ...string) *exec.Cmd {
-	return exec.CommandContext(ctx, r.Binary, append(r.flags(spec), args...)...)
+	return exec.CommandContext(ctx, r.binaryFor(spec), append(r.flags(spec), args...)...)
 }
 
 // run executes a runsc subcommand and returns its error with runsc's own output.
@@ -187,14 +269,19 @@ func (r *Runsc) status(ctx context.Context, spec Spec) string {
 func (r *Runsc) Start(ctx context.Context, spec Spec) error {
 	switch r.status(ctx, spec) {
 	case "running":
-		return nil
+		// adopted after an engine restart: bring its firewall up to what this
+		// engine enforces (only the host side: the sandbox owns its interface)
+		return r.firewall(spec)
 	case "":
 	default:
 		_ = r.run(ctx, spec, "delete", "--force", containerID(spec))
 	}
-	// a fresh boot takes the engine's current cairn-init
+	// a fresh boot takes the engine's current cairn-init and gVisor
 	if err := copyExecutable(r.Init, initFile(spec)); err != nil {
 		return fmt.Errorf("install cairn-init: %w", err)
+	}
+	if err := r.useBinary(spec, r.Binary); err != nil {
+		return err
 	}
 	if err := r.writeBundle(spec); err != nil {
 		return err
@@ -248,6 +335,9 @@ func (r *Runsc) Checkpoint(ctx context.Context, spec Spec, dir string) error {
 		return err
 	}
 	_ = r.run(ctx, spec, "delete", "--force", containerID(spec))
+	if err := os.WriteFile(filepath.Join(dir, versionFile), []byte(r.versionOf(r.binaryFor(spec))+"\n"), 0o644); err != nil {
+		return err
+	}
 	// the processes in the checkpoint were started by this exact binary
 	return copyExecutable(initFile(spec), filepath.Join(dir, initSaveName))
 }
@@ -255,8 +345,19 @@ func (r *Runsc) Checkpoint(ctx context.Context, spec Spec, dir string) error {
 // Restore starts the workspace from a checkpoint. The workspace folder must
 // already hold the filesystem saved with it (the engine extracts it first).
 func (r *Runsc) Restore(ctx context.Context, spec Spec, dir string) error {
+	var version string // checkpoints from before versions were recorded: the current release
+	if b, err := os.ReadFile(filepath.Join(dir, versionFile)); err == nil {
+		version = strings.TrimSpace(string(b))
+	}
+	bin, err := r.release(version)
+	if err != nil {
+		return err
+	}
 	if r.status(ctx, spec) != "" {
 		_ = r.run(ctx, spec, "delete", "--force", containerID(spec))
+	}
+	if err := r.useBinary(spec, bin); err != nil {
+		return err
 	}
 	if err := copyExecutable(filepath.Join(dir, initSaveName), initFile(spec)); err != nil {
 		return fmt.Errorf("checkpoint has no usable cairn-init: %w", err)
@@ -308,7 +409,7 @@ func (r *Runsc) Exec(ctx context.Context, spec Spec, req ExecRequest) (ExecResul
 		runCtx, cancel = context.WithTimeout(ctx, req.Timeout)
 		defer cancel()
 	}
-	c := exec.Command(r.Binary, append(r.flags(spec), args...)...)
+	c := exec.Command(r.binaryFor(spec), append(r.flags(spec), args...)...)
 	c.Stdin, c.Stdout, c.Stderr = req.Stdin, req.Stdout, req.Stderr
 	if err := c.Start(); err != nil {
 		return ExecResult{}, err
@@ -576,31 +677,78 @@ func (r *Runsc) netUp(spec Spec) error {
 			return err
 		}
 	}
-	rules := [][]string{
-		{"-t", "nat", "POSTROUTING", "-s", wsIP + "/32", "!", "-o", hostIf, "-j", "MASQUERADE"},
-		{"FORWARD", "-i", hostIf, "-d", "169.254.0.0/16", "-j", "DROP"}, // cloud metadata
-		{"FORWARD", "-i", hostIf, "-j", "ACCEPT"},
-		{"FORWARD", "-o", hostIf, "-j", "ACCEPT"},
-		{"INPUT", "-i", hostIf, "-j", "DROP"}, // the host itself is not reachable from the workspace
+	return r.firewallLocked(spec)
+}
+
+// firewall applies the host's rules for a workspace with network on.
+func (r *Runsc) firewall(spec Spec) error {
+	if !spec.Network {
+		return nil
 	}
-	for _, rule := range rules {
-		table, rest := []string{}, rule
-		if rule[0] == "-t" {
-			table, rest = rule[:2], rule[2:]
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.firewallLocked(spec)
+}
+
+func (r *Runsc) firewallLocked(spec Spec) error {
+	hostIf := "ch" + shortHash(spec.ID, 10)
+	_, wsIP := subnet(spec)
+	sh := func(args ...string) error {
+		out, err := exec.Command(args[0], args[1:]...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%s: %v: %s", strings.Join(args, " "), err, bytes.TrimSpace(out))
 		}
-		check := append(append(append([]string{"iptables"}, table...), "-C"), rest...)
-		if sh(check...) == nil {
+		return nil
+	}
+	// What the workspace may reach. -I puts a rule first in its chain (ahead
+	// of distribution defaults: Docker sets FORWARD to DROP).
+	accepts := [][]string{
+		{"-t", "nat", "-A", "POSTROUTING", "-s", wsIP + "/32", "!", "-o", hostIf, "-j", "MASQUERADE"},
+		{"-I", "FORWARD", "-i", hostIf, "-j", "ACCEPT"},
+		{"-I", "FORWARD", "-o", hostIf, "-j", "ACCEPT"},
+	}
+	for _, rule := range accepts {
+		if sh(append([]string{"iptables"}, checkRule(rule)...)...) == nil {
 			continue
 		}
-		op := "-A"
-		if rest[0] == "FORWARD" || rest[0] == "INPUT" {
-			op = "-I" // ahead of distribution defaults (Docker sets FORWARD to DROP)
+		if err := sh(append([]string{"iptables"}, rule...)...); err != nil {
+			return err
 		}
-		if err := sh(append(append(append([]string{"iptables"}, table...), op), rest...)...); err != nil {
+	}
+	// What it may not, checked before the accepts: removed and put back at
+	// position 1 every time, so they lead even where rules were left in
+	// another order (engines before this fix inserted them below the accepts,
+	// which let workspaces reach cloud metadata).
+	for _, rule := range blockRules(hostIf) {
+		for sh(append([]string{"iptables", "-D"}, rule...)...) == nil {
+		}
+		if err := sh(append([]string{"iptables", "-I", rule[0], "1"}, rule[1:]...)...); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// blockRules keep a workspace away from cloud metadata services (credentials
+// for the host's cloud account live there) and from the host itself.
+func blockRules(hostIf string) [][]string {
+	return [][]string{
+		{"FORWARD", "-i", hostIf, "-d", "169.254.0.0/16", "-j", "DROP"},     // AWS, GCP, Azure, Oracle, DigitalOcean...
+		{"FORWARD", "-i", hostIf, "-d", "100.100.100.200/32", "-j", "DROP"}, // Alibaba Cloud
+		{"INPUT", "-i", hostIf, "-j", "DROP"},                               // the host is not reachable
+	}
+}
+
+// checkRule turns an add (-A/-I CHAIN ...) into the matching check (-C CHAIN ...).
+func checkRule(rule []string) []string {
+	out := append([]string{}, rule...)
+	for i, a := range out {
+		if a == "-A" || a == "-I" {
+			out[i] = "-C"
+			break
+		}
+	}
+	return out
 }
 
 func (r *Runsc) netDown(spec Spec) {
@@ -611,14 +759,17 @@ func (r *Runsc) netDown(spec Spec) {
 	defer r.mu.Unlock()
 	hostIf := "ch" + shortHash(spec.ID, 10)
 	_, wsIP := subnet(spec)
-	for _, rule := range [][]string{
+	rules := [][]string{
 		{"-t", "nat", "-D", "POSTROUTING", "-s", wsIP + "/32", "!", "-o", hostIf, "-j", "MASQUERADE"},
-		{"-D", "FORWARD", "-i", hostIf, "-d", "169.254.0.0/16", "-j", "DROP"},
 		{"-D", "FORWARD", "-i", hostIf, "-j", "ACCEPT"},
 		{"-D", "FORWARD", "-o", hostIf, "-j", "ACCEPT"},
-		{"-D", "INPUT", "-i", hostIf, "-j", "DROP"},
-	} {
-		_ = exec.Command("iptables", rule...).Run()
+	}
+	for _, b := range blockRules(hostIf) {
+		rules = append(rules, append([]string{"-D"}, b...))
+	}
+	for _, rule := range rules {
+		for exec.Command("iptables", rule...).Run() == nil { // every copy
+		}
 	}
 	_ = exec.Command("ip", "link", "del", hostIf).Run()
 	_ = exec.Command("ip", "netns", "del", netnsName(spec)).Run()
