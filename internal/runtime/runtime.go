@@ -30,8 +30,10 @@ type Capabilities struct {
 	Isolation bool `json:"isolation"`
 	// FullSave: memory and running processes can be saved and restored.
 	FullSave bool `json:"full_save"`
-	// ResourceLimits: CPU, memory and disk limits are enforced.
+	// ResourceLimits: CPU, memory and process-count limits are enforced.
 	ResourceLimits bool `json:"resource_limits"`
+	// DiskLimits: a workspace's disk usage is capped.
+	DiskLimits bool `json:"disk_limits"`
 	// NetworkControl: network access can be switched off and allow-listed.
 	NetworkControl bool `json:"network_control"`
 	// PersistentProcesses: processes keep running between commands.

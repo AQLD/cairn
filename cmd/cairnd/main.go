@@ -6,14 +6,18 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,6 +40,13 @@ func run() error {
 	runscPath := flag.String("runsc", "runsc", "path to the runsc binary")
 	token := flag.String("token", os.Getenv("CAIRN_TOKEN"), "API token required on every request (env CAIRN_TOKEN)")
 	retention := flag.Duration("retention", engine.DefaultRetention, "how long deleted saves can be undeleted before they are purged")
+	scrubEvery := flag.Duration("scrub-interval", 6*time.Hour, "how often to re-verify every save's checksums (0 disables)")
+	defaultTemplate := flag.String("default-template", "", "template for workspaces created without one")
+	idlePause := flag.Duration("idle-pause", 0, "pause workspaces unused this long: full save, memory freed, woken on next use (0 disables; needs runsc)")
+	pauseOnShutdown := flag.Bool("pause-on-shutdown", true, "pause every running workspace on SIGTERM so its processes survive a restart or a moved pod (needs runsc)")
+	shutdownTimeout := flag.Duration("shutdown-timeout", 2*time.Minute, "how long shutdown may take (pausing workspaces included)")
+	var imports templateImports
+	flag.Var(&imports, "import-template", "NAME=ROOTFS.tar to import at startup if missing or changed (repeatable)")
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -62,11 +73,39 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention})
+	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, DefaultTemplate: *defaultTemplate})
 	if err != nil {
 		return err
 	}
 	defer eng.Close()
+
+	for _, imp := range imports {
+		if err := importTemplate(ctx, eng, imp.name, imp.path); err != nil {
+			return fmt.Errorf("--import-template %s: %w", imp.name, err)
+		}
+		log.Info("template ready", "template", imp.name)
+	}
+
+	// Re-verify saves in the background, so damage is found before a restore needs them.
+	if *scrubEvery > 0 {
+		go func() {
+			t := time.NewTicker(*scrubEvery)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					checked, bad, err := eng.Scrub(ctx)
+					if err != nil {
+						log.Error("scrub failed", "err", err)
+					} else {
+						log.Info("scrub done", "checked", checked, "not_ready", bad)
+					}
+				}
+			}
+		}()
+	}
 
 	// Purge deleted saves whose retention window has ended (also done at startup).
 	go func() {
@@ -84,6 +123,26 @@ func run() error {
 		}
 	}()
 
+	// Pause workspaces nobody is using, freeing their memory.
+	if *idlePause > 0 {
+		go func() {
+			t := time.NewTicker(min(*idlePause/4, time.Minute))
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					if n, err := eng.PauseIdle(ctx, *idlePause); err != nil {
+						log.Error("pausing idle workspaces failed", "err", err)
+					} else if n > 0 {
+						log.Info("paused idle workspaces", "count", n)
+					}
+				}
+			}
+		}()
+	}
+
 	srv := &http.Server{
 		Addr:              *listen,
 		Handler:           api.New(eng, log, *token),
@@ -98,7 +157,55 @@ func run() error {
 		return err
 	case <-ctx.Done():
 	}
-	shutdown, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Stop taking requests and, at the same time, pause the workspaces (which
+	// ends running commands, so their requests finish too).
+	log.Info("shutting down")
+	shutdown, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
 	defer cancel()
-	return srv.Shutdown(shutdown)
+	srvDone := make(chan error, 1)
+	go func() { srvDone <- srv.Shutdown(shutdown) }()
+	if *pauseOnShutdown {
+		start := time.Now()
+		paused, failed := eng.PauseAll(shutdown)
+		log.Info("paused workspaces for shutdown", "paused", paused, "failed", failed, "took", time.Since(start).Round(time.Millisecond))
+	}
+	return <-srvDone
+}
+
+type templateImport struct{ name, path string }
+
+// templateImports collects repeated --import-template NAME=PATH flags.
+type templateImports []templateImport
+
+func (t *templateImports) String() string { return fmt.Sprint(*t) }
+
+func (t *templateImports) Set(v string) error {
+	name, path, ok := strings.Cut(v, "=")
+	if !ok || name == "" || path == "" {
+		return errors.New("want NAME=ROOTFS.tar")
+	}
+	*t = append(*t, templateImport{name, path})
+	return nil
+}
+
+// importTemplate imports a rootfs tar unless the engine already has a template
+// with that name and the same content, so restarts are cheap.
+func importTemplate(ctx context.Context, eng *engine.Engine, name, path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return err
+	}
+	if t, err := eng.GetTemplate(ctx, name); err == nil && t.SHA256 == hex.EncodeToString(h.Sum(nil)) {
+		return nil
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	_, err = eng.ImportTemplate(ctx, name, f)
+	return err
 }

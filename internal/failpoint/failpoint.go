@@ -21,6 +21,9 @@ const (
 	CopyBeforeRunning = "copy/before-running" // copy's filesystem extracted, not yet running
 	CreateBeforeReady = "create/before-ready" // workspace recorded, not yet running
 	PurgeAfterRemove  = "purge/after-remove"  // save folder removed, record not yet deleted
+	SaveWrite         = "save/write"          // writing the save's files fails (e.g. disk full)
+	PauseAfterCommit  = "pause/after-commit"  // pause save committed, not yet recorded as paused
+	WakeBeforeRestore = "wake/before-restore" // waking: state is resuming, memory not restored yet
 )
 
 type Set struct {

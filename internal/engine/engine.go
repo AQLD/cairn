@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/AQLD/cairn/internal/failpoint"
@@ -35,7 +36,13 @@ var (
 	ErrConflict    = errors.New("conflict")
 	ErrUnsupported = runtime.ErrUnsupported
 	ErrCorrupt     = save.ErrCorrupt
+	// ErrInsufficientStorage: the save would not fit (checked up front) or the
+	// disk filled while writing it. Nothing is left half written.
+	ErrInsufficientStorage = errors.New("insufficient storage")
 )
+
+// DefaultMinFreeBytes is the free space a save must leave on the disk.
+const DefaultMinFreeBytes = 512 << 20
 
 // MaxCopies is the most copies one request may make.
 const MaxCopies = 64
@@ -50,6 +57,15 @@ type Config struct {
 	Retention  time.Duration    // how long deleted saves are kept; DefaultRetention if zero
 	Now        func() time.Time // clock; time.Now if nil (tests move it forward)
 	Failpoints *failpoint.Set   // tests only
+	// MinFreeBytes is the free space a save must leave behind; a save that would
+	// go below it is refused before anything is written. DefaultMinFreeBytes if 0.
+	MinFreeBytes int64
+	// ExclusiveWait bounds how long a full save or resume waits for running
+	// commands (default DefaultExclusiveWait).
+	ExclusiveWait time.Duration
+	// DefaultTemplate is used when a create request names none. Runtimes that
+	// boot a real sandbox (runsc) need one: an empty filesystem has no shell.
+	DefaultTemplate string
 }
 
 type Engine struct {
@@ -57,14 +73,16 @@ type Engine struct {
 	log   *slog.Logger
 	store *store.Store
 
-	mu    sync.Mutex
-	locks map[string]*sync.RWMutex // per workspace
+	mu       sync.Mutex
+	locks    map[string]*wsLock   // per workspace
+	activity map[string]time.Time // last use per workspace, for pausing idle ones
 }
 
 // Spec is the part of a workspace the caller chooses.
 type Spec struct {
-	Limits  runtime.Limits `json:"limits"`
-	Network bool           `json:"network"`
+	Limits   runtime.Limits `json:"limits"`
+	Network  bool           `json:"network"`
+	Template string         `json:"template,omitempty"`
 }
 
 // Workspace is what the engine reports about a workspace.
@@ -74,6 +92,7 @@ type Workspace struct {
 	State      store.WorkspaceState `json:"state"`
 	Limits     runtime.Limits       `json:"limits"`
 	Network    bool                 `json:"network"`
+	Template   string               `json:"template,omitempty"`
 	SourceSave string               `json:"source_save,omitempty"`
 	CreatedAt  time.Time            `json:"created_at"`
 	UpdatedAt  time.Time            `json:"updated_at"`
@@ -88,6 +107,7 @@ type Save struct {
 	CreatedAt   time.Time       `json:"created_at"`
 	DeletedAt   *time.Time      `json:"deleted_at,omitempty"`
 	PurgeAfter  *time.Time      `json:"purge_after,omitempty"` // a deleted save can be undeleted until then
+	Auto        bool            `json:"auto,omitempty"`        // made by the engine to pause the workspace
 }
 
 // Info describes the engine and what its runtime can do.
@@ -112,6 +132,12 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.ExclusiveWait <= 0 {
+		cfg.ExclusiveWait = DefaultExclusiveWait
+	}
+	if cfg.MinFreeBytes <= 0 {
+		cfg.MinFreeBytes = DefaultMinFreeBytes
+	}
 	for _, d := range []string{cfg.DataDir, filepath.Join(cfg.DataDir, "workspaces"), filepath.Join(cfg.DataDir, "saves")} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return nil, err
@@ -121,7 +147,7 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	e := &Engine{cfg: cfg, log: cfg.Logger, store: st, locks: map[string]*sync.RWMutex{}}
+	e := &Engine{cfg: cfg, log: cfg.Logger, store: st, locks: map[string]*wsLock{}, activity: map[string]time.Time{}}
 	if err := e.recover(ctx); err != nil {
 		st.Close()
 		return nil, fmt.Errorf("recover: %w", err)
@@ -133,7 +159,32 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	return e, nil
 }
 
+// Close closes the state store. Sandboxes keep running: they belong to the
+// workspaces, not to this process, and the next Open picks them up again.
 func (e *Engine) Close() error { return e.store.Close() }
+
+// StopAll stops every workspace's sandbox, for a host being drained or a test
+// cleaning up. Workspaces stay recorded as running; the next Open starts them.
+func (e *Engine) StopAll(ctx context.Context) error {
+	ws, err := e.store.ListWorkspaces(ctx)
+	if err != nil {
+		return err
+	}
+	var first error
+	for i := range ws {
+		spec, err := e.runtimeSpec(&ws[i])
+		if err == nil {
+			err = e.cfg.Runtime.Stop(ctx, spec)
+		}
+		if err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// Counts reports workspaces and saves by state, for metrics.
+func (e *Engine) Counts(ctx context.Context) (*store.Counts, error) { return e.store.Counts(ctx) }
 
 func (e *Engine) Info() Info {
 	return Info{
@@ -147,9 +198,13 @@ func (e *Engine) Info() Info {
 // --- workspaces ---
 
 type CreateRequest struct {
-	Name    string         `json:"name"`
-	Limits  runtime.Limits `json:"limits"`
-	Network bool           `json:"network"`
+	Name     string         `json:"name"`
+	Limits   runtime.Limits `json:"limits"`
+	Network  bool           `json:"network"`
+	Template string         `json:"template,omitempty"`
+	// RequestKey makes the request idempotent: a retry with the same key
+	// returns the workspace the first request created instead of a new one.
+	RequestKey string `json:"-"`
 }
 
 func (e *Engine) CreateWorkspace(ctx context.Context, req CreateRequest) (*Workspace, error) {
@@ -160,17 +215,37 @@ func (e *Engine) CreateWorkspace(ctx context.Context, req CreateRequest) (*Works
 		// The setting is recorded either way; Info reports that it is not enforced.
 		e.log.Warn("runtime cannot control networking; workspace network setting is not enforced", "runtime", e.cfg.Runtime.Name())
 	}
+	if req.RequestKey != "" {
+		if w, err := e.workspaceForKey(ctx, req.RequestKey, ""); err != nil || w != nil {
+			return w, err
+		}
+	}
+	template := req.Template
+	if template == "" {
+		template = e.cfg.DefaultTemplate
+	}
+	if template != "" {
+		if _, err := e.GetTemplate(ctx, template); err != nil {
+			return nil, err
+		}
+	}
 	id := newID("ws")
 	name := req.Name
 	if name == "" {
 		name = id
 	}
-	spec := Spec{Limits: req.Limits, Network: req.Network}
-	w, err := e.insertWorkspace(ctx, id, name, spec, "")
+	spec := Spec{Limits: req.Limits, Network: req.Network, Template: template}
+	w, err := e.insertWorkspace(ctx, id, name, spec, "", req.RequestKey)
+	if errors.Is(err, store.ErrDuplicateKey) {
+		return e.workspaceForKey(ctx, req.RequestKey, "") // lost a race with the same key
+	}
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(e.rootDir(id), 0o755); err != nil {
+	if err := e.createRootfs(id, template); err != nil {
+		_ = e.store.SetWorkspaceState(ctx, id, store.Deleted)
+		_ = e.store.ReleaseWorkspaceRequestKey(ctx, id)
+		_ = os.RemoveAll(e.workspaceDir(id))
 		return nil, err
 	}
 	if err := e.cfg.Failpoints.Check(failpoint.CreateBeforeReady); err != nil {
@@ -182,13 +257,35 @@ func (e *Engine) CreateWorkspace(ctx context.Context, req CreateRequest) (*Works
 	return e.GetWorkspace(ctx, id)
 }
 
-func (e *Engine) insertWorkspace(ctx context.Context, id, name string, spec Spec, sourceSave string) (*store.Workspace, error) {
+// workspaceForKey returns the workspace a request key already created, nil if
+// the key is unused, or an error if the key belongs to a different request or
+// that request is still running. sourceSave must match for copies.
+func (e *Engine) workspaceForKey(ctx context.Context, key, sourceSave string) (*Workspace, error) {
+	w, err := e.store.WorkspaceByRequestKey(ctx, key)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case w.SourceSave != sourceSave:
+		return nil, fmt.Errorf("%w: idempotency key was already used for a different request", ErrConflict)
+	case w.State == store.Creating:
+		return nil, fmt.Errorf("%w: a request with this idempotency key is still in progress", ErrConflict)
+	case w.State == store.Deleted:
+		return nil, fmt.Errorf("%w: the workspace this idempotency key created has been deleted", ErrConflict)
+	}
+	return toWorkspace(w)
+}
+
+func (e *Engine) insertWorkspace(ctx context.Context, id, name string, spec Spec, sourceSave, requestKey string) (*store.Workspace, error) {
 	raw, err := json.Marshal(spec)
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	w := store.Workspace{ID: id, Name: name, State: store.Creating, Spec: raw, SourceSave: sourceSave, CreatedAt: now, UpdatedAt: now}
+	w := store.Workspace{ID: id, Name: name, State: store.Creating, Spec: raw, SourceSave: sourceSave, RequestKey: requestKey, CreatedAt: now, UpdatedAt: now}
 	if err := e.store.CreateWorkspace(ctx, w); err != nil {
 		return nil, err
 	}
@@ -237,12 +334,15 @@ func (e *Engine) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 // kept, so it can still be copied from.
 func (e *Engine) DeleteWorkspace(ctx context.Context, id string) error {
 	l := e.lock(id)
+	l.cancelCommands() // deleting ends whatever runs; it does not wait for it
 	l.Lock()
 	defer l.Unlock()
 	w, err := e.liveWorkspace(ctx, id)
 	if err != nil {
 		return err
 	}
+	defer e.dropAutoSave(ctx, w.PausedSave)
+	defer e.forget(id)
 	spec, err := e.runtimeSpec(w)
 	if err != nil {
 		return err
@@ -265,13 +365,15 @@ func (e *Engine) Exec(ctx context.Context, id string, req ExecRequest) (ExecResu
 	if len(req.Argv) == 0 {
 		return ExecResult{}, fmt.Errorf("%w: command is empty", ErrInvalid)
 	}
-	l := e.lock(id)
-	l.RLock()
-	defer l.RUnlock()
-	w, err := e.runningWorkspace(ctx, id)
+	l, w, err := e.useRunning(ctx, id)
 	if err != nil {
 		return ExecResult{}, err
 	}
+	defer l.RUnlock()
+	defer e.touch(id)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer l.command(cancel)()
 	spec, err := e.runtimeSpec(w)
 	if err != nil {
 		return ExecResult{}, err
@@ -285,12 +387,12 @@ func (e *Engine) WriteFile(ctx context.Context, id, name string, r io.Reader, mo
 	if err != nil {
 		return err
 	}
-	l := e.lock(id)
-	l.RLock()
-	defer l.RUnlock()
-	if _, err := e.runningWorkspace(ctx, id); err != nil {
+	// a paused workspace's processes may hold this file: wake them first
+	l, _, err := e.useRunning(ctx, id)
+	if err != nil {
 		return err
 	}
+	defer l.RUnlock()
 	root, err := os.OpenRoot(e.rootDir(id))
 	if err != nil {
 		return err
@@ -321,8 +423,14 @@ func (e *Engine) OpenFile(ctx context.Context, id, name string) (*os.File, os.Fi
 	if err != nil {
 		return nil, nil, err
 	}
-	if _, err := e.runningWorkspace(ctx, id); err != nil {
+	// Reading needs no running sandbox: a paused or stopped workspace's files
+	// are on disk as saved, so a person can look at a waiting agent's work.
+	w, err := e.liveWorkspace(ctx, id)
+	if err != nil {
 		return nil, nil, err
+	}
+	if w.State != store.Running && w.State != store.Paused && w.State != store.Stopped {
+		return nil, nil, fmt.Errorf("%w: workspace %s is %s", ErrConflict, id, w.State)
 	}
 	root, err := os.OpenRoot(e.rootDir(id))
 	if err != nil {
@@ -363,9 +471,16 @@ func workspacePath(name string) (string, error) {
 
 // Save writes a quick (filesystem) or full (filesystem, memory and processes)
 // save. A full save stops the workspace; resume it to continue.
-func (e *Engine) Save(ctx context.Context, id string, kind save.Kind) (*Save, error) {
+// requestKey, if set, makes the save idempotent: a retry returns the save the
+// first request made, even if the engine crashed before replying.
+func (e *Engine) Save(ctx context.Context, id string, kind save.Kind, requestKey string) (*Save, error) {
 	if kind == "" {
 		kind = save.Quick
+	}
+	if requestKey != "" {
+		if sv, err := e.saveForKey(ctx, requestKey, id); err != nil || sv != nil {
+			return sv, err
+		}
 	}
 	if kind != save.Quick && kind != save.Full {
 		return nil, fmt.Errorf("%w: unknown save kind %q", ErrInvalid, kind)
@@ -373,9 +488,16 @@ func (e *Engine) Save(ctx context.Context, id string, kind save.Kind) (*Save, er
 	if kind == save.Full && !e.cfg.Runtime.Capabilities().FullSave {
 		return nil, fmt.Errorf("full save: %w (runtime %s)", ErrUnsupported, e.cfg.Runtime.Name())
 	}
+	if err := e.wake(ctx, id); err != nil {
+		return nil, err
+	}
+	e.touch(id)
 	l := e.lock(id)
 	if kind == save.Full {
-		l.Lock() // nothing may run while memory is captured
+		// nothing may run while memory is captured
+		if err := l.lockAlone(ctx, e.cfg.ExclusiveWait, "a full save"); err != nil {
+			return nil, err
+		}
 		defer l.Unlock()
 	} else {
 		l.RLock() // quick saves let commands keep running
@@ -390,9 +512,16 @@ func (e *Engine) Save(ctx context.Context, id string, kind save.Kind) (*Save, er
 		return nil, err
 	}
 
+	if err := e.checkSpace(spec); err != nil {
+		return nil, err
+	}
+
 	saveID := newID("sv")
 	now := time.Now().UTC()
-	if err := e.store.CreateSave(ctx, store.Save{ID: saveID, WorkspaceID: id, Kind: string(kind), State: store.SavePending, CreatedAt: now}); err != nil {
+	if err := e.store.CreateSave(ctx, store.Save{ID: saveID, WorkspaceID: id, Kind: string(kind), State: store.SavePending, CreatedAt: now, RequestKey: requestKey}); err != nil {
+		if errors.Is(err, store.ErrDuplicateKey) {
+			return e.saveForKey(ctx, requestKey, id) // lost a race with the same key
+		}
 		return nil, err
 	}
 	if kind == save.Full {
@@ -424,6 +553,25 @@ func (e *Engine) Save(ctx context.Context, id string, kind save.Kind) (*Save, er
 	return e.GetSave(ctx, saveID)
 }
 
+// checkSpace refuses a save that would leave less than MinFreeBytes free. The
+// filesystem size is a lower bound; a full save also needs room for memory.
+func (e *Engine) checkSpace(spec runtime.Spec) error {
+	size, err := dirSize(spec.RootDir)
+	if err != nil {
+		return err
+	}
+	free, err := freeBytes(e.savesDir())
+	if err != nil {
+		return err
+	}
+	need := uint64(size) + uint64(spec.Limits.MemoryMB)<<20 + uint64(e.cfg.MinFreeBytes)
+	if free < need {
+		return fmt.Errorf("%w: save needs about %d MB plus %d MB headroom, %d MB free",
+			ErrInsufficientStorage, size>>20, e.cfg.MinFreeBytes>>20, free>>20)
+	}
+	return nil
+}
+
 func (e *Engine) writeSave(ctx context.Context, spec runtime.Spec, saveID string, kind save.Kind, now time.Time) (*save.Manifest, error) {
 	b, err := save.NewBuilder(e.savesDir(), save.Manifest{
 		SaveID:         saveID,
@@ -443,19 +591,33 @@ func (e *Engine) writeSave(ctx context.Context, spec runtime.Spec, saveID string
 		}
 	}()
 
-	pr, pw := io.Pipe()
-	go func() { pw.CloseWithError(save.TarDir(spec.RootDir, pw)) }()
-	if err := b.WriteFile(save.RootfsFile, pr); err != nil {
-		pr.CloseWithError(err)
-		return nil, fmt.Errorf("save filesystem: %w", err)
-	}
+	// A full save checkpoints first: that stops the sandbox, so the filesystem is
+	// quiet when it is archived and the two halves describe the same moment.
 	if kind == save.Full {
-		if err := e.cfg.Runtime.Checkpoint(ctx, spec, b.Dir()); err != nil {
-			return nil, fmt.Errorf("save memory: %w", err)
-		}
-		if err := b.AddFile(save.MemoryFile); err != nil {
+		memDir, err := b.MemoryDir()
+		if err != nil {
 			return nil, err
 		}
+		if err := e.cfg.Runtime.Checkpoint(ctx, spec, memDir); err != nil {
+			return nil, fmt.Errorf("save memory: %w", err)
+		}
+		if err := b.AddMemory(); err != nil {
+			return nil, err
+		}
+	}
+
+	pr, pw := io.Pipe()
+	go func() { pw.CloseWithError(save.TarDir(spec.RootDir, pw)) }()
+	var src io.Reader = pr
+	if err := e.cfg.Failpoints.Check(failpoint.SaveWrite); err != nil {
+		src = &failingReader{r: pr, err: err}
+	}
+	if err := b.WriteFile(save.RootfsFile, src); err != nil {
+		pr.CloseWithError(err)
+		if errors.Is(err, syscall.ENOSPC) {
+			err = fmt.Errorf("%w: %v", ErrInsufficientStorage, err)
+		}
+		return nil, fmt.Errorf("save filesystem: %w", err)
 	}
 	if err := e.cfg.Failpoints.Check(failpoint.SaveBeforeCommit); err != nil {
 		crashed = failpoint.Crashed(err)
@@ -482,6 +644,9 @@ func (e *Engine) DeleteSave(ctx context.Context, id string) error {
 	sv, err := e.store.GetSave(ctx, id)
 	if err != nil {
 		return err
+	}
+	if sv.Auto {
+		return errAutoSave(id)
 	}
 	switch sv.State {
 	case store.SavePending:
@@ -520,6 +685,64 @@ func (e *Engine) UndeleteSave(ctx context.Context, id string) (*Save, error) {
 		}
 	}
 	return e.GetSave(ctx, id)
+}
+
+// VerifySave re-checks one save's files against its manifest and records the
+// result: ready saves that fail become corrupt; a corrupt save that passes again
+// (for example after its files were restored from a backup) becomes ready.
+func (e *Engine) VerifySave(ctx context.Context, id string) (*Save, error) {
+	sv, err := e.store.GetSave(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	switch sv.State {
+	case store.SavePending:
+		return nil, ErrNotFound
+	case store.SaveReady, store.SaveCorrupt, store.SaveMissing:
+		state := store.SaveReady
+		if _, err := os.Stat(filepath.Join(e.saveDir(id), save.ManifestFile)); err != nil {
+			state = store.SaveMissing
+		} else if _, err := save.Verify(e.saveDir(id)); err != nil {
+			if !errors.Is(err, save.ErrCorrupt) {
+				return nil, err
+			}
+			e.log.Error("scrub: save failed verification", "save", id, "err", err)
+			state = store.SaveCorrupt
+		}
+		if state != sv.State {
+			if err := e.store.SetSaveState(ctx, id, state); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return e.GetSave(ctx, id)
+}
+
+// Scrub verifies every save that could be restored, so damage is found by the
+// engine instead of by the next resume. It returns how many saves it checked
+// and how many are not ready afterwards.
+func (e *Engine) Scrub(ctx context.Context) (checked, bad int, err error) {
+	all, err := e.store.AllSaves(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, sv := range all {
+		if ctx.Err() != nil {
+			return checked, bad, ctx.Err()
+		}
+		if sv.State != store.SaveReady && sv.State != store.SaveCorrupt && sv.State != store.SaveMissing {
+			continue
+		}
+		got, err := e.VerifySave(ctx, sv.ID)
+		if err != nil {
+			return checked, bad, err
+		}
+		checked++
+		if got.State != store.SaveReady {
+			bad++
+		}
+	}
+	return checked, bad, nil
 }
 
 // PurgeExpired permanently removes deleted saves whose retention window has
@@ -562,16 +785,40 @@ func (e *Engine) ListSaves(ctx context.Context, workspaceID string) ([]Save, err
 	return out, nil
 }
 
+// saveForKey returns the save a request key already made, nil if the key is
+// unused, or an error if it was used for another workspace or is in progress.
+func (e *Engine) saveForKey(ctx context.Context, key, workspaceID string) (*Save, error) {
+	sv, err := e.store.SaveByRequestKey(ctx, key)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if sv.WorkspaceID != workspaceID {
+		return nil, fmt.Errorf("%w: idempotency key was already used for a different request", ErrConflict)
+	}
+	if sv.State == store.SavePending {
+		return nil, fmt.Errorf("%w: a request with this idempotency key is still in progress", ErrConflict)
+	}
+	return e.toSave(sv), nil
+}
+
 // readySave loads a save and verifies every byte before anything uses it.
 func (e *Engine) readySave(ctx context.Context, saveID string) (*store.Save, *save.Manifest, error) {
 	sv, err := e.store.GetSave(ctx, saveID)
 	if err != nil {
 		return nil, nil, err
 	}
+	if sv.Auto {
+		return nil, nil, errAutoSave(saveID)
+	}
 	switch sv.State {
 	case store.SaveReady:
 	case store.SavePending:
 		return nil, nil, ErrNotFound
+	case store.SaveCorrupt:
+		return nil, nil, fmt.Errorf("%w: save %s failed verification earlier", ErrCorrupt, saveID)
 	case store.SaveDeleted:
 		return nil, nil, fmt.Errorf("%w: save %s is deleted; undelete it first", ErrConflict, saveID)
 	default:
@@ -581,6 +828,7 @@ func (e *Engine) readySave(ctx context.Context, saveID string) (*store.Save, *sa
 	if err != nil {
 		if errors.Is(err, save.ErrCorrupt) {
 			e.log.Error("save failed verification", "save", saveID, "err", err)
+			_ = e.store.SetSaveState(ctx, saveID, store.SaveCorrupt)
 		}
 		return nil, nil, err
 	}
@@ -598,8 +846,14 @@ func (e *Engine) Resume(ctx context.Context, saveID string) (*Workspace, error) 
 		return nil, err
 	}
 	id := sv.WorkspaceID
+	if err := e.wake(ctx, id); err != nil {
+		return nil, err
+	}
+	e.touch(id)
 	l := e.lock(id)
-	l.Lock()
+	if err := l.lockAlone(ctx, e.cfg.ExclusiveWait, "resume"); err != nil {
+		return nil, err
+	}
 	defer l.Unlock()
 	w, err := e.liveWorkspace(ctx, id)
 	if err != nil {
@@ -645,7 +899,11 @@ func (e *Engine) restoreInto(ctx context.Context, spec runtime.Spec, saveID stri
 	if err != nil {
 		return err
 	}
-	err = save.UntarDir(f, next)
+	var limit int64
+	if info, statErr := f.Stat(); statErr == nil {
+		limit = info.Size()
+	}
+	err = save.UntarDir(f, next, limit)
 	f.Close()
 	if err != nil {
 		_ = os.RemoveAll(next)
@@ -665,14 +923,18 @@ func (e *Engine) restoreInto(ctx context.Context, spec runtime.Spec, saveID stri
 	_ = os.RemoveAll(prev)
 
 	if m.Kind == save.Full {
-		return e.cfg.Runtime.Restore(ctx, spec, e.saveDir(saveID))
+		return e.cfg.Runtime.Restore(ctx, spec, filepath.Join(e.saveDir(saveID), save.MemoryDir))
 	}
 	return e.cfg.Runtime.Start(ctx, spec)
 }
 
 // Copy makes count new workspaces from one save. Each copy has its own ID and
 // identity; the original workspace is untouched.
-func (e *Engine) Copy(ctx context.Context, saveID string, count int) ([]Workspace, error) {
+//
+// requestKey, if set, makes the request idempotent: copy i is created with key
+// "<requestKey>#i", so a retry returns the copies already made and creates only
+// the ones a crash prevented.
+func (e *Engine) Copy(ctx context.Context, saveID string, count int, requestKey string) ([]Workspace, error) {
 	if count < 1 || count > MaxCopies {
 		return nil, fmt.Errorf("%w: count must be between 1 and %d", ErrInvalid, MaxCopies)
 	}
@@ -691,8 +953,20 @@ func (e *Engine) Copy(ctx context.Context, saveID string, count int) ([]Workspac
 
 	out := make([]Workspace, 0, count)
 	for i := 0; i < count; i++ {
+		key := ""
+		if requestKey != "" {
+			key = fmt.Sprintf("%s#%d", requestKey, i)
+			existing, err := e.workspaceForKey(ctx, key, saveID)
+			if err != nil {
+				return out, err
+			}
+			if existing != nil {
+				out = append(out, *existing)
+				continue
+			}
+		}
 		id := newID("ws")
-		w, err := e.insertWorkspace(ctx, id, fmt.Sprintf("%s-copy-%d", src.Name, i+1), spec, saveID)
+		w, err := e.insertWorkspace(ctx, id, fmt.Sprintf("%s-copy-%d", src.Name, i+1), spec, saveID, key)
 		if err != nil {
 			return out, err
 		}
@@ -768,9 +1042,18 @@ func (e *Engine) recover(ctx context.Context) error {
 	}
 	for i := range ws {
 		w := &ws[i]
+		if paused, err := e.recoverPause(ctx, w); err != nil {
+			return err
+		} else if paused {
+			continue
+		}
 		if w.State == store.Creating && w.SourceSave != "" {
-			// a copy interrupted before it was handed out: the caller never got it
+			// a copy interrupted before it was handed out: the caller never got it,
+			// and a retry with the same idempotency key must be able to make it again
 			if err := e.store.SetWorkspaceState(ctx, w.ID, store.Deleted); err != nil {
+				return err
+			}
+			if err := e.store.ReleaseWorkspaceRequestKey(ctx, w.ID); err != nil {
 				return err
 			}
 			_ = os.RemoveAll(e.workspaceDir(w.ID))
@@ -780,8 +1063,14 @@ func (e *Engine) recover(ctx context.Context) error {
 		if err := e.finishSwap(w.ID); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(e.rootDir(w.ID), 0o755); err != nil {
-			return err
+		_ = os.RemoveAll(e.rootDir(w.ID) + ".new") // a template copy cut off mid-extraction
+		var spec Spec
+		_ = json.Unmarshal(w.Spec, &spec)
+		if err := e.createRootfs(w.ID, spec.Template); err != nil {
+			e.log.Error("could not rebuild workspace filesystem", "workspace", w.ID, "err", err)
+			if err := os.MkdirAll(e.rootDir(w.ID), 0o755); err != nil {
+				return err
+			}
 		}
 		e.log.Info("recovered interrupted workspace", "workspace", w.ID, "was", w.State)
 		if err := e.store.SetWorkspaceState(ctx, w.ID, store.Running); err != nil {
@@ -831,17 +1120,6 @@ func (e *Engine) finishSwap(id string) error {
 }
 
 // --- helpers ---
-
-func (e *Engine) lock(id string) *sync.RWMutex {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	l, ok := e.locks[id]
-	if !ok {
-		l = &sync.RWMutex{}
-		e.locks[id] = l
-	}
-	return l
-}
 
 func (e *Engine) liveWorkspace(ctx context.Context, id string) (*store.Workspace, error) {
 	w, err := e.store.GetWorkspace(ctx, id)
@@ -894,12 +1172,12 @@ func toWorkspace(w *store.Workspace) (*Workspace, error) {
 	}
 	return &Workspace{
 		ID: w.ID, Name: w.Name, State: w.State, Limits: spec.Limits, Network: spec.Network,
-		SourceSave: w.SourceSave, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
+		Template: spec.Template, SourceSave: w.SourceSave, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
 	}, nil
 }
 
 func (e *Engine) toSave(sv *store.Save) *Save {
-	out := &Save{ID: sv.ID, WorkspaceID: sv.WorkspaceID, Kind: save.Kind(sv.Kind), State: sv.State, Size: sv.Size, CreatedAt: sv.CreatedAt}
+	out := &Save{ID: sv.ID, WorkspaceID: sv.WorkspaceID, Kind: save.Kind(sv.Kind), State: sv.State, Size: sv.Size, CreatedAt: sv.CreatedAt, Auto: sv.Auto}
 	if !sv.DeletedAt.IsZero() {
 		d, p := sv.DeletedAt, sv.DeletedAt.Add(e.cfg.Retention)
 		out.DeletedAt, out.PurgeAfter = &d, &p

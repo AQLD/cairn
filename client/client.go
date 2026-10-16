@@ -37,12 +37,28 @@ func (c *Client) WithHTTPClient(h *http.Client) *Client { c.http = h; return c }
 
 // Error is an error returned by the engine.
 type Error struct {
-	Status  int
-	Code    string // stable: not_found, invalid_argument, conflict, save_corrupt, unsupported_by_runtime, unauthorized, internal
-	Message string
+	Status    int
+	Code      string // stable: not_found, invalid_argument, conflict, save_corrupt, insufficient_storage, unsupported_by_runtime, unauthorized, internal
+	Message   string
+	RequestID string // matches the engine's log line for this request
 }
 
-func (e *Error) Error() string { return fmt.Sprintf("cairn: %s (%d): %s", e.Code, e.Status, e.Message) }
+func (e *Error) Error() string {
+	if e.RequestID != "" {
+		return fmt.Sprintf("cairn: %s (%d): %s [request %s]", e.Code, e.Status, e.Message, e.RequestID)
+	}
+	return fmt.Sprintf("cairn: %s (%d): %s", e.Code, e.Status, e.Message)
+}
+
+type idempotencyKeyCtx struct{}
+
+// WithIdempotencyKey returns a context that makes CreateWorkspace, Save and
+// Copy safe to retry: send the same key again (after a timeout, a lost
+// connection or an engine restart) and the engine returns the original result
+// instead of doing the work twice. Use a fresh key per intended operation.
+func WithIdempotencyKey(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, idempotencyKeyCtx{}, key)
+}
 
 // IsCode reports whether err is an engine error with the given code.
 func IsCode(err error, code string) bool {
@@ -55,7 +71,8 @@ func IsCode(err error, code string) bool {
 type Capabilities struct {
 	Isolation           bool `json:"isolation"`
 	FullSave            bool `json:"full_save"`
-	ResourceLimits      bool `json:"resource_limits"`
+	ResourceLimits      bool `json:"resource_limits"` // CPU, memory, process count
+	DiskLimits          bool `json:"disk_limits"`
 	NetworkControl      bool `json:"network_control"`
 	PersistentProcesses bool `json:"persistent_processes"`
 }
@@ -74,17 +91,27 @@ type Limits struct {
 }
 
 type CreateWorkspace struct {
-	Name    string `json:"name,omitempty"`
-	Limits  Limits `json:"limits,omitempty"`
-	Network bool   `json:"network,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Limits   Limits `json:"limits,omitempty"`
+	Network  bool   `json:"network,omitempty"`
+	Template string `json:"template,omitempty"` // empty: the engine's default template
+}
+
+// Template is a root filesystem new workspaces start from.
+type Template struct {
+	Name      string    `json:"name"`
+	Size      int64     `json:"size"`
+	SHA256    string    `json:"sha256"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Workspace struct {
 	ID         string    `json:"id"`
 	Name       string    `json:"name"`
-	State      string    `json:"state"`
+	State      string    `json:"state"` // running, stopped (full-saved), paused (woken on next use), ...
 	Limits     Limits    `json:"limits"`
 	Network    bool      `json:"network"`
+	Template   string    `json:"template,omitempty"`
 	SourceSave string    `json:"source_save,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
@@ -101,11 +128,12 @@ type Save struct {
 	ID          string     `json:"id"`
 	WorkspaceID string     `json:"workspace_id"`
 	Kind        SaveKind   `json:"kind"`
-	State       string     `json:"state"` // ready, missing, deleted
+	State       string     `json:"state"` // ready, missing, corrupt, deleted
 	Size        int64      `json:"size"`
 	CreatedAt   time.Time  `json:"created_at"`
 	DeletedAt   *time.Time `json:"deleted_at,omitempty"`
 	PurgeAfter  *time.Time `json:"purge_after,omitempty"` // a deleted save can be undeleted until then
+	Auto        bool       `json:"auto,omitempty"`        // made by the engine to pause the workspace
 }
 
 type Exec struct {
@@ -134,6 +162,13 @@ func (c *Client) Health(ctx context.Context) error {
 	return c.do(ctx, http.MethodGet, "/healthz", nil, nil)
 }
 
+// Metrics returns the engine's Prometheus metrics, as text.
+func (c *Client) Metrics(ctx context.Context) (string, error) {
+	var buf bytes.Buffer
+	err := c.doRaw(ctx, http.MethodGet, "/metrics", nil, &buf)
+	return buf.String(), err
+}
+
 func (c *Client) Info(ctx context.Context) (*Info, error) {
 	var out Info
 	return &out, c.do(ctx, http.MethodGet, "/v1/info", nil, &out)
@@ -154,6 +189,14 @@ func (c *Client) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 func (c *Client) GetWorkspace(ctx context.Context, id string) (*Workspace, error) {
 	var out Workspace
 	return &out, c.do(ctx, http.MethodGet, "/v1/workspaces/"+url.PathEscape(id), nil, &out)
+}
+
+// PauseWorkspace frees a workspace's memory now (a full save the engine keeps
+// for itself); the next command or write wakes it with its processes. Pausing a
+// paused or stopped workspace does nothing.
+func (c *Client) PauseWorkspace(ctx context.Context, id string) (*Workspace, error) {
+	var out Workspace
+	return &out, c.do(ctx, http.MethodPost, "/v1/workspaces/"+url.PathEscape(id)+"/pause", nil, &out)
 }
 
 func (c *Client) DeleteWorkspace(ctx context.Context, id string) error {
@@ -294,6 +337,28 @@ func (c *Client) GetSave(ctx context.Context, id string) (*Save, error) {
 	return &out, c.do(ctx, http.MethodGet, "/v1/saves/"+url.PathEscape(id), nil, &out)
 }
 
+// ImportTemplate uploads a root filesystem tar (for example
+// `docker export $(docker create python:3.12-slim)`) as template name.
+func (c *Client) ImportTemplate(ctx context.Context, name string, rootfsTar io.Reader) (*Template, error) {
+	var buf bytes.Buffer
+	if err := c.doRaw(ctx, http.MethodPut, "/v1/templates/"+url.PathEscape(name), rootfsTar, &buf); err != nil {
+		return nil, err
+	}
+	var t Template
+	return &t, json.Unmarshal(buf.Bytes(), &t)
+}
+
+func (c *Client) ListTemplates(ctx context.Context) ([]Template, error) {
+	var out struct {
+		Templates []Template `json:"templates"`
+	}
+	return out.Templates, c.do(ctx, http.MethodGet, "/v1/templates", nil, &out)
+}
+
+func (c *Client) DeleteTemplate(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/templates/"+url.PathEscape(name), nil, nil)
+}
+
 // DeleteSave hides a save. It can be undeleted until its PurgeAfter time.
 func (c *Client) DeleteSave(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/saves/"+url.PathEscape(id), nil, nil)
@@ -303,6 +368,13 @@ func (c *Client) DeleteSave(ctx context.Context, id string) error {
 func (c *Client) UndeleteSave(ctx context.Context, id string) (*Save, error) {
 	var out Save
 	return &out, c.do(ctx, http.MethodPost, "/v1/saves/"+url.PathEscape(id)+"/undelete", nil, &out)
+}
+
+// VerifySave re-checks a save's checksums on the engine and returns its state:
+// "ready", or "corrupt" / "missing" if its files are damaged or gone.
+func (c *Client) VerifySave(ctx context.Context, id string) (*Save, error) {
+	var out Save
+	return &out, c.do(ctx, http.MethodPost, "/v1/saves/"+url.PathEscape(id)+"/verify", nil, &out)
 }
 
 func (c *Client) Resume(ctx context.Context, saveID string) (*Workspace, error) {
@@ -347,6 +419,9 @@ func (c *Client) doRaw(ctx context.Context, method, path string, body io.Reader,
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
+	if key, ok := ctx.Value(idempotencyKeyCtx{}).(string); ok && key != "" {
+		req.Header.Set("Idempotency-Key", key)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
@@ -369,8 +444,9 @@ func readError(resp *http.Response) error {
 		} `json:"error"`
 	}
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	id := resp.Header.Get("X-Request-Id")
 	if json.Unmarshal(data, &e) != nil || e.Error.Code == "" {
-		return &Error{Status: resp.StatusCode, Code: "http_error", Message: strings.TrimSpace(string(data))}
+		return &Error{Status: resp.StatusCode, Code: "http_error", Message: strings.TrimSpace(string(data)), RequestID: id}
 	}
-	return &Error{Status: resp.StatusCode, Code: e.Error.Code, Message: e.Error.Message}
+	return &Error{Status: resp.StatusCode, Code: e.Error.Code, Message: e.Error.Message, RequestID: id}
 }

@@ -7,10 +7,10 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
 | E0 | 0 | 4 | 1 |
-| E1 | 30 | 9 | 4 |
-| E2 | 17 | 7 | 1 |
-| E3 | 0 | 4 | 0 |
-| E4 | 0 | 11 | 1 |
+| E1 | 49 | 1 | 4 |
+| E2 | 22 | 6 | 1 |
+| E3 | 8 | 3 | 0 |
+| E4 | 6 | 6 | 1 |
 | E5 | 0 | 2 | 0 |
 
 Legend: ✅ implemented · ⏳ pending · 📏 benchmark · needs = what the environment must provide (skipped without it)
@@ -23,7 +23,7 @@ Work done in a workspace is still there, exactly as it was, after a save and res
 - ✅ **G1.2** Installed tools survive save and resume · E1
 - ✅ **G1.3** Changes after a save are rolled back by resume · E1
 - ✅ **G1.4** A person can take over: read the agent's work through the API · E1
-- ⏳ **G1.5** A running app comes back running · E1 · needs full_save, persistent_processes
+- ✅ **G1.5** A running app comes back running · E1 · needs full_save, persistent_processes
 - 📂 **G1.6** Commands behave like a real shell · E1
   - ✅ **G1.6.1** Exit codes are reported exactly · E1
   - ✅ **G1.6.2** Stdout and stderr are kept apart · E1
@@ -34,6 +34,13 @@ Work done in a workspace is still there, exactly as it was, after a save and res
   - ✅ **G1.6.7** An unknown command fails like a shell (exit 127) · E1
   - ✅ **G1.6.8** Output streams while the command runs · E1
   - ✅ **G1.6.9** Binary output arrives byte for byte, streamed or not · E1
+- 📂 **G1.10** Workspaces start from a ready toolchain · E3
+  - ✅ **G1.10.1** A workspace starts with its template's files · E3
+  - ✅ **G1.10.2** Each workspace gets its own copy of the template · E3
+  - ✅ **G1.10.3** Unknown templates and unusable archives are refused · E3
+  - ✅ **G1.10.4** Re-importing a template does not change existing workspaces · E3
+- ✅ **G1.12** An app and its database stay connected across a full save · E1 · needs full_save, persistent_processes
+- ✅ **G1.11** Files in /tmp are kept like any other file · E1 · needs isolation, in_process
 - 📂 **G1.7** Golden workloads save and resume correctly · E0 · needs full_save, linux_bench
   - ⏳ **G1.7.1** Python script with open files · E0 · needs full_save, linux_bench
   - ⏳ **G1.7.2** Node dev server watching files · E0 · needs full_save, linux_bench
@@ -51,18 +58,20 @@ One save becomes many independent workspaces that can each try something differe
 - ✅ **G2.3** Each copy has its own identity · E2
 - ✅ **G2.4** Twenty copies run side by side · E2
 - ✅ **G2.5** A copy can be saved and copied again · E2
-- ⏳ **G2.6** Copies of a full save get fresh network identity and randomness · E2 · needs full_save
+- ✅ **G2.6** Copies of a full save get fresh network identity and randomness · E2 · needs full_save
 - ✅ **G2.7** The original keeps working while its copies run · E2
 
 ## G3 Every user gets their own computer
 
 A platform can give each end user a walled-off workspace with limits it sets. Gate: **E4**.
 
-- ⏳ **G3.1** Workspaces cannot see each other's files or processes · E1 · needs isolation
+- ✅ **G3.1** Workspaces cannot see each other's files or processes · E1 · needs isolation
 - 📂 **G3.2** CPU, memory and disk limits are enforced · E1 · needs resource_limits
-  - ⏳ **G3.2.1** CPU limit caps throughput · E1 · needs resource_limits
-  - ⏳ **G3.2.2** Memory limit stops the workspace's own processes, not the host · E1 · needs resource_limits
-  - ⏳ **G3.2.3** Disk limit stops writes with a clear error · E1 · needs resource_limits
+  - ✅ **G3.2.1** CPU limit caps throughput · E1 · needs resource_limits
+  - ✅ **G3.2.2** Memory limit stops the workspace's own processes, not the host · E1 · needs resource_limits
+  - ⏳ **G3.2.3** Disk limit stops writes with a clear error · E1 · needs disk_limits
+  - ✅ **G3.2.4** Running out of memory never loses the workspace or its files · E1 · needs resource_limits
+  - ✅ **G3.2.5** Only processes over the memory limit are stopped · E1 · needs resource_limits
 - ⏳ **G3.3** Hitting a quota saves the work instead of killing it · E4
 - ⏳ **G3.4** Quotas apply per workspace and per project · E4
 - ✅ **G3.5** Workspaces are listed and managed independently · E1
@@ -71,10 +80,12 @@ A platform can give each end user a walled-off workspace with limits it sets. Ga
 
 An agent can pause for hours or days at zero compute and continue from the exact step. Gate: **E3**.
 
-- ⏳ **G4.1** A full save stops the workspace and frees the server · E1 · needs full_save
-- ⏳ **G4.2** Resume continues the exact step it paused at · E1 · needs full_save, persistent_processes
-- ⏳ **G4.3** A stopped workspace refuses commands until resumed · E1 · needs full_save
-- ⏳ **G4.4** Idle workspaces pause themselves · E3 · needs full_save
+- ✅ **G4.1** A full save stops the workspace and frees the server · E1 · needs full_save
+- ✅ **G4.2** Resume continues the exact step it paused at · E1 · needs full_save, persistent_processes
+- ✅ **G4.3** A stopped workspace refuses commands until resumed · E1 · needs full_save
+- ✅ **G4.4** Idle workspaces pause themselves · E3 · needs full_save, persistent_processes, in_process
+- ✅ **G4.5** Workspaces paused for a shutdown come back with their processes · E3 · needs full_save, persistent_processes, in_process
+- ✅ **G4.6** A crash while pausing or waking loses nothing · E3 · needs full_save, persistent_processes, in_process
 
 ## G5 Agents stay inside your walls
 
@@ -82,7 +93,7 @@ Cairn runs entirely on your own servers, safely, with nothing leaving your netwo
 
 - ✅ **G5.1** The engine needs nothing but its data folder · E1
 - ✅ **G5.2** The API refuses requests without the token · E1 · needs in_process
-- ⏳ **G5.3** Network is off unless switched on per workspace · E1 · needs network_control
+- ✅ **G5.3** Network is off unless switched on per workspace · E1 · needs network_control
 - ⏳ **G5.4** Outbound traffic follows an allow-list · E4 · needs network_control
 - ⏳ **G5.5** A fresh server runs its first workspace within five minutes · E3 · needs linux_bench
 
@@ -98,7 +109,10 @@ Every save either restores exactly or is refused with a clear error. Gate: **E2*
   - ✅ **G6.1.5** A filesystem image that points outside the workspace is refused · E2 · needs in_process
 - ✅ **G6.2** Save-and-resume loop never loses or corrupts anything · E1
 - ✅ **G6.3** A failure while saving leaves no half-written save · E1 · needs in_process
-- ⏳ **G6.4** A full disk during a save fails cleanly · E2 · needs linux_bench
+- 📂 **G6.4** A full disk during a save fails cleanly · E2
+  - ✅ **G6.4.1** A save that would not fit is refused before anything is written · E2 · needs in_process
+  - ✅ **G6.4.2** Running out of disk mid-save aborts cleanly and the workspace keeps running · E2 · needs in_process
+  - ⏳ **G6.4.3** A real full disk on a server · E2 · needs linux_bench
 - 📂 **G6.5** Saves live in object storage and survive the server · E2 · needs object_storage
   - ⏳ **G6.5.1** A dropped storage connection mid-upload is retried or fails cleanly · E2 · needs object_storage
   - ⏳ **G6.5.2** Downloaded saves are verified before use · E2 · needs object_storage
@@ -110,6 +124,9 @@ Every save either restores exactly or is refused with a clear error. Gate: **E2*
   - ✅ **G6.8.3** After the window the save is purged for good · E2 · needs in_process
   - ✅ **G6.8.4** Delete and undelete are safe to retry · E2
   - ✅ **G6.8.5** A crash mid-purge is finished by the next purge · E2 · needs in_process
+- 📂 **G6.10** Damaged saves are found by scrubbing before anyone restores them · E2
+  - ✅ **G6.10.1** A scrub marks a damaged save corrupt and leaves good saves ready · E2 · needs in_process
+  - ✅ **G6.10.2** Verify on demand reports a save's real state · E2 · needs in_process
 - ✅ **G6.9** Saves outlive their workspace · E1
 
 ## G7 The engine survives crashes and lost servers
@@ -124,6 +141,15 @@ However the engine stops, it comes back knowing every workspace and save, and ne
 - ✅ **G7.4** A crash mid-create leaves a usable workspace · E1 · needs in_process
 - ✅ **G7.5** A crash mid-copy discards the unfinished copy · E2 · needs in_process
 - ✅ **G7.6** kill -9 of the engine mid-operation recovers · E1 · needs in_process
+- 📂 **G7.9** Retried requests never do the work twice · E1
+  - ✅ **G7.9.1** A retried create returns the same workspace · E1
+  - ✅ **G7.9.2** A retried save returns the same save · E1
+  - ✅ **G7.9.3** A retried copy returns the same copies · E1
+  - ✅ **G7.9.4** A retry after a crash finds the save that reached disk · E1 · needs in_process
+  - ✅ **G7.9.5** A retry after a crash mid-copy makes only the missing copy · E1 · needs in_process
+  - ✅ **G7.9.6** Reusing a key for a different request is refused · E1
+- ✅ **G7.10** Concurrent operations never corrupt state · E1
+- ✅ **G7.11** A long-running command never freezes its workspace · E3 · needs in_process
 - ⏳ **G7.7** A lost server's workspaces resume elsewhere from their last save · E5 · needs multi_server, object_storage
 - ⏳ **G7.8** A workspace never runs on two servers at once · E5 · needs multi_server
 
@@ -133,11 +159,11 @@ Untrusted, even hostile, code stays inside its workspace. Gate: **E4**.
 
 - ✅ **G8.1** The file API cannot reach outside the workspace · E1
 - ✅ **G8.2** The file API does not follow symlinks out of the workspace · E1
-- ⏳ **G8.3** A fork bomb is contained · E4 · needs isolation, resource_limits
-- ⏳ **G8.4** A memory hog is contained · E4 · needs isolation, resource_limits
-- ⏳ **G8.5** A disk fill is contained · E4 · needs isolation, resource_limits
-- ⏳ **G8.6** Cloud metadata and the host network are unreachable · E4 · needs network_control
-- ⏳ **G8.7** Host files and processes are invisible · E4 · needs isolation
+- ✅ **G8.3** A fork bomb is contained · E4 · needs isolation, resource_limits
+- ✅ **G8.4** A memory hog is contained · E4 · needs isolation, resource_limits
+- ⏳ **G8.5** A disk fill is contained · E4 · needs isolation, disk_limits
+- ✅ **G8.6** Cloud metadata and the host network are unreachable · E4 · needs network_control
+- ✅ **G8.7** Host files and processes are invisible · E4 · needs isolation
 
 ## G9 Fast and cheap enough to run
 
@@ -159,7 +185,9 @@ An operator can install, observe and upgrade Cairn without surprises. Gate: **E4
 - ✅ **G10.1** Health check reports the engine is up · E1
 - ✅ **G10.2** The engine reports its runtime's capabilities honestly · E1
 - ✅ **G10.3** Errors use stable codes · E1
-- ⏳ **G10.4** Metrics and structured logs cover every operation · E4
+- 📂 **G10.4** Metrics and structured logs cover every operation · E4
+  - ✅ **G10.4.1** Metrics count and time every API operation and report workspaces and saves by state · E4
+  - ✅ **G10.4.2** Every request is logged with an ID the client also sees · E4 · needs in_process
 - ⏳ **G10.5** 72 hours of mixed load shows no leaks · E4 · needs linux_bench
 - ⏳ **G10.6** Upgrading the engine keeps all workspaces and saves · E2 · needs linux_bench
 

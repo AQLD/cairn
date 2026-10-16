@@ -21,6 +21,9 @@ jobs:
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - run: go vet ./...
       - run: go test -short -count=1 ./...
+      - name: Race detector
+        if: matrix.os == 'ubuntu-24.04'
+        run: go test -race -short -count=1 ./...
       - name: Test plan is up to date
         if: matrix.os == 'ubuntu-24.04'
         run: |

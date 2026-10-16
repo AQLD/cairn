@@ -38,7 +38,8 @@ const (
 	// Runtime capabilities, as reported by GET /v1/info.
 	NeedIsolation      Need = "isolation"
 	NeedFullSave       Need = "full_save"
-	NeedResourceLimits Need = "resource_limits"
+	NeedResourceLimits Need = "resource_limits" // CPU, memory, process count
+	NeedDiskLimits     Need = "disk_limits"
 	NeedNetworkControl Need = "network_control"
 	NeedPersistent     Need = "persistent_processes"
 

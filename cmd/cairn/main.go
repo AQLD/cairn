@@ -1,7 +1,8 @@
 // cairn is the command-line tool for a Cairn engine. It talks to the engine only
 // through the REST API.
 //
-//	cairn create [--name NAME]
+//	cairn create [--name NAME] [--template T]
+//	cairn template import NAME ROOTFS.tar | template ls | template rm NAME
 //	cairn ls
 //	cairn exec WORKSPACE -- COMMAND [ARGS...]
 //	cairn put WORKSPACE LOCAL_FILE REMOTE_PATH
@@ -35,7 +36,10 @@ import (
 const usage = `usage: cairn <command> [arguments]
 
 commands:
-  create [--name NAME]                    create a workspace
+  create [--name NAME] [--template T]     create a workspace (from a template)
+  template import NAME ROOTFS.tar         import a root filesystem tar as a template
+                                          (e.g. docker export $(docker create python:3.12-slim) > python.tar)
+  template ls | template rm NAME          list or delete templates
   ls                                      list workspaces
   exec WORKSPACE -- COMMAND [ARGS...]     run a command
   put WORKSPACE LOCAL_FILE REMOTE_PATH    upload a file
@@ -44,8 +48,10 @@ commands:
   saves WORKSPACE                         list a workspace's saves
   resume SAVE                             restore a workspace to a save
   copy SAVE [--count N]                   make workspaces from a save
+  verify SAVE                             re-check a save's checksums now
   rm-save SAVE                            delete a save (recoverable for the retention window)
   undelete SAVE                           bring back a deleted save
+  pause WORKSPACE                         free its memory now; the next command wakes it
   rm WORKSPACE                            delete a workspace (saves are kept)
   info                                    show the engine's runtime and capabilities
 
@@ -83,10 +89,11 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 	case "create":
 		fs := flag.NewFlagSet("create", flag.ContinueOnError)
 		name := fs.String("name", "", "workspace name")
+		template := fs.String("template", "", "template to start from (default: the engine's)")
 		if err := fs.Parse(args); err != nil {
 			return 2, err
 		}
-		ws, err := c.CreateWorkspace(ctx, client.CreateWorkspace{Name: *name})
+		ws, err := c.CreateWorkspace(ctx, client.CreateWorkspace{Name: *name, Template: *template})
 		if err != nil {
 			return 1, err
 		}
@@ -204,6 +211,36 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 			fmt.Println(w.ID)
 		}
 
+	case "template":
+		switch {
+		case len(args) == 3 && args[0] == "import":
+			f, err := os.Open(args[2])
+			if err != nil {
+				return 1, err
+			}
+			defer f.Close()
+			t, err := c.ImportTemplate(ctx, args[1], f)
+			if err != nil {
+				return 1, err
+			}
+			fmt.Printf("%s  %d bytes  sha256:%s\n", t.Name, t.Size, t.SHA256[:12])
+		case len(args) == 1 && args[0] == "ls":
+			ts, err := c.ListTemplates(ctx)
+			if err != nil {
+				return 1, err
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "NAME\tSIZE\tCREATED")
+			for _, t := range ts {
+				fmt.Fprintf(tw, "%s\t%d\t%s\n", t.Name, t.Size, t.CreatedAt.Local().Format(time.DateTime))
+			}
+			return 0, tw.Flush()
+		case len(args) == 2 && args[0] == "rm":
+			return 0, c.DeleteTemplate(ctx, args[1])
+		default:
+			return 2, errors.New("usage: cairn template import NAME ROOTFS.tar | template ls | template rm NAME")
+		}
+
 	case "rm-save":
 		if len(args) != 1 {
 			return 2, errors.New("usage: cairn rm-save SAVE")
@@ -216,6 +253,16 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 			fmt.Printf("deleted; recoverable with `cairn undelete %s` until %s\n", sv.ID, sv.PurgeAfter.Local().Format(time.DateTime))
 		}
 
+	case "verify":
+		if len(args) != 1 {
+			return 2, errors.New("usage: cairn verify SAVE")
+		}
+		sv, err := c.VerifySave(ctx, args[0])
+		if err != nil {
+			return 1, err
+		}
+		fmt.Println(sv.ID, sv.State)
+
 	case "undelete":
 		if len(args) != 1 {
 			return 2, errors.New("usage: cairn undelete SAVE")
@@ -225,6 +272,16 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 			return 1, err
 		}
 		fmt.Println(sv.ID, sv.State)
+
+	case "pause":
+		if len(args) != 1 {
+			return 2, errors.New("usage: cairn pause WORKSPACE")
+		}
+		ws, err := c.PauseWorkspace(ctx, args[0])
+		if err != nil {
+			return 1, err
+		}
+		fmt.Println(ws.ID, ws.State)
 
 	case "rm":
 		if len(args) != 1 {

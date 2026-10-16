@@ -55,8 +55,9 @@ A scenario that cannot run in the current environment must **skip with the reaso
 - **The save format is a contract.** Changing it means bumping `save.FormatVersion` and keeping a reader for every older version, with a scenario proving old saves still restore.
 - **No path escapes.** Every workspace file access goes through `os.Root`; tar extraction rejects paths outside the target.
 - **Capabilities are honest.** A runtime reports only what it enforces; unsupported operations return `ErrUnsupported` (`unsupported_by_runtime`), never a fake success.
+- **Pausing is invisible to callers.** A paused workspace (idle, or paused for an engine shutdown) wakes on the next command, write or save; reads never wake it. Waking restores memory only, so nothing may change a paused workspace's files; its pause save is removed once it is awake. New code paths that need a running sandbox call `e.wake` first.
 - **The `host` runtime is not a sandbox.** Never make it the default or recommend it for untrusted code; `cairnd` refuses non-localhost without `--token`.
-- **Stable error codes** (`not_found`, `invalid_argument`, `conflict`, `save_corrupt`, `unsupported_by_runtime`, `unauthorized`, `internal`). Adding one is an API change.
+- **Stable error codes** (`not_found`, `invalid_argument`, `conflict`, `save_corrupt`, `insufficient_storage`, `unsupported_by_runtime`, `unauthorized`, `internal`). Adding one is an API change.
 
 ## Conventions
 

@@ -3,6 +3,7 @@ package acceptance
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/AQLD/cairn/client"
 )
@@ -64,16 +65,36 @@ func init() {
 	register("G8.1", func(e *Env) {
 		ws := e.Workspace("traversal")
 		e.Write(ws.ID, "inside.txt", "in")
+		// In-process: plant a secret next to the workspaces and try to climb to it.
+		if e.DataDir != "" {
+			secret := filepath.Join(e.DataDir, "host-secret.txt")
+			e.Must(os.WriteFile(secret, []byte("host secret"), 0o600))
+			for depth := 1; depth <= 6; depth++ {
+				p := strings.Repeat("../", depth) + "host-secret.txt"
+				if data, err := e.C.ReadFile(e.Ctx, ws.ID, p); err == nil && strings.Contains(string(data), "host secret") {
+					e.T.Fatalf("read %q reached a file outside the workspace", p)
+				}
+			}
+		}
+		// Absolute and climbing paths resolve inside the workspace: whatever they
+		// return must be the workspace's own file, never the host's.
 		for _, p := range []string{"../../../../etc/passwd", "/etc/passwd", "a/../../../etc/hosts", `..\..\etc\passwd`} {
 			data, err := e.C.ReadFile(e.Ctx, ws.ID, p)
-			if err == nil && len(data) > 0 {
-				e.T.Fatalf("read %q returned %d bytes from outside the workspace", p, len(data))
+			if err != nil {
+				continue
+			}
+			own, ownErr := e.C.ReadFile(e.Ctx, ws.ID, strings.TrimLeft(filepath.ToSlash(filepath.Clean("/"+strings.ReplaceAll(p, `\`, "/"))), "/"))
+			if ownErr != nil || string(own) != string(data) {
+				e.T.Fatalf("read %q returned %d bytes that are not the workspace's own file", p, len(data))
 			}
 		}
 		// writes that try to climb out land inside the workspace or fail
 		_ = e.C.WriteFile(e.Ctx, ws.ID, "../../outside.txt", []byte("x"))
 		if e.DataDir != "" {
 			if _, err := os.Stat(filepath.Join(e.DataDir, "workspaces", "outside.txt")); err == nil {
+				e.T.Fatal("write escaped the workspace")
+			}
+			if _, err := os.Stat(filepath.Join(e.DataDir, "outside.txt")); err == nil {
 				e.T.Fatal("write escaped the workspace")
 			}
 		}

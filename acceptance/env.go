@@ -8,9 +8,13 @@
 package acceptance
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
@@ -36,11 +40,13 @@ type Env struct {
 	// In-process only (nil / empty with CAIRN_ENDPOINT).
 	Engine     *engine.Engine
 	Failpoints *failpoint.Set
-	Clock      *Clock // the engine's clock; Advance it to test retention
+	Clock      *Clock      // the engine's clock; Advance it to test retention
+	Logs       *SyncBuffer // the API's structured log (JSON lines)
 	DataDir    string
 	token      string
 	rt         runtime.Runtime
 	srv        *httptest.Server
+	configure  func(*engine.Config)
 }
 
 // NewEnv starts an engine for one scenario (or connects to CAIRN_ENDPOINT).
@@ -55,7 +61,14 @@ func NewEnvWithToken(t testing.TB, token string) *Env {
 
 func newEnv(t testing.TB, token string) *Env {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	// Follow the test's own deadline (none with -timeout 0): long gates such as
+	// 10,000 save-and-resume cycles must not hit an arbitrary scenario timeout.
+	ctx, cancel := context.WithCancel(context.Background())
+	if dt, ok := t.(interface{ Deadline() (time.Time, bool) }); ok {
+		if d, has := dt.Deadline(); has {
+			ctx, cancel = context.WithDeadline(context.Background(), d)
+		}
+	}
 	t.Cleanup(cancel)
 
 	if ep := os.Getenv("CAIRN_ENDPOINT"); ep != "" {
@@ -64,13 +77,45 @@ func newEnv(t testing.TB, token string) *Env {
 		return e
 	}
 
-	e := &Env{T: t, Ctx: ctx, DataDir: t.TempDir(), Failpoints: failpoint.New(), Clock: &Clock{}, token: token, rt: testRuntime(t)}
+	dataDir := t.TempDir()
+	e := &Env{T: t, Ctx: ctx, DataDir: dataDir, Failpoints: failpoint.New(), Clock: &Clock{}, Logs: &SyncBuffer{}, token: token, rt: testRuntime(t, dataDir)}
 	e.start()
-	t.Cleanup(e.stop)
+	t.Cleanup(e.shutdown)
 	return e
 }
 
-func testRuntime(t testing.TB) runtime.Runtime {
+// shutdown ends the scenario: sandboxes are stopped (they outlive the engine
+// by design) and runsc's namespace mount is released, so the folder can go.
+func (e *Env) shutdown() {
+	if e.Engine != nil {
+		_ = e.Engine.StopAll(context.Background())
+	}
+	e.stop()
+	if e.rt != nil && e.rt.Name() == "runsc" {
+		unmountRunsc(e.DataDir)
+	}
+}
+
+// unmountRunsc removes the mounts runsc leaves in an engine's data folder, so
+// the test can delete it.
+func unmountRunsc(dataDir string) {
+	for _, m := range []string{"null-netns"} {
+		p := filepath.Join(dataDir, "runsc", m)
+		// a sandbox still exiting can hold it for a moment; then detach lazily
+		for i := 0; i < 20 && exec.Command("mountpoint", "-q", p).Run() == nil; i++ {
+			if exec.Command("umount", p).Run() != nil {
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+		_ = exec.Command("umount", "-l", p).Run()
+	}
+}
+
+// testRuntime picks the runtime from CAIRN_TEST_RUNTIME. With runsc, workspaces
+// need a real root filesystem: set CAIRN_TEST_TEMPLATE to a rootfs tar (for
+// example `docker export $(docker create python:3.12-slim)`); every engine
+// imports it as template "base" and uses it by default.
+func testRuntime(t testing.TB, dataDir string) runtime.Runtime {
 	switch name := os.Getenv("CAIRN_TEST_RUNTIME"); name {
 	case "", "host":
 		return runtime.NewHost()
@@ -88,12 +133,33 @@ func testRuntime(t testing.TB) runtime.Runtime {
 
 func (e *Env) start() {
 	e.T.Helper()
-	eng, err := engine.Open(e.Ctx, engine.Config{DataDir: e.DataDir, Runtime: e.rt, Failpoints: e.Failpoints, Now: e.Clock.Now})
+	cfg := engine.Config{DataDir: e.DataDir, Runtime: e.rt, Failpoints: e.Failpoints, Now: e.Clock.Now}
+	tmpl := os.Getenv("CAIRN_TEST_TEMPLATE")
+	if tmpl != "" {
+		cfg.DefaultTemplate = "base"
+	}
+	if e.configure != nil {
+		e.configure(&cfg)
+	}
+	eng, err := engine.Open(e.Ctx, cfg)
 	if err != nil {
 		e.T.Fatalf("open engine: %v", err)
 	}
+	if tmpl != "" {
+		if _, err := eng.GetTemplate(e.Ctx, "base"); err != nil {
+			f, err := os.Open(tmpl)
+			if err != nil {
+				e.T.Fatalf("CAIRN_TEST_TEMPLATE: %v", err)
+			}
+			_, err = eng.ImportTemplate(e.Ctx, "base", f)
+			f.Close()
+			if err != nil {
+				e.T.Fatalf("import CAIRN_TEST_TEMPLATE: %v", err)
+			}
+		}
+	}
 	e.Engine = eng
-	e.srv = httptest.NewServer(api.New(eng, nil, e.token))
+	e.srv = httptest.NewServer(api.New(eng, slog.New(slog.NewJSONHandler(e.Logs, nil)), e.token))
 	e.C = client.New(e.srv.URL, e.token)
 	e.loadInfo()
 }
@@ -119,6 +185,14 @@ func (e *Env) Restart() {
 	e.start()
 }
 
+// RestartWith restarts the engine (as Restart does) with its configuration
+// changed by fn, which stays in effect for later restarts.
+func (e *Env) RestartWith(fn func(*engine.Config)) {
+	e.T.Helper()
+	e.configure = fn
+	e.Restart()
+}
+
 // Need skips the scenario unless the environment provides n.
 func (e *Env) Need(n spec.Need) {
 	e.T.Helper()
@@ -136,6 +210,8 @@ func (e *Env) has(n spec.Need) (bool, string) {
 		return caps.FullSave, "runtime " + e.Info.Runtime + " cannot save memory"
 	case spec.NeedResourceLimits:
 		return caps.ResourceLimits, "runtime " + e.Info.Runtime + " does not enforce limits"
+	case spec.NeedDiskLimits:
+		return caps.DiskLimits, "runtime " + e.Info.Runtime + " does not cap disk usage"
 	case spec.NeedNetworkControl:
 		return caps.NetworkControl, "runtime " + e.Info.Runtime + " cannot control networking"
 	case spec.NeedPersistent:
@@ -165,6 +241,24 @@ func (e *Env) loadInfo() {
 		e.T.Fatalf("engine info: %v", err)
 	}
 	e.Info = info
+}
+
+// SyncBuffer is a bytes.Buffer safe for concurrent writers.
+type SyncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *SyncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *SyncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 // Clock is real time plus an offset tests can move forward.
