@@ -1,0 +1,78 @@
+# Cairn engine on Kubernetes.
+#
+# One engine owns its workspaces and saves (until the multi-server scheduler).
+# The default runs one engine as a StatefulSet with a persistent volume: pods
+# can restart and move without losing workspaces or saves.
+
+image:
+  repository: ghcr.io/aqld/cairnd
+  tag: ""            # defaults to the chart's appVersion
+  pullPolicy: IfNotPresent
+
+# API token. Required: the API runs commands. Either point to an existing
+# Secret (key "token") or let the chart create one from `value`.
+token:
+  existingSecret: ""
+  value: ""
+
+# runsc (gVisor) isolates workspaces. "host" is for development only: no isolation.
+runtime: runsc
+
+# Templates are root filesystems workspaces start from. Each listed image is
+# turned into a template at startup by an init container (the image needs tar).
+templates:
+  - name: python
+    image: python:3.12-slim
+  - name: node
+    image: node:22-slim
+defaultTemplate: python
+
+# Pausing: a full save that frees a workspace's memory; the next command or
+# write wakes it with its processes, transparently.
+pause:
+  # Pause workspaces unused this long ("0" never pauses idle workspaces).
+  idle: 30m
+  # On pod shutdown (drain, upgrade, rollout) pause every running workspace, so
+  # agents' processes survive the pod moving. Needs time: see gracePeriod.
+  onShutdown: true
+  # Upper bound on shutdown, pausing included. Must stay below gracePeriod.
+  shutdownTimeout: 150s
+  # Pod terminationGracePeriodSeconds.
+  gracePeriod: 180
+
+# How long deleted saves can be undeleted before they are purged.
+retention: 168h
+# How often every save's checksums are re-verified.
+scrubInterval: 6h
+
+persistence:
+  size: 50Gi
+  storageClass: ""     # cluster default
+  accessMode: ReadWriteOnce
+
+service:
+  type: ClusterIP
+  port: 7420
+
+# gVisor needs to create namespaces, cgroups and mounts, so the engine pod is
+# privileged. Workspaces themselves run inside gVisor sandboxes: agent code
+# never touches the node's kernel directly. Workspaces with network enabled
+# reach the outside through this pod's network, so your NetworkPolicies apply.
+securityContext:
+  privileged: true
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 2Gi
+  # Limits cap the engine and every workspace sandbox it runs.
+  limits: {}
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "7420"
+  prometheus.io/path: /metrics
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

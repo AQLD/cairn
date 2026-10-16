@@ -1,0 +1,10 @@
+apiVersion: v2
+name: cairn
+description: Cairn engine on Kubernetes. Each AI agent gets a private gVisor workspace it can save, resume and copy.
+type: application
+version: 0.1.0
+appVersion: "0.1.0-dev"
+home: https://github.com/AQLD/cairn
+sources:
+  - https://github.com/AQLD/cairn
+keywords: [ai-agents, sandbox, gvisor, workspaces]

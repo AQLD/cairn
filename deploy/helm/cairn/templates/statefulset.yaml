@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "cairn.fullname" . }}
+  labels:
+    {{- include "cairn.labels" . | nindent 4 }}
+spec:
+  # One engine owns its workspaces until the multi-server scheduler: keep 1.
+  replicas: 1
+  serviceName: {{ include "cairn.fullname" . }}-headless
+  selector:
+    matchLabels:
+      {{- include "cairn.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cairn.selector" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      # Shutdown pauses every workspace (a full save each): give it time.
+      terminationGracePeriodSeconds: {{ .Values.pause.gracePeriod }}
+      initContainers:
+        {{- range .Values.templates }}
+        # Turn image {{ .image }} into template "{{ .name }}": archive its own root
+        # filesystem, skipping the kernel's and Kubernetes' mounts.
+        - name: template-{{ .name }}
+          image: {{ .image }}
+          command: ["sh", "-c"]
+          args:
+            - >-
+              tar -C / --one-file-system --numeric-owner
+              --exclude=./proc --exclude=./sys --exclude=./dev --exclude=./templates-out
+              -cf /templates-out/{{ .name }}.tar . || [ $? -eq 1 ]
+          volumeMounts:
+            - name: templates
+              mountPath: /templates-out
+        {{- end }}
+      containers:
+        - name: cairnd
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --runtime={{ .Values.runtime }}
+            - --retention={{ .Values.retention }}
+            - --scrub-interval={{ .Values.scrubInterval }}
+            - --idle-pause={{ .Values.pause.idle }}
+            - --pause-on-shutdown={{ .Values.pause.onShutdown }}
+            - --shutdown-timeout={{ .Values.pause.shutdownTimeout }}
+            {{- if .Values.defaultTemplate }}
+            - --default-template={{ .Values.defaultTemplate }}
+            {{- end }}
+            {{- range .Values.templates }}
+            - --import-template={{ .name }}=/templates-in/{{ .name }}.tar
+            {{- end }}
+          env:
+            - name: CAIRN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "cairn.tokenSecret" . }}
+                  key: token
+          ports:
+            - name: api
+              containerPort: 7420
+          readinessProbe:
+            httpGet: {path: /healthz, port: api}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: api}
+            periodSeconds: 20
+            failureThreshold: 6
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/cairn
+            - name: templates
+              mountPath: /templates-in
+              readOnly: true
+      volumes:
+        - name: templates
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [{{ .Values.persistence.accessMode }}]
+        {{- if .Values.persistence.storageClass }}
+        storageClassName: {{ .Values.persistence.storageClass }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
