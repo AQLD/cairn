@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -140,20 +142,93 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1) // SQLite has one writer; serialize here instead of retrying
-	if err := migrate(db); err != nil {
+	s := &Store{db: db}
+	if err := s.Check(context.Background()); err != nil {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	if err := migrate(db, path); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
 }
 
-func migrate(db *sql.DB) error {
+// ErrDamaged: the state database fails its integrity check.
+var ErrDamaged = errors.New("state database is damaged")
+
+// Check runs SQLite's integrity check (quick_check: structure, not every index).
+func (s *Store) Check(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA quick_check`)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrDamaged, err)
+	}
+	defer rows.Close()
+	var problems []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			return fmt.Errorf("%w: %v", ErrDamaged, err)
+		}
+		if line != "ok" && len(problems) < 5 {
+			problems = append(problems, line)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("%w: %v", ErrDamaged, err)
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("%w: %s", ErrDamaged, strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// Backup writes a consistent copy of the database to path, durably, while the
+// database stays in use: a crash during it leaves the previous backup intact.
+func (s *Store) Backup(ctx context.Context, path string) error {
+	return backup(ctx, s.db, path)
+}
+
+func backup(ctx context.Context, db *sql.DB, path string) error {
+	tmp := path + ".tmp"
+	_ = os.Remove(tmp)
+	// VACUUM INTO takes no bound parameter; the path is the engine's own.
+	if _, err := db.ExecContext(ctx, `VACUUM INTO '`+strings.ReplaceAll(tmp, "'", "''")+`'`); err != nil {
+		return fmt.Errorf("back up state database: %w", err)
+	}
+	f, err := os.Open(tmp)
+	if err != nil {
+		return err
+	}
+	err = f.Sync()
+	f.Close()
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	d, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
+}
+
+func migrate(db *sql.DB, path string) error {
 	var v int
 	if err := db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
 		return err
 	}
 	if v > len(migrations) {
 		return fmt.Errorf("state database is schema version %d, newer than this engine (%d): upgrade the engine", v, len(migrations))
+	}
+	if v > 0 && v < len(migrations) {
+		// an upgrade changes the schema: keep the database as it was first
+		if err := backup(context.Background(), db, fmt.Sprintf("%s.before-v%d", path, len(migrations))); err != nil {
+			return err
+		}
 	}
 	for i := v; i < len(migrations); i++ {
 		tx, err := db.Begin()

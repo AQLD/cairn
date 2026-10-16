@@ -94,6 +94,13 @@ the pod itself are unreachable from workspaces regardless.
   `cairn_http_request_duration_seconds`.
 - **Logs**: one JSON line per request with a `request_id`, also returned to the
   caller in the `X-Request-Id` header.
+- **State database**: checked at startup and backed up every hour
+  (`state.db.backup` on the volume, consistent and written atomically). If the
+  disk ever damages it, the engine refuses to start rather than act on wrong
+  records; set `restoreState: true` and it rebuilds the database from the
+  backup plus the volume (workspaces and saves made since the backup come
+  back, ones deleted since stay deleted). It only acts on a damaged or missing
+  database, so it can stay on.
 - **Integrity**: every save's checksums are re-verified every `scrubInterval`
   (default 6h); a save that fails is marked `corrupt` and never resumed.
   `cairn verify SAVE` checks one on demand.

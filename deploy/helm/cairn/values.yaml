@@ -49,6 +49,12 @@ disk:
   # false keeps workspaces in plain folders with no size limit.
   images: true
 
+# The state database (records of every workspace and save) is checked at
+# startup and backed up hourly next to itself. If it is ever damaged the engine
+# refuses to start; set this to true to rebuild it from the backup and the
+# volume. It only acts on a missing or damaged database, so it can stay on.
+restoreState: false
+
 # How long deleted saves can be undeleted before they are purged.
 retention: 168h
 # How often every save's checksums are re-verified.

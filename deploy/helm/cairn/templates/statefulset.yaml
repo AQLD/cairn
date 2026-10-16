@@ -51,6 +51,7 @@ spec:
             - --shutdown-timeout={{ .Values.pause.shutdownTimeout }}
             - --disk-mb={{ int .Values.disk.defaultMB }}
             - --disk-images={{ .Values.disk.images }}
+            - --restore-state={{ .Values.restoreState }}
             {{- if .Values.defaultTemplate }}
             - --default-template={{ .Values.defaultTemplate }}
             {{- end }}
