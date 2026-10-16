@@ -6,7 +6,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
-| E0 | 0 | 4 | 1 |
+| E0 | 4 | 0 | 1 |
 | E1 | 52 | 0 | 4 |
 | E2 | 24 | 4 | 1 |
 | E3 | 8 | 3 | 0 |
@@ -41,11 +41,11 @@ Work done in a workspace is still there, exactly as it was, after a save and res
   - ✅ **G1.10.4** Re-importing a template does not change existing workspaces · E3
 - ✅ **G1.12** An app and its database stay connected across a full save · E1 · needs full_save, persistent_processes
 - ✅ **G1.11** Files in /tmp are kept like any other file · E1 · needs isolation, in_process
-- 📂 **G1.7** Golden workloads save and resume correctly · E0 · needs full_save, linux_bench
-  - ⏳ **G1.7.1** Python script with open files · E0 · needs full_save, linux_bench
-  - ⏳ **G1.7.2** Node dev server watching files · E0 · needs full_save, linux_bench
-  - ⏳ **G1.7.3** Package install interrupted mid-download · E0 · needs full_save, linux_bench
-  - ⏳ **G1.7.4** Headless browser with an open page · E0 · needs full_save, linux_bench
+- 📂 **G1.7** Golden workloads save and resume correctly · E0 · needs full_save
+  - ✅ **G1.7.1** Python script with open files · E0 · needs full_save
+  - ✅ **G1.7.2** Node dev server watching files · E0 · needs full_save
+  - ✅ **G1.7.3** Package install interrupted mid-download · E0 · needs full_save
+  - ✅ **G1.7.4** Headless browser with an open page · E0 · needs full_save
 - ⏳ **G1.8** A workspace resumes correctly days later · E3 · needs full_save
 - ⏳ **G1.9** A real coding agent works in workspaces daily for two weeks · E3 · needs real_agent
 
