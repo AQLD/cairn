@@ -133,7 +133,7 @@ var Catalog = []Scenario{
 					{ID: "G6.5.2", Title: "Downloaded saves are verified before use", Milestone: E2, Needs: []Need{NeedObjectStorage}},
 				}},
 			{ID: "G6.6", Title: "Saves restore on another CPU type", Proves: "Saves are portable across droplet types (CPU profile).", Milestone: E2, Needs: []Need{NeedFullSave, NeedLinuxBench}},
-			{ID: "G6.7", Title: "Saves restore after a gVisor upgrade", Proves: "An upgrade never strands a save; older builds are kept.", Milestone: E2, Needs: []Need{NeedFullSave, NeedLinuxBench}},
+			{ID: "G6.7", Title: "Saves restore after a gVisor upgrade", Proves: "An upgrade never strands a save; older builds are kept.", Milestone: E2, Needs: []Need{NeedFullSave, NeedInProcess}},
 			{ID: "G6.8", Title: "Deleted saves can be recovered within the retention window", Proves: "Mistakes and bugs are recoverable.", Milestone: E2,
 				Children: []Scenario{
 					{ID: "G6.8.1", Title: "A deleted save is hidden and cannot be resumed or copied", Milestone: E2},
@@ -189,7 +189,7 @@ var Catalog = []Scenario{
 			{ID: "G8.2", Title: "The file API does not follow symlinks out of the workspace", Proves: "A link planted by the agent cannot expose host files.", Milestone: E1},
 			{ID: "G8.3", Title: "A fork bomb is contained", Proves: "Process limits stop it without affecting other workspaces.", Milestone: E4, Needs: []Need{NeedIsolation, NeedResourceLimits}},
 			{ID: "G8.4", Title: "A memory hog is contained", Proves: "Only the hog's workspace feels it.", Milestone: E4, Needs: []Need{NeedIsolation, NeedResourceLimits}},
-			{ID: "G8.5", Title: "A disk fill is contained", Proves: "The host and other workspaces keep their disk.", Milestone: E4, Needs: []Need{NeedIsolation, NeedDiskLimits}},
+			{ID: "G8.5", Title: "A disk fill is contained", Proves: "The host and other workspaces keep their disk.", Milestone: E4, Needs: []Need{NeedIsolation, NeedDiskLimits, NeedInProcess}},
 			{ID: "G8.6", Title: "Cloud metadata and the host network are unreachable", Proves: "Credentials on the host cannot be stolen over the network.", Milestone: E4, Needs: []Need{NeedNetworkControl}},
 			{ID: "G8.7", Title: "Host files and processes are invisible", Proves: "The sandbox boundary holds.", Milestone: E4, Needs: []Need{NeedIsolation}},
 		},
