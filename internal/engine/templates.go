@@ -43,6 +43,11 @@ func (e *Engine) ImportTemplate(ctx context.Context, name string, r io.Reader) (
 	if !templateName.MatchString(name) {
 		return nil, fmt.Errorf("%w: template names are lower-case letters, digits, '.', '_' and '-'", ErrInvalid)
 	}
+	release, err := e.heavy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if err := os.MkdirAll(e.templatesDir(), 0o700); err != nil {
 		return nil, err
 	}
@@ -59,7 +64,7 @@ func (e *Engine) ImportTemplate(ctx context.Context, name string, r io.Reader) (
 	h := sha256.New()
 	n, err := io.Copy(io.MultiWriter(f, h), r)
 	if err == nil {
-		err = f.Sync()
+		err = fsync(f)
 	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
@@ -91,6 +96,12 @@ func (e *Engine) ImportTemplate(ctx context.Context, name string, r io.Reader) (
 	if err := os.WriteFile(filepath.Join(tmp, "template.json"), meta, 0o600); err != nil {
 		return nil, err
 	}
+	if err := syncFile(filepath.Join(tmp, "template.json")); err != nil {
+		return nil, err
+	}
+	if err := syncDir(tmp); err != nil {
+		return nil, err
+	}
 	// Swap in: old version aside, new one into place, old one removed.
 	final, old := e.templateDir(name), e.templateDir(name)+".old"
 	_ = os.RemoveAll(old)
@@ -99,6 +110,9 @@ func (e *Engine) ImportTemplate(ctx context.Context, name string, r io.Reader) (
 	}
 	if err := os.Rename(tmp, final); err != nil {
 		_ = os.Rename(old, final)
+		return nil, err
+	}
+	if err := syncDir(e.templatesDir()); err != nil {
 		return nil, err
 	}
 	_ = os.RemoveAll(old)

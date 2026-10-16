@@ -86,21 +86,32 @@ func (v volume) attach() error {
 	return disk.Mount(v.img(), v.path)
 }
 
-// renameTo moves the filesystem to dst's name, unmounted.
+// renameTo moves the filesystem to dst's name, unmounted. It is the commit
+// point of building a filesystem, so it is durable: the contents are on disk
+// before the rename, and the rename is on disk before it returns.
 func (v volume) renameTo(dst volume) error {
 	if !v.image {
-		return os.Rename(v.path, dst.path)
+		if err := syncTree(v.path); err != nil {
+			return err
+		}
+		if err := os.Rename(v.path, dst.path); err != nil {
+			return err
+		}
+		return syncParents(dst.path)
 	}
 	// never rename a mounted image: mounting it again under the new name would
 	// put one filesystem on two devices
-	if err := v.release(); err != nil {
+	if err := v.release(); err != nil { // unmounting writes the filesystem into the image
+		return err
+	}
+	if err := syncFile(v.img()); err != nil { // and this, the image to disk
 		return err
 	}
 	if err := os.Rename(v.img(), dst.img()); err != nil {
 		return err
 	}
 	_ = os.Remove(v.path) // the empty mount point
-	return nil
+	return syncParents(dst.img())
 }
 
 // remove deletes the filesystem.

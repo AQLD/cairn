@@ -38,7 +38,7 @@ func (c *Client) WithHTTPClient(h *http.Client) *Client { c.http = h; return c }
 // Error is an error returned by the engine.
 type Error struct {
 	Status    int
-	Code      string // stable: not_found, invalid_argument, conflict, save_corrupt, insufficient_storage, unsupported_by_runtime, unauthorized, internal
+	Code      string // stable: not_found, invalid_argument, conflict, save_corrupt, insufficient_storage, too_many_requests, unsupported_by_runtime, unauthorized, internal
 	Message   string
 	RequestID string // matches the engine's log line for this request
 }

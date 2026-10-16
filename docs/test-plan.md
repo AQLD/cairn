@@ -7,8 +7,8 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
 | E0 | 4 | 0 | 1 |
-| E1 | 52 | 0 | 4 |
-| E2 | 24 | 4 | 1 |
+| E1 | 53 | 0 | 4 |
+| E2 | 25 | 4 | 1 |
 | E3 | 8 | 3 | 0 |
 | E4 | 7 | 5 | 1 |
 | E5 | 0 | 2 | 0 |
@@ -151,6 +151,8 @@ However the engine stops, it comes back knowing every workspace and save, and ne
   - ✅ **G7.9.6** Reusing a key for a different request is refused · E1
 - ✅ **G7.10** Concurrent operations never corrupt state · E1
 - ✅ **G7.11** A long-running command never freezes its workspace · E3 · needs in_process
+- ✅ **G7.12** A power cut mid-operation loses nothing acknowledged · E2
+- ✅ **G7.13** A flood of requests is refused or queued, never fails or takes the engine down · E1 · needs in_process
 - ⏳ **G7.7** A lost server's workspaces resume elsewhere from their last save · E5 · needs multi_server, object_storage
 - ⏳ **G7.8** A workspace never runs on two servers at once · E5 · needs multi_server
 
