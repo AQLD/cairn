@@ -52,6 +52,9 @@ spec:
             - --disk-mb={{ int .Values.disk.defaultMB }}
             - --disk-images={{ .Values.disk.images }}
             - --restore-state={{ .Values.restoreState }}
+            {{- if .Values.saveStore.url }}
+            - --save-store={{ .Values.saveStore.url }}
+            {{- end }}
             {{- if .Values.defaultTemplate }}
             - --default-template={{ .Values.defaultTemplate }}
             {{- end }}
@@ -64,6 +67,18 @@ spec:
                 secretKeyRef:
                   name: {{ include "cairn.tokenSecret" . }}
                   key: token
+            {{- if .Values.saveStore.existingSecret }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.saveStore.existingSecret }}
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.saveStore.existingSecret }}
+                  key: AWS_SECRET_ACCESS_KEY
+            {{- end }}
           ports:
             - name: api
               containerPort: 7420

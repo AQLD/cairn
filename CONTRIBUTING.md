@@ -16,6 +16,7 @@ Start with [ROADMAP.md](ROADMAP.md) (milestones E0–E5 and their gates) and [do
 | `internal/store/` | SQLite state (workspaces, saves). |
 | `internal/runtime/` | `Runtime` interface; `host` (development, NO isolation) and `runsc` (gVisor). |
 | `internal/api/` | REST API (`net/http`, Go 1.22+ routing). |
+| `internal/objstore/` | S3-compatible object storage client (SigV4, multipart, retries) and an in-memory S3 for tests (`s3test`). |
 | `internal/failpoint/` | Named crash points for recovery tests. |
 | `client/` | Public Go client. The CLI and the acceptance suite use it, so tests exercise the real API. |
 | `cmd/cairnd`, `cmd/cairn` | Engine daemon and CLI. The CLI talks to the engine only through the API. |
@@ -59,6 +60,7 @@ A scenario that cannot run in the current environment must **skip with the reaso
 - **Commands are children of the workspace's init.** gVisor restores only processes descended from the sandbox's init, so `runsc` workspaces never run commands with a bare `runsc exec`; they go through `cairn-init exec` (see `spike/experiments/exec-restore-variants.sh`). Full saves carry their own copy of `cairn-init`.
 - **Running out of memory costs processes, never files.** The limit is enforced inside the sandbox (cairn-init kills the biggest process); the host limit is a backstop, and a sandbox that dies anyway is restarted from its filesystem on next use.
 - **A workspace's disk is an image, renamed into place.** With a disk limit, each filesystem is `rootfs*.img` loop-mounted at `rootfs*`; it is built under its own name and committed by renaming the image file, never while mounted. Code that moves or deletes workspace files goes through `volume` (`internal/engine/volume.go`), never `os.Rename`/`os.RemoveAll` on a mount point.
+- **In object storage, the manifest is uploaded last and deleted first.** Its presence means a save is complete; a save is downloaded into a temp folder and verified before it is renamed into place, never used straight from the store.
 - **Pausing is invisible to callers.** A paused workspace (idle, or paused for an engine shutdown) wakes on the next command, write or save; reads never wake it. Waking restores memory only, so nothing may change a paused workspace's files; its pause save is removed once it is awake. New code paths that need a running sandbox call `e.wake` first.
 - **The `host` runtime is not a sandbox.** Never make it the default or recommend it for untrusted code; `cairnd` refuses non-localhost without `--token`.
 - **Stable error codes** (`not_found`, `invalid_argument`, `conflict`, `save_corrupt`, `insufficient_storage`, `too_many_requests`, `unsupported_by_runtime`, `unauthorized`, `internal`). Adding one is an API change.

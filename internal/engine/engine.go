@@ -25,6 +25,7 @@ import (
 
 	"github.com/AQLD/cairn/internal/disk"
 	"github.com/AQLD/cairn/internal/failpoint"
+	"github.com/AQLD/cairn/internal/objstore"
 	"github.com/AQLD/cairn/internal/runtime"
 	"github.com/AQLD/cairn/internal/save"
 	"github.com/AQLD/cairn/internal/store"
@@ -81,6 +82,9 @@ type Config struct {
 	// MaxOps is how many heavy operations run at once (DefaultMaxOps if 0);
 	// more wait for a slot.
 	MaxOps int
+	// Objects, if set, keeps a copy of every save in object storage, so saves
+	// outlive this server (see remote.go).
+	Objects objstore.Store
 	// RestoreState rebuilds the state database from its last backup and the
 	// data folder (see state.go) if it is missing or damaged; a healthy one is
 	// left alone, so the setting is safe to leave on.
@@ -97,6 +101,10 @@ type Engine struct {
 	locks    map[string]*wsLock   // per workspace
 	activity map[string]time.Time // last use per workspace, for pausing idle ones
 	ops      chan struct{}        // slots for heavy operations
+
+	uploadKick   chan struct{}      // wakes the uploader
+	stopUploads  context.CancelFunc // ends it
+	uploaderDone chan struct{}
 }
 
 // Spec is the part of a workspace the caller chooses.
@@ -132,6 +140,7 @@ type Save struct {
 	DeletedAt   *time.Time      `json:"deleted_at,omitempty"`
 	PurgeAfter  *time.Time      `json:"purge_after,omitempty"` // a deleted save can be undeleted until then
 	Auto        bool            `json:"auto,omitempty"`        // made by the engine to pause the workspace
+	Uploaded    bool            `json:"uploaded,omitempty"`    // a copy is in object storage
 }
 
 // Info describes the engine and what its runtime can do.
@@ -223,12 +232,27 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 		st.Close()
 		return nil, fmt.Errorf("purge: %w", err)
 	}
+	if e.remoteOn() {
+		// learn saves made elsewhere; a store that is down only delays this
+		if err := e.importRemote(ctx); err != nil {
+			e.log.Error("could not read saves from object storage", "store", cfg.Objects.String(), "err", err)
+		}
+		uctx, cancel := context.WithCancel(context.Background())
+		e.uploadKick, e.stopUploads, e.uploaderDone = make(chan struct{}, 1), cancel, make(chan struct{})
+		go e.uploader(uctx)
+	}
 	return e, nil
 }
 
 // Close closes the state store. Sandboxes keep running: they belong to the
 // workspaces, not to this process, and the next Open picks them up again.
-func (e *Engine) Close() error { return e.store.Close() }
+func (e *Engine) Close() error {
+	if e.stopUploads != nil {
+		e.stopUploads()
+		<-e.uploaderDone
+	}
+	return e.store.Close()
+}
 
 // StopAll stops every workspace's sandbox, for a host being drained or a test
 // cleaning up. Workspaces stay recorded as running; the next Open starts them.
@@ -678,6 +702,7 @@ func (e *Engine) Save(ctx context.Context, id string, kind save.Kind, requestKey
 	if err := e.cfg.Failpoints.Check(failpoint.SaveAfterCommit); err != nil {
 		return nil, err
 	}
+	defer e.kickUploads()
 	if err := e.store.MarkSaveReady(ctx, saveID, m.Size()); err != nil {
 		return nil, err
 	}
@@ -734,6 +759,10 @@ func noSpace(err error) error {
 }
 
 func (e *Engine) writeSave(ctx context.Context, spec runtime.Spec, saveID string, kind save.Kind, now time.Time) (*save.Manifest, error) {
+	var info *save.WorkspaceInfo
+	if w, err := e.store.GetWorkspace(ctx, spec.ID); err == nil {
+		info = &save.WorkspaceInfo{Name: w.Name, Spec: w.Spec}
+	}
 	b, err := save.NewBuilder(e.savesDir(), save.Manifest{
 		SaveID:         saveID,
 		WorkspaceID:    spec.ID,
@@ -741,6 +770,7 @@ func (e *Engine) writeSave(ctx context.Context, spec runtime.Spec, saveID string
 		CreatedAt:      now,
 		Runtime:        e.cfg.Runtime.Name(),
 		RuntimeVersion: e.cfg.Runtime.Version(),
+		Workspace:      info,
 	})
 	if err != nil {
 		return nil, err
@@ -860,6 +890,16 @@ func (e *Engine) VerifySave(ctx context.Context, id string) (*Save, error) {
 	case store.SavePending:
 		return nil, ErrNotFound
 	case store.SaveReady, store.SaveCorrupt, store.SaveMissing:
+		if e.remoteOn() && sv.Uploaded {
+			// missing or damaged here: the copy in object storage stands in
+			_, statErr := os.Stat(filepath.Join(e.saveDir(id), save.ManifestFile))
+			_, verr := save.Verify(e.saveDir(id))
+			if statErr != nil || verr != nil {
+				if err := e.fetch(ctx, id); err != nil {
+					e.log.Error("could not fetch save from object storage", "save", id, "err", err)
+				}
+			}
+		}
 		state := store.SaveReady
 		if _, err := os.Stat(filepath.Join(e.saveDir(id), save.ManifestFile)); err != nil {
 			state = store.SaveMissing
@@ -916,6 +956,9 @@ func (e *Engine) PurgeExpired(ctx context.Context) (int, error) {
 	}
 	n := 0
 	for _, sv := range expired {
+		if err := e.deleteRemote(ctx, sv.ID); err != nil {
+			return n, fmt.Errorf("purge save %s from object storage: %w", sv.ID, err)
+		}
 		if err := os.RemoveAll(e.saveDir(sv.ID)); err != nil {
 			return n, err
 		}
@@ -932,12 +975,18 @@ func (e *Engine) PurgeExpired(ctx context.Context) (int, error) {
 }
 
 func (e *Engine) ListSaves(ctx context.Context, workspaceID string) ([]Save, error) {
-	if _, err := e.store.GetWorkspace(ctx, workspaceID); err != nil {
-		return nil, err
+	_, werr := e.store.GetWorkspace(ctx, workspaceID)
+	if werr != nil && !errors.Is(werr, store.ErrNotFound) {
+		return nil, werr
 	}
 	svs, err := e.store.ListSaves(ctx, workspaceID)
 	if err != nil {
 		return nil, err
+	}
+	// a workspace this server never had can still have saves here (made on
+	// another server, learned from object storage): only no saves is not found
+	if werr != nil && len(svs) == 0 {
+		return nil, werr
 	}
 	out := make([]Save, 0, len(svs))
 	for i := range svs {
@@ -985,7 +1034,17 @@ func (e *Engine) readySave(ctx context.Context, saveID string) (*store.Save, *sa
 	default:
 		return nil, nil, fmt.Errorf("%w: save %s is %s", ErrConflict, saveID, sv.State)
 	}
+	if err := e.ensureLocal(ctx, sv); err != nil {
+		return nil, nil, err
+	}
 	m, err := save.Verify(e.saveDir(saveID))
+	if errors.Is(err, save.ErrCorrupt) && e.remoteOn() && sv.Uploaded {
+		// damaged here, intact in object storage: fetch it again
+		e.log.Error("save failed verification; fetching it again from object storage", "save", saveID, "err", err)
+		if ferr := e.fetch(ctx, saveID); ferr == nil {
+			m, err = save.Verify(e.saveDir(saveID))
+		}
+	}
 	if err != nil {
 		if errors.Is(err, save.ErrCorrupt) {
 			e.log.Error("save failed verification", "save", saveID, "err", err)
@@ -1150,12 +1209,23 @@ func (e *Engine) Copy(ctx context.Context, saveID string, count int, requestKey 
 		return nil, err
 	}
 	defer release()
-	src, err := e.store.GetWorkspace(ctx, sv.WorkspaceID)
-	if err != nil {
-		return nil, err
-	}
-	spec, err := specOf(src)
-	if err != nil {
+	// the original workspace's records, or (a save made on another server)
+	// what its manifest says about it
+	var srcName string
+	var spec Spec
+	if src, err := e.store.GetWorkspace(ctx, sv.WorkspaceID); err == nil {
+		srcName = src.Name
+		if spec, err = specOf(src); err != nil {
+			return nil, err
+		}
+	} else if errors.Is(err, store.ErrNotFound) && m.Workspace != nil {
+		srcName = m.Workspace.Name
+		if err := json.Unmarshal(m.Workspace.Spec, &spec); err != nil {
+			return nil, fmt.Errorf("%w: save %s describes its workspace unreadably: %v", ErrCorrupt, saveID, err)
+		}
+	} else if errors.Is(err, store.ErrNotFound) {
+		srcName = sv.WorkspaceID // an older save from elsewhere: default settings
+	} else {
 		return nil, err
 	}
 	e.diskFor(&spec) // the copy keeps the original's size, in this engine's kind of disk
@@ -1175,7 +1245,7 @@ func (e *Engine) Copy(ctx context.Context, saveID string, count int, requestKey 
 			}
 		}
 		id := newID("ws")
-		w, err := e.insertWorkspace(ctx, id, fmt.Sprintf("%s-copy-%d", src.Name, i+1), spec, saveID, key)
+		w, err := e.insertWorkspace(ctx, id, fmt.Sprintf("%s-copy-%d", srcName, i+1), spec, saveID, key)
 		if err != nil {
 			return out, err
 		}
@@ -1416,7 +1486,7 @@ func toWorkspace(w *store.Workspace) (*Workspace, error) {
 }
 
 func (e *Engine) toSave(sv *store.Save) *Save {
-	out := &Save{ID: sv.ID, WorkspaceID: sv.WorkspaceID, Kind: save.Kind(sv.Kind), State: sv.State, Size: sv.Size, CreatedAt: sv.CreatedAt, Auto: sv.Auto}
+	out := &Save{ID: sv.ID, WorkspaceID: sv.WorkspaceID, Kind: save.Kind(sv.Kind), State: sv.State, Size: sv.Size, CreatedAt: sv.CreatedAt, Auto: sv.Auto, Uploaded: sv.Uploaded}
 	if !sv.DeletedAt.IsZero() {
 		d, p := sv.DeletedAt, sv.DeletedAt.Add(e.cfg.Retention)
 		out.DeletedAt, out.PurgeAfter = &d, &p
