@@ -40,7 +40,7 @@ info() {
 if [[ ${1:-} == --info ]]; then info; exit 0; fi
 [[ $EUID -eq 0 ]] || { log "run as root (sudo)"; exit 1; }
 
-read -r GV_ARCH GO_ARCH <<<"$(arch)"
+read -r _ GO_ARCH <<<"$(arch)"
 . /etc/os-release
 [[ $VERSION_ID == "$UBUNTU_RELEASE" ]] || log "warning: Ubuntu $VERSION_ID, pinned $UBUNTU_RELEASE"
 
@@ -51,23 +51,7 @@ apt-get install -y -qq --no-install-recommends \
   ca-certificates curl jq zstd git make iproute2 iptables rsync docker.io >/dev/null
 systemctl enable --now docker >/dev/null 2>&1 || true
 
-# gVisor: one folder per release, kept side by side so a save made with an older
-# release can still be restored by it (upgrade-safe restore). runsc finds its
-# helper binaries (gvisor-bin/) next to its real path, so it is symlinked, not copied.
-gv_dir=/opt/gvisor/$RUNSC_RELEASE
-if [[ ! -x $gv_dir/runsc ]]; then
-  log "gVisor $RUNSC_RELEASE ($GV_ARCH)"
-  url=https://storage.googleapis.com/gvisor/releases/release/$RUNSC_RELEASE/$GV_ARCH/gvisor.tar.zstd
-  tmp=$(mktemp -d)
-  curl -fsSL -o "$tmp/gvisor.tar.zstd" "$url"
-  curl -fsSL -o "$tmp/gvisor.tar.zstd.sha512" "$url.sha512"
-  (cd "$tmp" && sha512sum -c gvisor.tar.zstd.sha512 >/dev/null) || { log "gVisor checksum mismatch"; exit 1; }
-  mkdir -p "$gv_dir"
-  zstd -dc "$tmp/gvisor.tar.zstd" | tar -x -C "$gv_dir"
-  rm -rf "$tmp"
-fi
-ln -sfn "$gv_dir/runsc" /usr/local/bin/runsc
-ln -sfn "$gv_dir/containerd-shim-runsc-v1" /usr/local/bin/containerd-shim-runsc-v1
+"$HERE/install-gvisor.sh" >/dev/null
 
 # Go, for building and testing cairn on the host.
 if [[ $(/usr/local/go/bin/go version 2>/dev/null | awk '{print $3}') != "go$GO_VERSION" ]]; then

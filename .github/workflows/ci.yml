@@ -29,3 +29,38 @@ jobs:
         run: |
           go run ./internal/tools/testplan > docs/test-plan.md
           git diff --exit-code docs/test-plan.md || (echo "run 'make plan' and commit docs/test-plan.md" && exit 1)
+
+  gvisor:
+    # The acceptance suite on real gVisor sandboxes (as root: runsc needs it),
+    # with disk images, memory limits, full saves and the kill -9 harness.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Install gVisor (deploy/versions.env)
+        run: sudo deploy/install-gvisor.sh
+      - name: Acceptance suite on gVisor
+        shell: bash
+        run: |
+          sudo env "PATH=$PATH" devenv/accept-runsc.sh "$PWD" -v -timeout 35m -run TestEndGoals 2>&1 | tee accept.log
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### gVisor acceptance"
+            echo "passed: $(grep -E -- '--- PASS: .*G[0-9]+\.[0-9]' accept.log | grep -vc /self)"
+            echo "skipped: $(grep -E -- '--- SKIP' accept.log | grep -vc /self)"
+            echo '```'
+            grep -E -- '--- FAIL|panic:' accept.log | grep -v /self || echo "no failures"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gvisor-accept-log
+          path: accept.log
