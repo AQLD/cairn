@@ -155,34 +155,53 @@ func (e *Engine) DeleteTemplate(_ context.Context, name string) error {
 }
 
 // createRootfs gives a new workspace its filesystem: empty, or a copy of a
-// template. It is extracted next to the final place and renamed in, so a crash
+// template. It is built next to the final place and renamed in, so a crash
 // never leaves a half-extracted workspace.
-func (e *Engine) createRootfs(id, template string) error {
-	root := e.rootDir(id)
-	if _, err := os.Stat(root); err == nil {
-		return nil // already there (recovery after the rename)
+func (e *Engine) createRootfs(id string, spec Spec) error {
+	root := e.volume(id, "rootfs", spec)
+	if root.exists() {
+		return root.attach() // already there (recovery after the rename)
 	}
-	if template == "" {
-		return os.MkdirAll(root, 0o755)
+	if spec.Template == "" && !spec.DiskImage {
+		return os.MkdirAll(root.path, 0o755)
 	}
-	tarPath := filepath.Join(e.templateDir(template), "rootfs.tar")
-	f, err := os.Open(tarPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("%w: template %q", ErrNotFound, template)
+	tmp := e.volume(id, "rootfs.new", spec)
+	if err := tmp.remove(); err != nil {
+		return err
+	}
+	var f *os.File
+	var size int64
+	if spec.Template != "" {
+		var err error
+		f, err = os.Open(filepath.Join(e.templateDir(spec.Template), "rootfs.tar"))
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%w: template %q", ErrNotFound, spec.Template)
+		}
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			return err
+		}
+		size = info.Size()
+	}
+	err := tmp.prepare()
+	if err == nil && f != nil {
+		if err = save.UntarDir(f, tmp.path, size); errors.Is(diskFull(err, spec), ErrInsufficientStorage) {
+			err = fmt.Errorf("%w: template %q does not fit in a %d MB disk", ErrInvalid, spec.Template, spec.Limits.DiskMB)
+		}
+	}
+	if err == nil {
+		err = tmp.release()
 	}
 	if err != nil {
+		_ = tmp.remove()
 		return err
 	}
-	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
+	if err := tmp.renameTo(root); err != nil {
 		return err
 	}
-	tmp := root + ".new"
-	_ = os.RemoveAll(tmp)
-	if err := save.UntarDir(f, tmp, info.Size()); err != nil {
-		_ = os.RemoveAll(tmp)
-		return err
-	}
-	return os.Rename(tmp, root)
+	return root.attach()
 }

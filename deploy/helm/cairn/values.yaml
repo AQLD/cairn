@@ -40,6 +40,15 @@ pause:
   # Pod terminationGracePeriodSeconds.
   gracePeriod: 180
 
+# Workspace disks: each workspace's files live in a sparse ext4 image of its
+# size, so one workspace cannot fill the volume for the others. Images use
+# volume space only for what is stored.
+disk:
+  # Size of workspaces created without one, in MB.
+  defaultMB: 10240
+  # false keeps workspaces in plain folders with no size limit.
+  images: true
+
 # How long deleted saves can be undeleted before they are purged.
 retention: 168h
 # How often every save's checksums are re-verified.

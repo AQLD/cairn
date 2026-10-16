@@ -205,7 +205,6 @@ func (r *Runsc) Start(ctx context.Context, spec Spec) error {
 	if err := r.detached(ctx, spec, "run", "--detach", "--bundle", bundleDir(spec), containerID(spec)); err != nil {
 		return err
 	}
-	r.throttle(spec)
 	return nil
 }
 
@@ -271,7 +270,6 @@ func (r *Runsc) Restore(ctx context.Context, spec Spec, dir string) error {
 	if err := r.detached(ctx, spec, "restore", "--detach", "--image-path", dir, "--bundle", bundleDir(spec), containerID(spec)); err != nil {
 		return err
 	}
-	r.throttle(spec)
 	return nil
 }
 
@@ -389,19 +387,13 @@ func sandboxEnv(spec Spec, extra map[string]string) []string {
 func cgroupPath(spec Spec) string { return "/cairn/" + containerID(spec) }
 
 // hostMemoryMax is the host's hard limit for a workspace allowed limit bytes.
+// The limit itself is enforced inside the sandbox (cairn-init); this is the
+// backstop. There is deliberately no memory.high: memory the in-sandbox limit
+// does not count (tmpfs, gVisor's own file cache) cannot be reclaimed by the
+// host, and once it sits above memory.high every allocation is throttled, so
+// the workspace hangs for good. Hitting memory.max instead kills the sandbox,
+// which the next command restarts from its files.
 func hostMemoryMax(limit int64) int64 { return limit + max(limit/2, 256<<20) }
-
-// throttle sets cgroup v2 memory.high just above the workspace's limit: a
-// process racing past the limit is slowed down by the host while cairn-init
-// stops it, instead of the host killing the sandbox. Best effort: without
-// cgroup v2 the hard limit still applies.
-func (r *Runsc) throttle(spec Spec) {
-	if spec.Limits.MemoryMB <= 0 {
-		return
-	}
-	high := spec.Limits.MemoryMB<<20 + 64<<20
-	_ = os.WriteFile(filepath.Join("/sys/fs/cgroup", cgroupPath(spec), "memory.high"), []byte(strconv.FormatInt(high, 10)), 0o644)
-}
 
 // --- bundle -------------------------------------------------------------------
 

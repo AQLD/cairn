@@ -74,6 +74,7 @@ var Catalog = []Scenario{
 					{ID: "G3.2.3", Title: "Disk limit stops writes with a clear error", Milestone: E1, Needs: []Need{NeedDiskLimits}},
 					{ID: "G3.2.4", Title: "Running out of memory never loses the workspace or its files", Milestone: E1, Needs: []Need{NeedResourceLimits}},
 					{ID: "G3.2.5", Title: "Only processes over the memory limit are stopped", Milestone: E1, Needs: []Need{NeedResourceLimits}},
+					{ID: "G3.2.6", Title: "A workspace keeps its disk size through resume, copy and restart", Milestone: E1, Needs: []Need{NeedDiskLimits}},
 				}},
 			{ID: "G3.3", Title: "Hitting a quota saves the work instead of killing it", Proves: "Running out of quota never loses work.", Milestone: E4},
 			{ID: "G3.4", Title: "Quotas apply per workspace and per project", Proves: "A platform can cap each end user and its own total.", Milestone: E4},

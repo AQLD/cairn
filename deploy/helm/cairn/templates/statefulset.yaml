@@ -49,6 +49,8 @@ spec:
             - --idle-pause={{ .Values.pause.idle }}
             - --pause-on-shutdown={{ .Values.pause.onShutdown }}
             - --shutdown-timeout={{ .Values.pause.shutdownTimeout }}
+            - --disk-mb={{ int .Values.disk.defaultMB }}
+            - --disk-images={{ .Values.disk.images }}
             {{- if .Values.defaultTemplate }}
             - --default-template={{ .Values.defaultTemplate }}
             {{- end }}
