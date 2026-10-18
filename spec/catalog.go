@@ -251,9 +251,14 @@ var Catalog = []Scenario{
 		Children: []Scenario{
 			{ID: "G11.1", Title: "Starts from the team's toolchain image, ready to work", Milestone: E3, Uses: []string{"G1.10", "G1.10.5", "G9.1"}},
 			{ID: "G11.2", Title: "Fetches private code with a credential that never lands in the workspace or its saves", Milestone: E4, Uses: []string{"G5.9", "G5.4"}},
-			{ID: "G11.3", Title: "Installs dependencies, runs the tests and a dev server with live output", Milestone: E3, Uses: []string{"G1.6", "G1.5", "G1.7.3"}},
+			{ID: "G11.3", Title: "Installs dependencies, runs the tests and a dev server with live output", Milestone: E3,
+				Children: []Scenario{
+					{ID: "G11.3.1", Title: "Installs the project's dependencies from a private package index", Proves: "Packages install offline from a wheelhouse inside the workspace, into the project's own environment.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G1.6", "G1.2"}},
+					{ID: "G11.3.2", Title: "Runs the test suite with output arriving while it runs", Proves: "The agent sees test progress live, not only when the run ends.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G1.6.8"}},
+					{ID: "G11.3.3", Title: "A dev server keeps serving between the agent's commands", Proves: "A server started by one command answers the agent's later commands.", Milestone: E3, Needs: []Need{NeedPython, NeedPersistent}, Uses: []string{"G1.5"}},
+				}},
 			{ID: "G11.4", Title: "Stops for the night at no compute cost and carries on next day with the dev server running", Milestone: E3, Uses: []string{"G4.1", "G4.2", "G1.8"}},
-			{ID: "G11.5", Title: "Tries three fixes in parallel and keeps the one whose tests pass", Milestone: E3, Uses: []string{"G2.1", "G2.2", "G2.7"}},
+			{ID: "G11.5", Title: "Tries three fixes in parallel and keeps the one whose tests pass", Proves: "Three copies of a failing project each try a different fix at once; the one whose tests pass is applied to the original.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G2.1", "G2.2", "G2.7"}},
 			{ID: "G11.6", Title: "Undoes a destructive command by rewinding one step", Milestone: E3, Uses: []string{"G18.3"}},
 			{ID: "G11.7", Title: "A person reviews what changed and takes over", Milestone: E4, Uses: []string{"G1.4", "G18.4", "G19.3"}},
 		},
