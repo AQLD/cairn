@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 54 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 17 | 34 | 2 |
+| E3 | 19 | 34 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -22,11 +22,11 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 
 | Journey | For | Steps proven | Steps unblocked | Capability scenarios still pending |
 | --- | --- | --- | --- | --- |
-| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 5 of 9 | 5 of 9 | 6 |
-| [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 0 of 6 | 1 of 6 | 5 |
+| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 5 of 9 | 6 of 9 | 5 |
+| [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 0 of 6 | 1 of 6 | 4 |
 | [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 0 of 6 | 3 of 6 | 3 |
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 0 of 5 | 4 of 5 | 1 |
-| [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 0 of 6 | 1 of 6 | 6 |
+| [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 0 of 6 | 2 of 6 | 5 |
 | [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 0 of 6 | 2 of 6 | 5 |
 | [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 2 of 6 | 3 of 6 | 3 |
 
@@ -40,7 +40,7 @@ An agent sets up a repository, works on it across days, tries fixes in parallel 
   - ✅ **G11.3.1** Installs the project's dependencies from a private package index · E3 · needs python · uses G1.6 ✅, G1.2 ✅
   - ✅ **G11.3.2** Runs the test suite with output arriving while it runs · E3 · needs python · uses G1.6.8 ✅
   - ✅ **G11.3.3** A dev server keeps serving between the agent's commands · E3 · needs python, persistent_processes · uses G1.5 ✅
-- ⏳ **G11.4** Stops for the night at no compute cost and carries on next day with the dev server running · E3 · uses G4.1 ✅, G4.2 ✅, G1.8 ⏳
+- ⏳ **G11.4** Stops for the night at no compute cost and carries on next day with the dev server running · E3 · uses G4.1 ✅, G4.2 ✅, G1.8.1 ✅, G1.8.2 ✅
 - ✅ **G11.5** Tries three fixes in parallel and keeps the one whose tests pass · E3 · needs python · uses G2.1 ✅, G2.2 ✅, G2.7 ✅
 - ⏳ **G11.6** Undoes a destructive command by rewinding one step · E3 · uses G18.3 ⏳
 - ⏳ **G11.7** A person reviews what changed and takes over · E4 · uses G1.4 ✅, G18.4 ⏳, G19.3 ⏳
@@ -51,7 +51,7 @@ Data goes in, analysis runs in a live session that lasts for days, results come 
 
 - ⏳ **G12.1** Loads a dataset of several gigabytes · E3 · uses G19.5 ⏳, G3.2.3 ✅
 - ⏳ **G12.2** Keeps a live Python session between questions · E3 · uses G19.1 ⏳
-- ⏳ **G12.3** Comes back a week later to the same session with its data still loaded · E3 · uses G19.2 ⏳, G1.8 ⏳, G4.2 ✅
+- ⏳ **G12.3** Comes back a week later to the same session with its data still loaded · E3 · uses G19.2 ⏳, G1.8.1 ✅, G4.2 ✅
 - ⏳ **G12.4** Data cannot leave: the network is off or allow-listed · E4 · uses G5.3 ✅, G5.4 ⏳, G8.6 ✅
 - ⏳ **G12.5** A query that runs out of memory loses the query, not the session's files · E3 · uses G3.2.4 ✅, G3.2.5 ✅
 - ⏳ **G12.6** Charts and result files come back out · E3 · uses G1.4 ✅, G19.5 ⏳
@@ -86,7 +86,7 @@ An agent acts on internal systems with credentials it cannot leak, waits for app
 - ⏳ **G15.3** Waits for approval before a risky step at no compute cost · E3 · uses G4.1 ✅, G4.2 ✅
 - ⏳ **G15.4** Every command is recorded with the key that ran it · E4 · uses G5.7 ⏳, G5.8 ⏳
 - ⏳ **G15.5** A bad change inside the workspace is undone by rewinding · E3 · uses G18.3 ⏳
-- ⏳ **G15.6** A scheduled agent carries on from yesterday's state · E3 · uses G1.3 ✅, G4.2 ✅, G1.8 ⏳
+- ⏳ **G15.6** A scheduled agent carries on from yesterday's state · E3 · uses G1.3 ✅, G4.2 ✅, G1.8.1 ✅, G1.8.2 ✅
 
 ## G16 Every user of a product gets an agent computer that is always there
 
@@ -143,7 +143,10 @@ Work done in a workspace is still there, exactly as it was, after a save and res
   - ✅ **G1.7.2** Node dev server watching files · E0 · needs full_save
   - ✅ **G1.7.3** Package install interrupted mid-download · E0 · needs full_save
   - ✅ **G1.7.4** Headless browser with an open page · E0 · needs full_save
-- ⏳ **G1.8** A workspace resumes correctly days later · E3 · needs full_save
+- 📂 **G1.8** A workspace resumes correctly days later · E3
+  - ✅ **G1.8.1** After a long pause the clock shows the real time and monotonic time never goes back · E3 · needs full_save, persistent_processes
+  - ✅ **G1.8.2** Timers that fell due during the pause fire as soon as it resumes · E3 · needs full_save, persistent_processes
+  - ⏳ **G1.8.3** Connections to the outside fail fast after a long pause instead of hanging · E3 · needs full_save, persistent_processes, network_control
 - ⏳ **G1.9** A real coding agent works in workspaces daily for two weeks · E3 · needs real_agent
 
 ## G2 Try several fixes at once
