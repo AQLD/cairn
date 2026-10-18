@@ -19,6 +19,7 @@ Start with [ROADMAP.md](ROADMAP.md) (milestones E0–E5 and their gates) and [do
 | `internal/objstore/` | S3-compatible object storage client (SigV4, multipart, retries) and an in-memory S3 for tests (`s3test`). |
 | `internal/failpoint/` | Named crash points for recovery tests. |
 | `client/` | Public Go client. The CLI and the acceptance suite use it, so tests exercise the real API. |
+| `sdk/python/` | Python client (standard library only). Its tests run against a real engine, and inside the acceptance suite as G10.10. |
 | `cmd/cairnd`, `cmd/cairn` | Engine daemon and CLI. The CLI talks to the engine only through the API. |
 | `cmd/cairn-init` | Process 1 inside every gVisor workspace: starts commands, reaps orphans, enforces the memory limit. Installed next to `cairnd`. |
 | `internal/tools/testplan` | Generates `docs/test-plan.md` from the catalog. |
@@ -34,6 +35,7 @@ make accept      # full acceptance run, verbose summary
 make bench       # benchmarks
 make chaos       # real kill -9 rounds against a cairnd process (ROUNDS=200 make chaos)
 make plan        # regenerate docs/test-plan.md (commit the result)
+make sdk-test    # Python SDK tests against a fresh cairnd
 make run         # cairnd on ./data with the host runtime, localhost only
 go test ./acceptance -run 'TestEndGoals/G6' -v                 # one goal
 CAIRN_CYCLES=10000 go test ./acceptance -run G6.2 -timeout 0   # E1 loop gate

@@ -1,4 +1,4 @@
-.PHONY: build test race fuzz accept bench chaos plan run lint clean
+.PHONY: build test race fuzz accept bench chaos plan run lint clean sdk-test
 
 build:
 	go build -o bin/ ./cmd/...
@@ -32,6 +32,10 @@ chaos:
 lint:
 	@test -z "$$(gofmt -l .)" || (echo "gofmt needed:"; gofmt -l .; exit 1)
 	go vet ./...
+
+# The Python SDK's tests, against a cairnd they build and start (host runtime).
+sdk-test:
+	python3 -W error -m unittest discover -s sdk/python/tests
 
 # Regenerate the test plan from the scenario catalog. Commit the result.
 plan:

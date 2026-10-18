@@ -11,3 +11,9 @@ spike/results/session-*/
 CLAUDE.md
 CLAUDE.local.md
 .claude/
+
+# Python SDK build and cache files
+__pycache__/
+*.egg-info/
+sdk/python/build/
+sdk/python/dist/

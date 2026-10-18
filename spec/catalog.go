@@ -237,6 +237,7 @@ var Catalog = []Scenario{
 			{ID: "G10.7", Title: "Deleting workspaces leaves nothing behind on the host", Proves: "Every operation cleans up its mounts, devices, network, cgroups and sandboxes.", Milestone: E1, Needs: []Need{NeedInProcess}},
 			{ID: "G10.8", Title: "Every release is signed and ships a bill of materials", Proves: "An operator can verify what they install.", Milestone: E3},
 			{ID: "G10.9", Title: "An operator can produce a diagnostics bundle that holds no workspace contents", Proves: "Problems can be investigated without access to the operator's network or data.", Milestone: E3, Needs: []Need{NeedInProcess}},
+			{ID: "G10.10", Title: "The Python SDK drives every API operation", Proves: "Agents written in Python get the whole API, with safe retries, from a client with no dependencies (engine feature #18).", Milestone: E3, Needs: []Need{NeedPython}},
 		},
 	},
 	// Agent journeys: what each kind of agent gets done end to end. A step is

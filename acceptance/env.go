@@ -263,6 +263,9 @@ func (e *Env) has(n spec.Need) (bool, string) {
 		return caps.PersistentProcesses, "runtime " + e.Info.Runtime + " does not keep processes between commands"
 	case spec.NeedInProcess:
 		return e.Engine != nil, "running against CAIRN_ENDPOINT"
+	case spec.NeedPython:
+		_, err := exec.LookPath("python3")
+		return err == nil, "python3 is not installed"
 	case spec.NeedLinuxBench, spec.NeedObjectStorage, spec.NeedMultiServer, spec.NeedRealAgent:
 		return os.Getenv("CAIRN_ENV_"+envName(n)) == "1", "set CAIRN_ENV_" + envName(n) + "=1 on an environment that provides it"
 	}
