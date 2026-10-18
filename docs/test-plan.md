@@ -9,11 +9,103 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 53 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 8 | 3 | 0 |
-| E4 | 8 | 4 | 1 |
-| E5 | 1 | 1 | 0 |
+| E3 | 8 | 40 | 2 |
+| E4 | 8 | 23 | 1 |
+| E5 | 1 | 3 | 0 |
+| later | 0 | 3 | 0 |
 
 Legend: ✅ implemented · ⏳ pending · 📏 benchmark · needs = what the environment must provide (skipped without it)
+
+## Agent journeys
+
+What each kind of agent gets done end to end. A step is unblocked when every capability scenario it uses is in place, and proven when its own end-to-end test passes.
+
+| Journey | For | Steps proven | Steps unblocked | Capability scenarios still pending |
+| --- | --- | --- | --- | --- |
+| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 0 of 7 | 2 of 7 | 7 |
+| [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 0 of 6 | 1 of 6 | 5 |
+| [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 0 of 6 | 3 of 6 | 3 |
+| [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 0 of 5 | 3 of 5 | 2 |
+| [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 0 of 6 | 1 of 6 | 6 |
+| [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 0 of 6 | 2 of 6 | 5 |
+| [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 0 of 6 | 3 of 6 | 3 |
+
+## G11 A coding agent ships a change over several days
+
+An agent sets up a repository, works on it across days, tries fixes in parallel and hands the winner to a person. Gate: **E4**.
+
+- ⏳ **G11.1** Starts from the team's toolchain image, ready to work · E3 · uses G1.10 ⏳, G1.10.5 ⏳, G9.1 ✅
+- ⏳ **G11.2** Fetches private code with a credential that never lands in the workspace or its saves · E4 · uses G5.9 ⏳, G5.4 ⏳
+- ⏳ **G11.3** Installs dependencies, runs the tests and a dev server with live output · E3 · uses G1.6 ✅, G1.5 ✅, G1.7.3 ✅
+- ⏳ **G11.4** Stops for the night at no compute cost and carries on next day with the dev server running · E3 · uses G4.1 ✅, G4.2 ✅, G1.8 ⏳
+- ⏳ **G11.5** Tries three fixes in parallel and keeps the one whose tests pass · E3 · uses G2.1 ✅, G2.2 ✅, G2.7 ✅
+- ⏳ **G11.6** Undoes a destructive command by rewinding one step · E3 · uses G18.3 ⏳
+- ⏳ **G11.7** A person reviews what changed and takes over · E4 · uses G1.4 ✅, G18.4 ⏳, G19.3 ⏳
+
+## G12 A data agent analyses private data across sessions
+
+Data goes in, analysis runs in a live session that lasts for days, results come out, and nothing leaves the network. Gate: **E4**.
+
+- ⏳ **G12.1** Loads a dataset of several gigabytes · E3 · uses G19.5 ⏳, G3.2.3 ✅
+- ⏳ **G12.2** Keeps a live Python session between questions · E3 · uses G19.1 ⏳
+- ⏳ **G12.3** Comes back a week later to the same session with its data still loaded · E3 · uses G19.2 ⏳, G1.8 ⏳, G4.2 ✅
+- ⏳ **G12.4** Data cannot leave: the network is off or allow-listed · E4 · uses G5.3 ✅, G5.4 ⏳, G8.6 ✅
+- ⏳ **G12.5** A query that runs out of memory loses the query, not the session's files · E3 · uses G3.2.4 ✅, G3.2.5 ✅
+- ⏳ **G12.6** Charts and result files come back out · E3 · uses G1.4 ✅, G19.5 ⏳
+
+## G13 A browser agent finishes a long web task with a person's help
+
+A signed-in browser keeps its place through waits for a person, reaches only the task's sites, and leaves a record. Gate: **E4**.
+
+- ⏳ **G13.1** A signed-in browser stays signed in across pause and resume · E3 · uses G1.7.4 ✅, G4.2 ✅
+- ⏳ **G13.2** Waits for a person's approval or one-time code at no compute cost · E3 · uses G4.1 ✅, G4.4 ✅
+- ⏳ **G13.3** A person sees the page and takes over the session after a pause · E3 · uses G1.4 ✅, G4.2 ✅
+- ⏳ **G13.4** The browser reaches only the task's sites · E4 · uses G5.4 ⏳
+- ⏳ **G13.5** Every action is on record · E4 · uses G5.8 ⏳, G10.4.2 ✅
+- ⏳ **G13.6** A person watches the browser live · later · uses G19.4 ⏳
+
+## G14 A research agent works many questions in parallel
+
+Many short tasks start warm with their tools loaded, use only approved sources, and cost little. Gate: **E4**.
+
+- ⏳ **G14.1** Each question starts from a warm save with its tools loaded · E3 · uses G2.1 ✅, G9.5 ✅
+- ⏳ **G14.2** Fetches only from allowed sources · E4 · uses G5.4 ⏳
+- ⏳ **G14.3** Reads documents with installed tools (PDF, office files) · E3 · uses G1.2 ✅, G1.10 ⏳
+- ⏳ **G14.4** A hundred questions run side by side on one server · E4 · uses G2.4 ✅, G9.7 ✅
+- ⏳ **G14.5** Finished questions leave nothing behind · E3 · uses G10.7 ✅
+
+## G15 A workflow agent changes business systems safely
+
+An agent acts on internal systems with credentials it cannot leak, waits for approval before risky steps, and leaves a full record and a way back. Gate: **E4**.
+
+- ⏳ **G15.1** Calls internal APIs with secrets it cannot read back or leak · E4 · uses G5.9 ⏳
+- ⏳ **G15.2** Reaches only the internal hosts it is allowed · E4 · uses G5.4 ⏳, G8.6 ✅
+- ⏳ **G15.3** Waits for approval before a risky step at no compute cost · E3 · uses G4.1 ✅, G4.2 ✅
+- ⏳ **G15.4** Every command is recorded with the key that ran it · E4 · uses G5.7 ⏳, G5.8 ⏳
+- ⏳ **G15.5** A bad change inside the workspace is undone by rewinding · E3 · uses G18.3 ⏳
+- ⏳ **G15.6** A scheduled agent carries on from yesterday's state · E3 · uses G1.3 ✅, G4.2 ✅, G1.8 ⏳
+
+## G16 Every user of a product gets an agent computer that is always there
+
+A product gives each of its users a walled-off computer with limits, that costs little while idle and is ready when the user returns. Gate: **E5**.
+
+- ⏳ **G16.1** Each user's workspace is walled off from every other · E4 · uses G3.1 ✅, G8 ✅
+- ⏳ **G16.2** Users and the product have quotas, and hitting one saves the work · E4 · uses G3.3 ⏳, G3.4 ⏳
+- ⏳ **G16.3** Idle workspaces cost only storage and wake on the next request · E4 · uses G4.4 ✅, G9.8 ✅
+- ⏳ **G16.4** The product hears when a workspace pauses, wakes or hits a limit · E4 · uses G19.6 ⏳
+- ⏳ **G16.5** A user opens the app their agent built through a preview link · later · uses G19.4 ⏳
+- ⏳ **G16.6** Thousands of mostly idle users are served by a few servers · E5 · uses G9.7 ✅, G7.8 ⏳
+
+## G17 A training run branches thousands of environments from one setup
+
+Expensive setup runs once; environments copy from its live state, reset between episodes and branch from any step. Gate: **E5**.
+
+- ⏳ **G17.1** Setup runs once and environments copy from its live state · E3 · uses G2.1 ✅, G2.6 ✅, G9.5 ✅
+- ⏳ **G17.2** An environment resets to its start between episodes · E3 · uses G1.3 ✅, G9.4 ✅
+- ⏳ **G17.3** A rollout branches from any earlier step · E3 · uses G18.6 ⏳
+- ⏳ **G17.4** Copies keep or refresh their randomness, as the experiment needs · E3 · uses G2.6 ✅, G2.8 ⏳
+- ⏳ **G17.5** Thousands of environments run across servers · E5 · uses G7.8 ⏳
+- 📏 **G17.6** The cost of a thousand rollouts from a warm save is measured · E3 · `BenchmarkRollouts` · uses G9.5 ✅
 
 ## G1 A coding agent picks up where it left off
 
@@ -39,6 +131,7 @@ Work done in a workspace is still there, exactly as it was, after a save and res
   - ✅ **G1.10.2** Each workspace gets its own copy of the template · E3
   - ✅ **G1.10.3** Unknown templates and unusable archives are refused · E3
   - ✅ **G1.10.4** Re-importing a template does not change existing workspaces · E3
+  - ⏳ **G1.10.5** A template is built from a container image in a private registry · E3
 - ✅ **G1.12** An app and its database stay connected across a full save · E1 · needs full_save, persistent_processes
 - ✅ **G1.11** Files in /tmp are kept like any other file · E1 · needs isolation, in_process
 - 📂 **G1.7** Golden workloads save and resume correctly · E0 · needs full_save
@@ -60,6 +153,7 @@ One save becomes many independent workspaces that can each try something differe
 - ✅ **G2.5** A copy can be saved and copied again · E2
 - ✅ **G2.6** Copies of a full save get fresh network identity and randomness · E2 · needs full_save
 - ✅ **G2.7** The original keeps working while its copies run · E2
+- ⏳ **G2.8** A copy can keep the source's random state when asked · E3 · needs full_save
 
 ## G3 Every user gets their own computer
 
@@ -97,6 +191,10 @@ Cairn runs entirely on your own servers, safely, with nothing leaving your netwo
 - ✅ **G5.3** Network is off unless switched on per workspace · E1 · needs network_control
 - ⏳ **G5.4** Outbound traffic follows an allow-list · E4 · needs network_control
 - ⏳ **G5.5** A fresh server runs its first workspace within five minutes · E3 · needs linux_bench
+- ⏳ **G5.6** The API can be served over TLS · E3
+- ⏳ **G5.7** Each caller has its own API key, scoped and revocable · E4
+- ⏳ **G5.8** Every API action is recorded with the key that made it · E4
+- ⏳ **G5.9** Secrets reach a workspace without landing on its disk or in its saves · E4 · needs network_control
 
 ## G6 A save is never lost or silently broken
 
@@ -117,6 +215,7 @@ Every save either restores exactly or is refused with a clear error. Gate: **E2*
 - 📂 **G6.5** Saves live in object storage and survive the server · E2 · needs in_process
   - ✅ **G6.5.1** A dropped storage connection mid-upload is retried or fails cleanly · E2 · needs in_process
   - ✅ **G6.5.2** Downloaded saves are verified before use · E2 · needs in_process
+  - ⏳ **G6.5.3** Saves work with the common S3-compatible stores · E3 · needs object_storage
 - ⏳ **G6.6** Saves restore on another CPU type · E2 · needs full_save, linux_bench
 - ✅ **G6.7** Saves restore after a gVisor upgrade · E2 · needs full_save, in_process
 - 📂 **G6.8** Deleted saves can be recovered within the retention window · E2
@@ -195,4 +294,28 @@ An operator can install, observe and upgrade Cairn without surprises. Gate: **E4
 - ⏳ **G10.5** 72 hours of mixed load shows no leaks · E4 · needs linux_bench
 - ✅ **G10.6** Upgrading the engine keeps all workspaces and saves · E2 · needs in_process
 - ✅ **G10.7** Deleting workspaces leaves nothing behind on the host · E1 · needs in_process
+- ⏳ **G10.8** Every release is signed and ships a bill of materials · E3
+- ⏳ **G10.9** An operator can produce a diagnostics bundle that holds no workspace contents · E3 · needs in_process
+
+## G18 Every step can be rewound
+
+An agent's computer keeps a tree of its past states, cheap enough to checkpoint every step, to rewind, compare or branch from. Gate: **E3**.
+
+- 📏 **G18.1** A checkpoint after a small step stores only what changed · E3 · `BenchmarkStepCheckpoint`
+- ⏳ **G18.2** Every save records the save it came from · E3
+- ⏳ **G18.3** Rewinding returns the workspace to an earlier step, running processes included · E3 · needs full_save, persistent_processes
+- ⏳ **G18.4** The files changed between two saves can be listed · E3
+- ⏳ **G18.5** Old steps are pruned by policy while pinned steps are kept · E3
+- ⏳ **G18.6** A copy can start from any earlier step · E3
+
+## G19 Agents and people share the computer
+
+Agents keep live sessions, people can look in and take over, and products hear about what happens. Gate: **E4**.
+
+- ⏳ **G19.1** A session keeps its state between commands · E3 · needs persistent_processes
+- ⏳ **G19.2** A session survives pause and resume · E3 · needs full_save, persistent_processes
+- ⏳ **G19.3** A person can open an interactive terminal in a running workspace · E4
+- ⏳ **G19.4** A port inside the workspace opens to a person through a preview link · later · needs network_control
+- ⏳ **G19.5** Files of several gigabytes move in and out as streams · E3
+- ⏳ **G19.6** Clients hear when a workspace pauses, wakes, hits a limit or finishes a command · E4
 

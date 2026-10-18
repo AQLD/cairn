@@ -52,7 +52,45 @@ func main() {
 	fmt.Fprintln(w, "Legend: ✅ implemented · ⏳ pending · 📏 benchmark · needs = what the environment must provide (skipped without it)")
 	fmt.Fprintln(w)
 
+	// Agent journeys first: how close each kind of agent is to working end to end.
+	var journeys, capabilities []spec.Scenario
 	for _, g := range spec.Catalog {
+		if g.For != "" {
+			journeys = append(journeys, g)
+		} else {
+			capabilities = append(capabilities, g)
+		}
+	}
+	fmt.Fprintln(w, "## Agent journeys")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "What each kind of agent gets done end to end. A step is unblocked when every capability scenario it uses is in place, and proven when its own end-to-end test passes.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "| Journey | For | Steps proven | Steps unblocked | Capability scenarios still pending |")
+	fmt.Fprintln(w, "| --- | --- | --- | --- | --- |")
+	for _, g := range journeys {
+		steps, proven, unblocked := 0, 0, 0
+		missing := map[string]bool{}
+		spec.Walk(g.Children, func(s spec.Scenario, _ []spec.Scenario) {
+			if len(s.Children) > 0 {
+				return
+			}
+			steps++
+			if acceptance.Status(s) == "implemented" {
+				proven++
+			}
+			p := pendingUnder(s.Uses)
+			if len(p) == 0 {
+				unblocked++
+			}
+			for _, id := range p {
+				missing[id] = true
+			}
+		})
+		fmt.Fprintf(w, "| [%s](#%s) %s | %s | %d of %d | %d of %d | %d |\n", g.ID, anchor(g), g.Title, g.For, proven, steps, unblocked, steps, len(missing))
+	}
+	fmt.Fprintln(w)
+
+	for _, g := range append(journeys, capabilities...) {
 		fmt.Fprintf(w, "## %s %s\n\n", g.ID, g.Title)
 		if g.Proves != "" {
 			fmt.Fprintf(w, "%s Gate: **%s**.\n\n", g.Proves, g.Milestone)
@@ -70,10 +108,53 @@ func main() {
 			if s.Bench != "" {
 				fmt.Fprintf(w, " · `%s`", s.Bench)
 			}
+			if len(s.Uses) > 0 {
+				used := make([]string, len(s.Uses))
+				for i, id := range s.Uses {
+					mark := "✅"
+					if len(pendingUnder([]string{id})) > 0 {
+						mark = "⏳"
+					}
+					used[i] = id + " " + mark
+				}
+				fmt.Fprintf(w, " · uses %s", strings.Join(used, ", "))
+			}
 			fmt.Fprintln(w)
 		})
 		fmt.Fprintln(w)
 	}
+}
+
+// pendingUnder returns the pending scenarios among ids and their children:
+// the engine work a journey step still waits for. Benchmarks don't block.
+func pendingUnder(ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		s, ok := spec.Find(id)
+		if !ok {
+			continue // TestJourneysAreConsistent reports it
+		}
+		spec.Walk([]spec.Scenario{s}, func(c spec.Scenario, _ []spec.Scenario) {
+			if acceptance.Status(c) == "pending" {
+				out = append(out, c.ID)
+			}
+		})
+	}
+	return out
+}
+
+// anchor is the GitHub heading anchor of a goal's section.
+func anchor(g spec.Scenario) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(g.ID + " " + g.Title) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
+			b.WriteRune(r)
+		case r == ' ':
+			b.WriteRune('-')
+		}
+	}
+	return b.String()
 }
 
 func icon(s spec.Scenario) string {

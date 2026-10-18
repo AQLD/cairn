@@ -52,14 +52,36 @@ const (
 )
 
 // Scenario is one end-goal test or a piece of one.
+//
+// Two kinds of goal share the tree. Capability goals (G1–G10, G18, G19) say
+// what the engine guarantees. Agent journeys (For set) say what one kind of
+// agent gets done end to end; each step names the capability scenarios it
+// relies on in Uses, so the test plan shows which engine work stands between
+// an application and a working journey.
 type Scenario struct {
 	ID        string
 	Title     string
 	Proves    string // what passing guarantees, in one sentence
 	Milestone Milestone
 	Needs     []Need
-	Bench     string // for performance scenarios: the benchmark that measures it
+	Bench     string   // for performance scenarios: the benchmark that measures it
+	For       string   // agent journeys only (top level): the kind of agent served
+	Uses      []string // journey steps: capability scenarios (and their children) the step relies on
 	Children  []Scenario
+}
+
+// Before reports whether milestone a comes before b.
+func Before(a, b Milestone) bool {
+	ia, ib := -1, -1
+	for i, m := range Milestones {
+		if m == a {
+			ia = i
+		}
+		if m == b {
+			ib = i
+		}
+	}
+	return ia < ib
 }
 
 // Walk visits every scenario depth-first with its parent chain.
