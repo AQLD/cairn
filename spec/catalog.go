@@ -33,7 +33,7 @@ var Catalog = []Scenario{
 					{ID: "G1.10.2", Title: "Each workspace gets its own copy of the template", Milestone: E3},
 					{ID: "G1.10.3", Title: "Unknown templates and unusable archives are refused", Milestone: E3},
 					{ID: "G1.10.4", Title: "Re-importing a template does not change existing workspaces", Milestone: E3},
-					{ID: "G1.10.5", Title: "A template is built from a container image in a private registry", Milestone: E3},
+					{ID: "G1.10.5", Title: "A template is built from a container image in a private registry", Milestone: E3, Needs: []Need{NeedInProcess}},
 				}},
 			{ID: "G1.12", Title: "An app and its database stay connected across a full save", Proves: "Connections between processes inside the workspace (loopback TCP, unix sockets) survive save and resume; only connections to the outside world are reset.", Milestone: E1, Needs: []Need{NeedFullSave, NeedPersistent}},
 			{ID: "G1.13", Title: "A file written through the API is seen whole by the workspace's programs", Proves: "Programs inside see a file's new content and size at once, even a file they have read before (the API writes the folder the sandbox serves).", Milestone: E1},
@@ -249,7 +249,7 @@ var Catalog = []Scenario{
 		Proves:    "An agent sets up a repository, works on it across days, tries fixes in parallel and hands the winner to a person.",
 		Milestone: E4,
 		Children: []Scenario{
-			{ID: "G11.1", Title: "Starts from the team's toolchain image, ready to work", Milestone: E3, Uses: []string{"G1.10", "G1.10.5", "G9.1"}},
+			{ID: "G11.1", Title: "Starts from the team's toolchain image, ready to work", Proves: "A template pulled from the team's private registry gives a new workspace a toolchain that runs at once, with nothing to install.", Milestone: E3, Needs: []Need{NeedInProcess, NeedPython}, Uses: []string{"G1.10", "G1.10.5", "G9.1"}},
 			{ID: "G11.2", Title: "Fetches private code with a credential that never lands in the workspace or its saves", Milestone: E4, Uses: []string{"G5.9", "G5.4"}},
 			{ID: "G11.3", Title: "Installs dependencies, runs the tests and a dev server with live output", Milestone: E3,
 				Children: []Scenario{

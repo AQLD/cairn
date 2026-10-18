@@ -249,6 +249,17 @@ class Client:
             if close:
                 data.close()
 
+    def pull_template(self, name: str, image: str, *, username: str = "", password: str = "",
+                      insecure: bool = False) -> Template:
+        """Builds a template from a container image in a registry (the image for
+        the engine's architecture, all layers applied). The login is used for
+        this pull only; the engine never stores it. insecure talks plain HTTP to
+        the registry."""
+        body: dict[str, Any] = {"image": image, "insecure": insecure}
+        if username:
+            body["username"], body["password"] = username, password
+        return Template._from(self._json("POST", f"/v1/templates/{_q(name)}/pull", body))
+
     def delete_template(self, name: str) -> None:
         self._request("DELETE", f"/v1/templates/{_q(name)}")
 

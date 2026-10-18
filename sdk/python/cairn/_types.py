@@ -75,10 +75,13 @@ class Template:
     size: int
     sha256: str
     created_at: Optional[datetime]
+    image: str = ""  # the container image it was pulled from, if any
+    image_digest: str = ""
 
     @classmethod
     def _from(cls, d: dict) -> "Template":
-        return cls(name=d["name"], size=d.get("size", 0), sha256=d.get("sha256", ""), created_at=_time(d.get("created_at")))
+        return cls(name=d["name"], size=d.get("size", 0), sha256=d.get("sha256", ""), created_at=_time(d.get("created_at")),
+                   image=d.get("image", ""), image_digest=d.get("image_digest", ""))
 
 
 @dataclass

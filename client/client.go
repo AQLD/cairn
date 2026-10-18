@@ -99,10 +99,21 @@ type CreateWorkspace struct {
 
 // Template is a root filesystem new workspaces start from.
 type Template struct {
-	Name      string    `json:"name"`
-	Size      int64     `json:"size"`
-	SHA256    string    `json:"sha256"`
-	CreatedAt time.Time `json:"created_at"`
+	Name        string    `json:"name"`
+	Size        int64     `json:"size"`
+	SHA256      string    `json:"sha256"`
+	CreatedAt   time.Time `json:"created_at"`
+	Image       string    `json:"image,omitempty"`        // the container image it was pulled from
+	ImageDigest string    `json:"image_digest,omitempty"` // that image's manifest digest
+}
+
+// PullTemplate is a container image to build a template from.
+type PullTemplate struct {
+	Image string `json:"image"` // e.g. registry.internal/team/python:3.12
+	// Registry login, used for this pull only (never stored by the engine).
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	Insecure bool   `json:"insecure,omitempty"` // plain HTTP to the registry
 }
 
 type Workspace struct {
@@ -347,6 +358,13 @@ func (c *Client) ImportTemplate(ctx context.Context, name string, rootfsTar io.R
 	}
 	var t Template
 	return &t, json.Unmarshal(buf.Bytes(), &t)
+}
+
+// PullTemplate builds template name from a container image in a registry (the
+// image for the engine's architecture, all layers applied).
+func (c *Client) PullTemplate(ctx context.Context, name string, req PullTemplate) (*Template, error) {
+	var out Template
+	return &out, c.do(ctx, http.MethodPost, "/v1/templates/"+url.PathEscape(name)+"/pull", req, &out)
 }
 
 func (c *Client) ListTemplates(ctx context.Context) ([]Template, error) {

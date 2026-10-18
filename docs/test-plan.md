@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 54 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 15 | 36 | 2 |
+| E3 | 17 | 34 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -22,10 +22,10 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 
 | Journey | For | Steps proven | Steps unblocked | Capability scenarios still pending |
 | --- | --- | --- | --- | --- |
-| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 4 of 9 | 4 of 9 | 7 |
+| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 5 of 9 | 5 of 9 | 6 |
 | [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 0 of 6 | 1 of 6 | 5 |
 | [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 0 of 6 | 3 of 6 | 3 |
-| [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 0 of 5 | 3 of 5 | 2 |
+| [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 0 of 5 | 4 of 5 | 1 |
 | [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 0 of 6 | 1 of 6 | 6 |
 | [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 0 of 6 | 2 of 6 | 5 |
 | [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 2 of 6 | 3 of 6 | 3 |
@@ -34,7 +34,7 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 
 An agent sets up a repository, works on it across days, tries fixes in parallel and hands the winner to a person. Gate: **E4**.
 
-- ⏳ **G11.1** Starts from the team's toolchain image, ready to work · E3 · uses G1.10 ⏳, G1.10.5 ⏳, G9.1 ✅
+- ✅ **G11.1** Starts from the team's toolchain image, ready to work · E3 · needs in_process, python · uses G1.10 ✅, G1.10.5 ✅, G9.1 ✅
 - ⏳ **G11.2** Fetches private code with a credential that never lands in the workspace or its saves · E4 · uses G5.9 ⏳, G5.4 ⏳
 - 📂 **G11.3** Installs dependencies, runs the tests and a dev server with live output · E3
   - ✅ **G11.3.1** Installs the project's dependencies from a private package index · E3 · needs python · uses G1.6 ✅, G1.2 ✅
@@ -73,7 +73,7 @@ Many short tasks start warm with their tools loaded, use only approved sources, 
 
 - ⏳ **G14.1** Each question starts from a warm save with its tools loaded · E3 · uses G2.1 ✅, G9.5 ✅
 - ⏳ **G14.2** Fetches only from allowed sources · E4 · uses G5.4 ⏳
-- ⏳ **G14.3** Reads documents with installed tools (PDF, office files) · E3 · uses G1.2 ✅, G1.10 ⏳
+- ⏳ **G14.3** Reads documents with installed tools (PDF, office files) · E3 · uses G1.2 ✅, G1.10 ✅
 - ⏳ **G14.4** A hundred questions run side by side on one server · E4 · uses G2.4 ✅, G9.7 ✅
 - ⏳ **G14.5** Finished questions leave nothing behind · E3 · uses G10.7 ✅
 
@@ -134,7 +134,7 @@ Work done in a workspace is still there, exactly as it was, after a save and res
   - ✅ **G1.10.2** Each workspace gets its own copy of the template · E3
   - ✅ **G1.10.3** Unknown templates and unusable archives are refused · E3
   - ✅ **G1.10.4** Re-importing a template does not change existing workspaces · E3
-  - ⏳ **G1.10.5** A template is built from a container image in a private registry · E3
+  - ✅ **G1.10.5** A template is built from a container image in a private registry · E3 · needs in_process
 - ✅ **G1.12** An app and its database stay connected across a full save · E1 · needs full_save, persistent_processes
 - ✅ **G1.13** A file written through the API is seen whole by the workspace's programs · E1
 - ✅ **G1.11** Files in /tmp are kept like any other file · E1 · needs isolation, in_process
