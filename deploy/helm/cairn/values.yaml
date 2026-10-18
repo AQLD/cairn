@@ -49,6 +49,17 @@ disk:
   # false keeps workspaces in plain folders with no size limit.
   images: true
 
+# Saves in S3-compatible object storage (AWS S3, R2, Spaces, GCS, MinIO,
+# SeaweedFS), so they outlive the node and the volume: every save is uploaded
+# in the background and verified when downloaded. A new install pointed at the
+# same bucket learns the saves and can copy them into new workspaces.
+saveStore:
+  # e.g. s3://my-bucket/cairn?region=eu-west-1 or
+  # s3://bucket/prefix?endpoint=https://nyc3.digitaloceanspaces.com&region=nyc3
+  url: ""
+  # Secret with keys AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.
+  existingSecret: ""
+
 # The state database (records of every workspace and save) is checked at
 # startup and backed up hourly next to itself. If it is ever damaged the engine
 # refuses to start; set this to true to rebuild it from the backup and the

@@ -74,6 +74,7 @@ type Save struct {
 	DeletedAt   time.Time `json:"deleted_at"` // zero unless deleted
 	RequestKey  string    `json:"-"`          // caller's idempotency key, if any
 	Auto        bool      `json:"auto"`       // made by the engine (pausing), not by a caller
+	Uploaded    bool      `json:"uploaded"`   // a complete copy is in object storage
 }
 
 type Store struct{ db *sql.DB }
@@ -123,11 +124,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS saves_request_key ON saves (request_key) WHERE
 ALTER TABLE workspaces ADD COLUMN paused_save TEXT NOT NULL DEFAULT '';
 ALTER TABLE saves ADD COLUMN auto INTEGER NOT NULL DEFAULT 0;
 `,
+	// 5: saves copied to object storage
+	`
+ALTER TABLE saves ADD COLUMN uploaded INTEGER NOT NULL DEFAULT 0;
+`,
 }
 
 const (
 	workspaceCols = `id, name, state, spec, source_save, paused_save, created_at, updated_at`
-	saveCols      = `id, workspace_id, kind, state, size, created_at, deleted_at, auto`
+	saveCols      = `id, workspace_id, kind, state, size, created_at, deleted_at, auto, uploaded`
 )
 
 // SchemaVersion is the schema this engine writes.
@@ -421,8 +426,8 @@ func (s *Store) queryWorkspaces(ctx context.Context, q string, args ...any) ([]W
 
 func (s *Store) CreateSave(ctx context.Context, sv Save) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO saves (id, workspace_id, kind, state, size, created_at, request_key, auto) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		sv.ID, sv.WorkspaceID, sv.Kind, sv.State, sv.Size, sv.CreatedAt.UnixNano(), nullable(sv.RequestKey), sv.Auto)
+		`INSERT INTO saves (id, workspace_id, kind, state, size, created_at, request_key, auto, uploaded) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sv.ID, sv.WorkspaceID, sv.Kind, sv.State, sv.Size, sv.CreatedAt.UnixNano(), nullable(sv.RequestKey), sv.Auto, sv.Uploaded)
 	return duplicate(err)
 }
 
@@ -477,6 +482,17 @@ func (s *Store) MarkSaveReady(ctx context.Context, id string, size int64) error 
 	return err
 }
 
+// MarkUploaded records that a complete copy of the save is in object storage.
+func (s *Store) MarkUploaded(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE saves SET uploaded = 1 WHERE id = ?`, id)
+	return err
+}
+
+// PendingUploads lists ready saves not yet in object storage, oldest first.
+func (s *Store) PendingUploads(ctx context.Context) ([]Save, error) {
+	return s.querySaves(ctx, `SELECT `+saveCols+` FROM saves WHERE state = ? AND uploaded = 0 ORDER BY created_at`, SaveReady)
+}
+
 func (s *Store) DeleteSave(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM saves WHERE id = ?`, id)
 	return err
@@ -517,7 +533,7 @@ func scanWorkspace(r scanner) (*Workspace, error) {
 func scanSave(r scanner) (*Save, error) {
 	var sv Save
 	var created, deleted int64
-	if err := r.Scan(&sv.ID, &sv.WorkspaceID, &sv.Kind, &sv.State, &sv.Size, &created, &deleted, &sv.Auto); err != nil {
+	if err := r.Scan(&sv.ID, &sv.WorkspaceID, &sv.Kind, &sv.State, &sv.Size, &created, &deleted, &sv.Auto, &sv.Uploaded); err != nil {
 		return nil, err
 	}
 	sv.CreatedAt = time.Unix(0, created).UTC()
