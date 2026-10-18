@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cairn-sdk"
+dynamic = ["version"]
+description = "Python client for Cairn: private Linux workspaces for AI agents that can be saved, resumed and copied"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.9"
+dependencies = []  # standard library only
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+]
+
+[project.urls]
+Source = "https://github.com/AQLD/cairn"
+
+[tool.setuptools]
+packages = ["cairn"]
+
+[tool.setuptools.dynamic]
+version = { attr = "cairn.__version__" }

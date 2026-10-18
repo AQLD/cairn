@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 53 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 8 | 40 | 2 |
+| E3 | 9 | 40 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -296,6 +296,7 @@ An operator can install, observe and upgrade Cairn without surprises. Gate: **E4
 - ✅ **G10.7** Deleting workspaces leaves nothing behind on the host · E1 · needs in_process
 - ⏳ **G10.8** Every release is signed and ships a bill of materials · E3
 - ⏳ **G10.9** An operator can produce a diagnostics bundle that holds no workspace contents · E3 · needs in_process
+- ✅ **G10.10** The Python SDK drives every API operation · E3 · needs python
 
 ## G18 Every step can be rewound
 
