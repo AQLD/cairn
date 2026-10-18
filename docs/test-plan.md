@@ -7,7 +7,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
 | E0 | 4 | 0 | 1 |
-| E1 | 53 | 0 | 4 |
+| E1 | 54 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
 | E3 | 9 | 40 | 2 |
 | E4 | 8 | 23 | 1 |
@@ -133,6 +133,7 @@ Work done in a workspace is still there, exactly as it was, after a save and res
   - ✅ **G1.10.4** Re-importing a template does not change existing workspaces · E3
   - ⏳ **G1.10.5** A template is built from a container image in a private registry · E3
 - ✅ **G1.12** An app and its database stay connected across a full save · E1 · needs full_save, persistent_processes
+- ✅ **G1.13** A file written through the API is seen whole by the workspace's programs · E1
 - ✅ **G1.11** Files in /tmp are kept like any other file · E1 · needs isolation, in_process
 - 📂 **G1.7** Golden workloads save and resume correctly · E0 · needs full_save
   - ✅ **G1.7.1** Python script with open files · E0 · needs full_save

@@ -36,6 +36,7 @@ var Catalog = []Scenario{
 					{ID: "G1.10.5", Title: "A template is built from a container image in a private registry", Milestone: E3},
 				}},
 			{ID: "G1.12", Title: "An app and its database stay connected across a full save", Proves: "Connections between processes inside the workspace (loopback TCP, unix sockets) survive save and resume; only connections to the outside world are reset.", Milestone: E1, Needs: []Need{NeedFullSave, NeedPersistent}},
+			{ID: "G1.13", Title: "A file written through the API is seen whole by the workspace's programs", Proves: "Programs inside see a file's new content and size at once, even a file they have read before (the API writes the folder the sandbox serves).", Milestone: E1},
 			{ID: "G1.11", Title: "Files in /tmp are kept like any other file", Proves: "Scratch files agents leave in /tmp are in quick saves and survive an engine restart.", Milestone: E1, Needs: []Need{NeedIsolation, NeedInProcess}},
 			{ID: "G1.7", Title: "Golden workloads save and resume correctly", Proves: "Saves work for real agent work, not toy programs.", Milestone: E0, Needs: []Need{NeedFullSave},
 				Children: []Scenario{
