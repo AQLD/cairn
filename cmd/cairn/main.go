@@ -2,7 +2,7 @@
 // through the REST API.
 //
 //	cairn create [--name NAME] [--template T]
-//	cairn template import NAME ROOTFS.tar | template ls | template rm NAME
+//	cairn template import NAME ROOTFS.tar | template pull NAME IMAGE | template ls | template rm NAME
 //	cairn ls
 //	cairn exec WORKSPACE -- COMMAND [ARGS...]
 //	cairn put WORKSPACE LOCAL_FILE REMOTE_PATH
@@ -39,6 +39,8 @@ commands:
   create [--name NAME] [--template T]     create a workspace (from a template)
   template import NAME ROOTFS.tar         import a root filesystem tar as a template
                                           (e.g. docker export $(docker create python:3.12-slim) > python.tar)
+  template pull NAME IMAGE [--insecure]   build a template from a container image in a registry
+                                          (login from CAIRN_REGISTRY_USERNAME / CAIRN_REGISTRY_PASSWORD)
   template ls | template rm NAME          list or delete templates
   ls                                      list workspaces
   exec WORKSPACE -- COMMAND [ARGS...]     run a command
@@ -224,6 +226,15 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 				return 1, err
 			}
 			fmt.Printf("%s  %d bytes  sha256:%s\n", t.Name, t.Size, t.SHA256[:12])
+		case (len(args) == 3 || len(args) == 4 && args[3] == "--insecure") && args[0] == "pull":
+			// the login comes from the environment, never the command line (shell history)
+			t, err := c.PullTemplate(ctx, args[1], client.PullTemplate{
+				Image: args[2], Insecure: len(args) == 4,
+				Username: os.Getenv("CAIRN_REGISTRY_USERNAME"), Password: os.Getenv("CAIRN_REGISTRY_PASSWORD")})
+			if err != nil {
+				return 1, err
+			}
+			fmt.Printf("%s  %d bytes  from %s@%s\n", t.Name, t.Size, t.Image, t.ImageDigest)
 		case len(args) == 1 && args[0] == "ls":
 			ts, err := c.ListTemplates(ctx)
 			if err != nil {
@@ -238,7 +249,7 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 		case len(args) == 2 && args[0] == "rm":
 			return 0, c.DeleteTemplate(ctx, args[1])
 		default:
-			return 2, errors.New("usage: cairn template import NAME ROOTFS.tar | template ls | template rm NAME")
+			return 2, errors.New("usage: cairn template import NAME ROOTFS.tar | template pull NAME IMAGE [--insecure] | template ls | template rm NAME")
 		}
 
 	case "rm-save":

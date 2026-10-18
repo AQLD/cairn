@@ -23,6 +23,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 import urllib.request
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -313,6 +314,70 @@ class TestTemplates(EngineTest):
         self.assertIn(name, [x.name for x in self.c.templates()])
         ws = self.workspace("templated", template=name)
         self.assertEqual(ws.read_file("etc/motd"), b"from the template\n")
+
+
+class _Registry(http.server.BaseHTTPRequestHandler):
+    """A one-image registry: an OCI manifest with one uncompressed layer."""
+
+    blobs: dict = {}
+    manifest = b""
+
+    def log_message(self, *a):
+        pass
+
+    def do_GET(self):
+        if self.path.endswith("/manifests/v1"):
+            body, ctype = self.manifest, "application/vnd.oci.image.manifest.v1+json"
+        elif "/blobs/" in self.path and self.path.rsplit("/", 1)[1] in self.blobs:
+            body, ctype = self.blobs[self.path.rsplit("/", 1)[1]], "application/octet-stream"
+        else:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class TestPullTemplate(EngineTest):
+    def test_pull_from_a_registry(self):
+        host = urllib.parse.urlparse(Engine.endpoint).hostname
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            self.skipTest(f"the engine at {host} may not reach a registry on this machine")
+        import hashlib
+
+        def digest(b):
+            return "sha256:" + hashlib.sha256(b).hexdigest()
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tar:
+            data = b"pulled\n"
+            info = tarfile.TarInfo("etc/from-image")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        layer, config = buf.getvalue(), b"{}"
+        _Registry.blobs = {digest(layer): layer, digest(config): config}
+        _Registry.manifest = json.dumps({
+            "schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": digest(config), "size": 2},
+            "layers": [{"mediaType": "application/vnd.oci.image.layer.v1.tar", "digest": digest(layer), "size": len(layer)}],
+        }).encode()
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Registry)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        self.addCleanup(srv.server_close)
+        self.addCleanup(srv.shutdown)
+        image = f"127.0.0.1:{srv.server_address[1]}/team/img:v1"
+
+        name = f"sdk-pulled-{os.getpid()}"
+        t = self.c.pull_template(name, image, insecure=True)
+        self.addCleanup(lambda: self.c.delete_template(name))
+        self.assertEqual(t.image, image)
+        self.assertTrue(t.image_digest.startswith("sha256:"))
+        ws = self.workspace("pulled", template=name)
+        self.assertEqual(ws.read_file("etc/from-image"), b"pulled\n")
+        with self.assertRaises(cairn.NotFound):
+            self.c.pull_template(name, image.replace(":v1", ":v2"), insecure=True)
 
 
 class TestAuth(unittest.TestCase):

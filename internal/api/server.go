@@ -25,6 +25,7 @@
 //	POST   /v1/saves/{id}/verify            re-check a save's checksums now
 //	GET    /v1/templates                    list templates
 //	PUT    /v1/templates/{name}             import a root filesystem tar as a template
+//	POST   /v1/templates/{name}/pull        build a template from a container image in a registry
 //	GET    /v1/templates/{name}             get a template
 //	DELETE /v1/templates/{name}             delete a template (workspaces keep their copy)
 //
@@ -117,6 +118,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/saves/{id}/verify", s.verifySave)
 	s.mux.HandleFunc("GET /v1/templates", s.listTemplates)
 	s.mux.HandleFunc("PUT /v1/templates/{name}", s.importTemplate)
+	s.mux.HandleFunc("POST /v1/templates/{name}/pull", s.pullTemplate)
 	s.mux.HandleFunc("GET /v1/templates/{name}", s.getTemplate)
 	s.mux.HandleFunc("DELETE /v1/templates/{name}", s.deleteTemplate)
 }
@@ -288,6 +290,28 @@ func (s *Server) listTemplates(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) importTemplate(w http.ResponseWriter, r *http.Request) {
 	t, err := s.eng.ImportTemplate(r.Context(), r.PathValue("name"), http.MaxBytesReader(w, r.Body, maxTemplateBytes))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, t)
+}
+
+// pullTemplate builds a template from a container image. The registry login in
+// the body is used for this pull only: never stored, never logged.
+func (s *Server) pullTemplate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Image    string `json:"image"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Insecure bool   `json:"insecure"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil || req.Image == "" {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "body must be JSON with an image")
+		return
+	}
+	t, err := s.eng.PullTemplate(r.Context(), r.PathValue("name"), engine.PullTemplate{
+		Image: req.Image, Username: req.Username, Password: req.Password, Insecure: req.Insecure})
 	if err != nil {
 		s.fail(w, err)
 		return

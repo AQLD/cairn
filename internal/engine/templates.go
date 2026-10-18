@@ -8,12 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"time"
 
+	"github.com/AQLD/cairn/internal/oci"
 	"github.com/AQLD/cairn/internal/save"
 )
 
@@ -31,6 +33,10 @@ type Template struct {
 	Size      int64     `json:"size"`
 	SHA256    string    `json:"sha256"`
 	CreatedAt time.Time `json:"created_at"`
+	// Image and ImageDigest name the container image a pulled template was
+	// built from (empty for an imported tar).
+	Image       string `json:"image,omitempty"`
+	ImageDigest string `json:"image_digest,omitempty"`
 }
 
 func (e *Engine) templatesDir() string           { return filepath.Join(e.cfg.DataDir, "templates") }
@@ -40,6 +46,12 @@ func (e *Engine) templateDir(name string) string { return filepath.Join(e.templa
 // an image) as a template, replacing any template of the same name. Workspaces
 // already created from the old one keep their copy.
 func (e *Engine) ImportTemplate(ctx context.Context, name string, r io.Reader) (*Template, error) {
+	return e.importTemplate(ctx, name, r, Template{})
+}
+
+// importTemplate stores the tar from r as template name; src carries where it
+// came from (Image, ImageDigest).
+func (e *Engine) importTemplate(ctx context.Context, name string, r io.Reader, src Template) (*Template, error) {
 	if !templateName.MatchString(name) {
 		return nil, fmt.Errorf("%w: template names are lower-case letters, digits, '.', '_' and '-'", ErrInvalid)
 	}
@@ -88,7 +100,8 @@ func (e *Engine) ImportTemplate(ctx context.Context, name string, r io.Reader) (
 		return nil, err
 	}
 
-	t := Template{Name: name, Size: n, SHA256: hex.EncodeToString(h.Sum(nil)), CreatedAt: e.cfg.Now().UTC()}
+	t := Template{Name: name, Size: n, SHA256: hex.EncodeToString(h.Sum(nil)), CreatedAt: e.cfg.Now().UTC(),
+		Image: src.Image, ImageDigest: src.ImageDigest}
 	meta, err := json.MarshalIndent(t, "", "  ")
 	if err != nil {
 		return nil, err
@@ -218,4 +231,78 @@ func (e *Engine) createRootfs(id string, spec Spec) error {
 		return err
 	}
 	return root.attach()
+}
+
+// PullTemplate is a request to build a template from a container image.
+type PullTemplate struct {
+	Image string // e.g. registry.internal/team/python:3.12
+	// Registry login for this pull only: never stored or logged.
+	Username, Password string
+	// Insecure talks plain HTTP to the registry (a registry without TLS on a
+	// private network).
+	Insecure bool
+}
+
+// maxImageBytes caps the file content an image may expand to.
+const maxImageBytes = 32 << 30
+
+// PullTemplate builds template name from a container image in a registry: the
+// image for this server's architecture, its layers applied in order with their
+// deletions, every blob checked against its digest. The result is stored
+// exactly like an imported tar, so workspaces cannot tell the difference.
+func (e *Engine) PullTemplate(ctx context.Context, name string, req PullTemplate) (*Template, error) {
+	if !templateName.MatchString(name) {
+		return nil, fmt.Errorf("%w: template names are lower-case letters, digits, '.', '_' and '-'", ErrInvalid)
+	}
+	ref, err := oci.ParseReference(req.Image)
+	if err != nil {
+		return nil, registryErr(err)
+	}
+	auth := oci.Auth{Username: req.Username, Password: req.Password}
+	p := &oci.Puller{Insecure: req.Insecure}
+	img, err := p.Resolve(ctx, ref, auth)
+	if err != nil {
+		return nil, registryErr(err)
+	}
+	if err := os.MkdirAll(e.templatesDir(), 0o700); err != nil {
+		return nil, err
+	}
+	tmp, err := os.MkdirTemp(e.templatesDir(), ".tmp-pull-"+name+"-")
+	if err != nil {
+		return nil, err
+	}
+	defer removeTree(tmp)
+	rootfs := filepath.Join(tmp, "rootfs")
+	if err := p.Flatten(ctx, img, auth, rootfs, maxImageBytes); err != nil {
+		return nil, registryErr(err)
+	}
+	pr, pw := io.Pipe()
+	go func() { pw.CloseWithError(save.TarDir(rootfs, pw)) }()
+	t, err := e.importTemplate(ctx, name, pr, Template{Image: ref.String(), ImageDigest: img.Digest})
+	pr.CloseWithError(err)
+	return t, err
+}
+
+// registryErr maps registry failures onto the engine's error codes. A refused
+// login is invalid_argument, not unauthorized: that code is about Cairn's own
+// API token.
+func registryErr(err error) error {
+	switch {
+	case errors.Is(err, oci.ErrNotFound):
+		return fmt.Errorf("%w: %v", ErrNotFound, err)
+	case errors.Is(err, oci.ErrInvalid), errors.Is(err, oci.ErrDenied), errors.Is(err, oci.ErrCorrupt):
+		return fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	return err
+}
+
+// removeTree deletes a folder an image filled, read-only folders included.
+func removeTree(dir string) {
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			_ = os.Chmod(p, 0o700)
+		}
+		return nil
+	})
+	_ = os.RemoveAll(dir)
 }
