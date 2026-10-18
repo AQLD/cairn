@@ -249,7 +249,7 @@ var Catalog = []Scenario{
 		Proves:    "An agent sets up a repository, works on it across days, tries fixes in parallel and hands the winner to a person.",
 		Milestone: E4,
 		Children: []Scenario{
-			{ID: "G11.1", Title: "Starts from the team's toolchain image, ready to work", Milestone: E3, Uses: []string{"G1.10", "G1.10.5", "G9.1"}},
+			{ID: "G11.1", Title: "Starts from the team's toolchain image, ready to work", Proves: "A template pulled from the team's private registry gives a new workspace a toolchain that runs at once, with nothing to install.", Milestone: E3, Needs: []Need{NeedInProcess, NeedPython}, Uses: []string{"G1.10", "G1.10.5", "G9.1"}},
 			{ID: "G11.2", Title: "Fetches private code with a credential that never lands in the workspace or its saves", Milestone: E4, Uses: []string{"G5.9", "G5.4"}},
 			{ID: "G11.3", Title: "Installs dependencies, runs the tests and a dev server with live output", Milestone: E3,
 				Children: []Scenario{

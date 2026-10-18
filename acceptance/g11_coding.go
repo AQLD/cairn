@@ -6,12 +6,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/AQLD/cairn/client"
+	"github.com/AQLD/cairn/internal/oci/ocitest"
 )
 
 // G11: a coding agent's own workflow, driven only through the public client.
@@ -90,6 +92,41 @@ func venvPython(e *Env, ws, program string) (string, error) {
 }
 
 func init() {
+	register("G11.1", func(e *Env) {
+		// The team's image: its base toolchain (the suite's root filesystem when
+		// one is set, as on gVisor) plus the team's own layer on top.
+		reg := ocitest.New()
+		defer reg.Close()
+		reg.Auth, reg.Username, reg.Password = ocitest.Token, "ci-robot", "registry-secret"
+		var layers [][]byte
+		if tmpl := os.Getenv("CAIRN_TEST_TEMPLATE"); tmpl != "" {
+			base, err := os.ReadFile(tmpl)
+			e.Must(err)
+			layers = append(layers, base)
+		}
+		layers = append(layers, ocitest.Layer(
+			ocitest.Entry{Name: "etc/team/toolchain.conf", Body: "python=3\n"},
+			ocitest.Entry{Name: "usr/local/bin/team-check", Mode: 0o755,
+				Body: "#!/bin/sh\npython3 -c 'import sys, json; print(\"toolchain ready:\", sys.version_info.major)'\n"},
+		))
+		reg.Push("team/toolchain", "2026.10", false, layers...)
+
+		start := time.Now()
+		_, err := e.C.PullTemplate(e.Ctx, "team-toolchain", client.PullTemplate{
+			Image: reg.Host() + "/team/toolchain:2026.10", Username: "ci-robot", Password: "registry-secret", Insecure: true})
+		e.Must(err)
+		pulled := time.Since(start)
+
+		start = time.Now()
+		ws, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "coding-toolchain", Template: "team-toolchain"})
+		e.Must(err)
+		out := e.Sh(ws.ID, "sh usr/local/bin/team-check")
+		ready := time.Since(start)
+		Equal(e, "the team's toolchain runs at once", strings.TrimSpace(out), "toolchain ready: 3")
+		Equal(e, "the team's config is there", e.Read(ws.ID, "etc/team/toolchain.conf"), "python=3\n")
+		e.T.Logf("image pulled in %v; workspace created and first command run in %v", pulled.Round(time.Millisecond), ready.Round(time.Millisecond))
+	})
+
 	register("G11.3.1", func(e *Env) {
 		ws := codingProject(e, "coding-deps")
 		installDeps(e, ws.ID)
