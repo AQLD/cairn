@@ -262,7 +262,7 @@ var Catalog = []Scenario{
 					{ID: "G11.3.2", Title: "Runs the test suite with output arriving while it runs", Proves: "The agent sees test progress live, not only when the run ends.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G1.6.8"}},
 					{ID: "G11.3.3", Title: "A dev server keeps serving between the agent's commands", Proves: "A server started by one command answers the agent's later commands.", Milestone: E3, Needs: []Need{NeedPython, NeedPersistent}, Uses: []string{"G1.5"}},
 				}},
-			{ID: "G11.4", Title: "Stops for the night at no compute cost and carries on next day with the dev server running", Milestone: E3, Uses: []string{"G4.1", "G4.2", "G1.8.1", "G1.8.2"}},
+			{ID: "G11.4", Title: "Stops for the night at no compute cost and carries on next day with the dev server running", Proves: "A full save stops the workspace with its dev server; after the pause the same server process answers and the tests pass, with nothing restarted or reinstalled.", Milestone: E3, Needs: []Need{NeedPython, NeedFullSave, NeedPersistent}, Uses: []string{"G4.1", "G4.2", "G1.8.1", "G1.8.2"}},
 			{ID: "G11.5", Title: "Tries three fixes in parallel and keeps the one whose tests pass", Proves: "Three copies of a failing project each try a different fix at once; the one whose tests pass is applied to the original.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G2.1", "G2.2", "G2.7"}},
 			{ID: "G11.6", Title: "Undoes a destructive command by rewinding one step", Milestone: E3, Uses: []string{"G18.3"}},
 			{ID: "G11.7", Title: "A person reviews what changed and takes over", Milestone: E4, Uses: []string{"G1.4", "G18.4", "G19.3"}},
