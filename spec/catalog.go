@@ -332,8 +332,8 @@ var Catalog = []Scenario{
 		Proves:    "Expensive setup runs once; environments copy from its live state, reset between episodes and branch from any step.",
 		Milestone: E5,
 		Children: []Scenario{
-			{ID: "G17.1", Title: "Setup runs once and environments copy from its live state", Milestone: E3, Uses: []string{"G2.1", "G2.6", "G9.5"}},
-			{ID: "G17.2", Title: "An environment resets to its start between episodes", Milestone: E3, Uses: []string{"G1.3", "G9.4"}},
+			{ID: "G17.1", Title: "Setup runs once and environments copy from its live state", Proves: "Eight copies of a full save each start with the warm environment server already running, its memory intact and setup not repeated, and play their episodes independently.", Milestone: E3, Needs: []Need{NeedPython, NeedFullSave, NeedPersistent}, Uses: []string{"G2.1", "G2.6", "G9.5"}},
+			{ID: "G17.2", Title: "An environment resets to its start between episodes", Proves: "Resuming the start save after each episode puts the environment's state back byte for byte, without repeating setup.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G1.3", "G9.4"}},
 			{ID: "G17.3", Title: "A rollout branches from any earlier step", Milestone: E3, Uses: []string{"G18.6"}},
 			{ID: "G17.4", Title: "Copies keep or refresh their randomness, as the experiment needs", Milestone: E3, Uses: []string{"G2.6", "G2.8"}},
 			{ID: "G17.5", Title: "Thousands of environments run across servers", Milestone: E5, Uses: []string{"G7.8"}},

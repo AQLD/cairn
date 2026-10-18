@@ -11,10 +11,7 @@ func init() {
 	// engine, so the SDK is checked on every runtime the suite runs on
 	// (including full saves on gVisor).
 	register("G10.10", func(e *Env) {
-		endpoint, token := os.Getenv("CAIRN_ENDPOINT"), os.Getenv("CAIRN_TOKEN")
-		if e.srv != nil {
-			endpoint, token = e.srv.URL, e.token
-		}
+		endpoint, token := e.endpoint()
 		cmd := exec.CommandContext(e.Ctx, "python3", "-W", "error", "-m", "unittest", "discover", "-v",
 			"-s", filepath.Join("..", "sdk", "python", "tests"))
 		cmd.Env = append(os.Environ(), "CAIRN_ENDPOINT="+endpoint, "CAIRN_TOKEN="+token)

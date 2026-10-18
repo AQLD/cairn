@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 54 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 13 | 38 | 2 |
+| E3 | 15 | 36 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -28,7 +28,7 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 0 of 5 | 3 of 5 | 2 |
 | [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 0 of 6 | 1 of 6 | 6 |
 | [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 0 of 6 | 2 of 6 | 5 |
-| [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 0 of 6 | 3 of 6 | 3 |
+| [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 2 of 6 | 3 of 6 | 3 |
 
 ## G11 A coding agent ships a change over several days
 
@@ -103,8 +103,8 @@ A product gives each of its users a walled-off computer with limits, that costs 
 
 Expensive setup runs once; environments copy from its live state, reset between episodes and branch from any step. Gate: **E5**.
 
-- ⏳ **G17.1** Setup runs once and environments copy from its live state · E3 · uses G2.1 ✅, G2.6 ✅, G9.5 ✅
-- ⏳ **G17.2** An environment resets to its start between episodes · E3 · uses G1.3 ✅, G9.4 ✅
+- ✅ **G17.1** Setup runs once and environments copy from its live state · E3 · needs python, full_save, persistent_processes · uses G2.1 ✅, G2.6 ✅, G9.5 ✅
+- ✅ **G17.2** An environment resets to its start between episodes · E3 · needs python · uses G1.3 ✅, G9.4 ✅
 - ⏳ **G17.3** A rollout branches from any earlier step · E3 · uses G18.6 ⏳
 - ⏳ **G17.4** Copies keep or refresh their randomness, as the experiment needs · E3 · uses G2.6 ✅, G2.8 ⏳
 - ⏳ **G17.5** Thousands of environments run across servers · E5 · uses G7.8 ⏳
