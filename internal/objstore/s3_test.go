@@ -72,12 +72,12 @@ func TestDroppedConnectionsAreRetried(t *testing.T) {
 	s, srv := newTestS3(t)
 	var calls atomic.Int32
 	// every other request is cut off: each must be retried, multipart parts included
-	srv.Fail = func(r *http.Request) bool { return calls.Add(1)%2 == 1 }
+	srv.SetFail(func(r *http.Request) bool { return calls.Add(1)%2 == 1 })
 	big := bytes.Repeat([]byte("x"), 5000)
 	if err := s.Put(context.Background(), "obj", bytes.NewReader(big), int64(len(big))); err != nil {
 		t.Fatal(err)
 	}
-	srv.Fail = nil
+	srv.SetFail(nil)
 	if got := get(t, s, "obj"); !bytes.Equal(got, big) {
 		t.Fatalf("got %d bytes, want %d", len(got), len(big))
 	}
@@ -86,12 +86,12 @@ func TestDroppedConnectionsAreRetried(t *testing.T) {
 func TestGivesUpCleanly(t *testing.T) {
 	s, srv := newTestS3(t)
 	s.Attempts = 3
-	srv.Fail = func(*http.Request) bool { return true }
+	srv.SetFail(func(*http.Request) bool { return true })
 	err := s.Put(context.Background(), "obj", strings.NewReader("data"), 4)
 	if err == nil || !strings.Contains(err.Error(), "after 3 attempts") {
 		t.Fatalf("want a clear failure after 3 attempts, got %v", err)
 	}
-	srv.Fail = nil
+	srv.SetFail(nil)
 	if _, ok := srv.Object("b/obj"); ok {
 		t.Fatal("a failed upload left an object behind")
 	}

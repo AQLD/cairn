@@ -24,11 +24,16 @@ type Server struct {
 	uploads map[string]map[int][]byte
 	next    int
 
-	// Fail, if set, is asked before each request; true drops the connection
-	// (like a network failure) instead of answering.
-	Fail func(r *http.Request) bool
-	// Requests counts the requests received.
-	Requests int
+	fail     func(r *http.Request) bool
+	requests int
+}
+
+// SetFail sets a function asked before each request; true drops the
+// connection (like a network failure) instead of answering. nil clears it.
+func (s *Server) SetFail(f func(r *http.Request) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fail = f
 }
 
 func New() *Server {
@@ -66,8 +71,8 @@ func (s *Server) Keys() []string {
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	s.Requests++
-	fail := s.Fail
+	s.requests++
+	fail := s.fail
 	s.mu.Unlock()
 	if fail != nil && fail(r) {
 		if hj, ok := w.(http.Hijacker); ok {

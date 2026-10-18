@@ -39,7 +39,7 @@ func init() {
 
 		// a flaky connection: every third request is cut off
 		var n atomic.Int32
-		srv.Fail = func(*http.Request) bool { return n.Add(1)%3 == 0 }
+		srv.SetFail(func(*http.Request) bool { return n.Add(1)%3 == 0 })
 		sv := e.Save(ws.ID)
 		e.Must(e.Engine.SyncRemote(e.Ctx))
 		got, err := e.C.GetSave(e.Ctx, sv.ID)
@@ -48,7 +48,7 @@ func init() {
 
 		// the store is down: saving still works here, nothing half-uploaded
 		// ever looks complete, and the upload happens once it is back
-		srv.Fail = func(*http.Request) bool { return true }
+		srv.SetFail(func(*http.Request) bool { return true })
 		later := e.Save(ws.ID)
 		if err := e.Engine.SyncRemote(e.Ctx); err == nil {
 			e.T.Fatal("syncing to a store that is down reported success")
@@ -60,7 +60,7 @@ func init() {
 		e.Must(err)
 		Equal(e, "save is ready here", string(got.State), "ready")
 		Equal(e, "not marked uploaded", got.Uploaded, false)
-		srv.Fail = nil
+		srv.SetFail(nil)
 		e.Must(e.Engine.SyncRemote(e.Ctx))
 		got, err = e.C.GetSave(e.Ctx, later.ID)
 		e.Must(err)
