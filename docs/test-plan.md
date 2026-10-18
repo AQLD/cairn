@@ -7,9 +7,9 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
 | E0 | 4 | 0 | 1 |
-| E1 | 53 | 0 | 4 |
+| E1 | 54 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 9 | 40 | 2 |
+| E3 | 13 | 38 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -22,7 +22,7 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 
 | Journey | For | Steps proven | Steps unblocked | Capability scenarios still pending |
 | --- | --- | --- | --- | --- |
-| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 0 of 7 | 2 of 7 | 7 |
+| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 4 of 9 | 4 of 9 | 7 |
 | [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 0 of 6 | 1 of 6 | 5 |
 | [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 0 of 6 | 3 of 6 | 3 |
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 0 of 5 | 3 of 5 | 2 |
@@ -36,9 +36,12 @@ An agent sets up a repository, works on it across days, tries fixes in parallel 
 
 - ⏳ **G11.1** Starts from the team's toolchain image, ready to work · E3 · uses G1.10 ⏳, G1.10.5 ⏳, G9.1 ✅
 - ⏳ **G11.2** Fetches private code with a credential that never lands in the workspace or its saves · E4 · uses G5.9 ⏳, G5.4 ⏳
-- ⏳ **G11.3** Installs dependencies, runs the tests and a dev server with live output · E3 · uses G1.6 ✅, G1.5 ✅, G1.7.3 ✅
+- 📂 **G11.3** Installs dependencies, runs the tests and a dev server with live output · E3
+  - ✅ **G11.3.1** Installs the project's dependencies from a private package index · E3 · needs python · uses G1.6 ✅, G1.2 ✅
+  - ✅ **G11.3.2** Runs the test suite with output arriving while it runs · E3 · needs python · uses G1.6.8 ✅
+  - ✅ **G11.3.3** A dev server keeps serving between the agent's commands · E3 · needs python, persistent_processes · uses G1.5 ✅
 - ⏳ **G11.4** Stops for the night at no compute cost and carries on next day with the dev server running · E3 · uses G4.1 ✅, G4.2 ✅, G1.8 ⏳
-- ⏳ **G11.5** Tries three fixes in parallel and keeps the one whose tests pass · E3 · uses G2.1 ✅, G2.2 ✅, G2.7 ✅
+- ✅ **G11.5** Tries three fixes in parallel and keeps the one whose tests pass · E3 · needs python · uses G2.1 ✅, G2.2 ✅, G2.7 ✅
 - ⏳ **G11.6** Undoes a destructive command by rewinding one step · E3 · uses G18.3 ⏳
 - ⏳ **G11.7** A person reviews what changed and takes over · E4 · uses G1.4 ✅, G18.4 ⏳, G19.3 ⏳
 
@@ -133,6 +136,7 @@ Work done in a workspace is still there, exactly as it was, after a save and res
   - ✅ **G1.10.4** Re-importing a template does not change existing workspaces · E3
   - ⏳ **G1.10.5** A template is built from a container image in a private registry · E3
 - ✅ **G1.12** An app and its database stay connected across a full save · E1 · needs full_save, persistent_processes
+- ✅ **G1.13** A file written through the API is seen whole by the workspace's programs · E1
 - ✅ **G1.11** Files in /tmp are kept like any other file · E1 · needs isolation, in_process
 - 📂 **G1.7** Golden workloads save and resume correctly · E0 · needs full_save
   - ✅ **G1.7.1** Python script with open files · E0 · needs full_save

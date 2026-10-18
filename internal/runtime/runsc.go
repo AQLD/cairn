@@ -154,6 +154,47 @@ func binaryFile(spec Spec) string { return filepath.Join(filepath.Dir(spec.RootD
 // versionFile, inside a checkpoint, names the release that made it.
 const versionFile = "runsc-version"
 
+// The file API, quick saves and copies change the workspace folder from
+// outside the sandbox, so gVisor must revalidate what it caches about it
+// ("shared"). Under its default ("exclusive") a program that had read a file
+// kept its old size after an API write, and read it truncated (G1.13).
+//
+// The mode is a sandbox-wide flag that must match between a checkpoint and its
+// restore, so each workspace records the mode its sandbox runs with and each
+// checkpoint the mode it was made with. Sandboxes and checkpoints from before
+// the mode was recorded ran exclusive, and keep it until their next fresh boot.
+const (
+	fileAccessFile   = "file-access" // in the workspace's folder and in each checkpoint
+	fileAccessShared = "shared"
+	fileAccessOld    = "exclusive"
+)
+
+func fileAccessPath(spec Spec) string {
+	return filepath.Join(filepath.Dir(spec.RootDir), fileAccessFile)
+}
+
+// fileAccessOf is the mode the workspace's sandbox runs with.
+func fileAccessOf(spec Spec) string {
+	return readMode(fileAccessPath(spec))
+}
+
+func readMode(path string) string {
+	if b, err := os.ReadFile(path); err == nil {
+		if m := strings.TrimSpace(string(b)); m == fileAccessShared || m == fileAccessOld {
+			return m
+		}
+	}
+	return fileAccessOld
+}
+
+func setFileAccess(spec Spec, mode string) error {
+	tmp := fileAccessPath(spec) + ".tmp"
+	if err := os.WriteFile(tmp, []byte(mode+"\n"), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, fileAccessPath(spec))
+}
+
 // binaryFor is the runsc that drives the workspace's sandbox.
 func (r *Runsc) binaryFor(spec Spec) string {
 	if b, err := os.ReadFile(binaryFile(spec)); err == nil {
@@ -223,7 +264,7 @@ func (r *Runsc) Capabilities() Capabilities {
 // flags are the global runsc flags for a workspace. They must not change between
 // a checkpoint and its restore.
 func (r *Runsc) flags(spec Spec) []string {
-	f := []string{"--root", r.StateDir, "--overlay2=none"}
+	f := []string{"--root", r.StateDir, "--overlay2=none", "--file-access=" + fileAccessOf(spec)}
 	if !spec.Network {
 		f = append(f, "--network=none")
 	}
@@ -293,11 +334,14 @@ func (r *Runsc) Start(ctx context.Context, spec Spec) error {
 	default:
 		_ = r.run(ctx, spec, "delete", "--force", containerID(spec))
 	}
-	// a fresh boot takes the engine's current cairn-init and gVisor
+	// a fresh boot takes the engine's current cairn-init, gVisor and file mode
 	if err := copyExecutable(r.Init, initFile(spec)); err != nil {
 		return fmt.Errorf("install cairn-init: %w", err)
 	}
 	if err := r.useBinary(spec, r.Binary); err != nil {
+		return err
+	}
+	if err := setFileAccess(spec, fileAccessShared); err != nil {
 		return err
 	}
 	if err := r.writeBundle(spec); err != nil {
@@ -355,6 +399,9 @@ func (r *Runsc) Checkpoint(ctx context.Context, spec Spec, dir string) error {
 	if err := os.WriteFile(filepath.Join(dir, versionFile), []byte(r.versionOf(r.binaryFor(spec))+"\n"), 0o644); err != nil {
 		return err
 	}
+	if err := os.WriteFile(filepath.Join(dir, fileAccessFile), []byte(fileAccessOf(spec)+"\n"), 0o644); err != nil {
+		return err
+	}
 	// the processes in the checkpoint were started by this exact binary
 	return copyExecutable(initFile(spec), filepath.Join(dir, initSaveName))
 }
@@ -374,6 +421,9 @@ func (r *Runsc) Restore(ctx context.Context, spec Spec, dir string) error {
 		_ = r.run(ctx, spec, "delete", "--force", containerID(spec))
 	}
 	if err := r.useBinary(spec, bin); err != nil {
+		return err
+	}
+	if err := setFileAccess(spec, readMode(filepath.Join(dir, fileAccessFile))); err != nil {
 		return err
 	}
 	if err := copyExecutable(filepath.Join(dir, initSaveName), initFile(spec)); err != nil {
