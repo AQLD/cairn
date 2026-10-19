@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 54 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 20 | 33 | 2 |
+| E3 | 24 | 30 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -23,7 +23,7 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 | Journey | For | Steps proven | Steps unblocked | Capability scenarios still pending |
 | --- | --- | --- | --- | --- |
 | [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 6 of 9 | 6 of 9 | 5 |
-| [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 0 of 6 | 1 of 6 | 4 |
+| [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 2 of 6 | 3 of 6 | 3 |
 | [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 0 of 6 | 3 of 6 | 3 |
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 0 of 5 | 4 of 5 | 1 |
 | [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 0 of 6 | 2 of 6 | 5 |
@@ -49,12 +49,12 @@ An agent sets up a repository, works on it across days, tries fixes in parallel 
 
 Data goes in, analysis runs in a live session that lasts for days, results come out, and nothing leaves the network. Gate: **E4**.
 
-- ⏳ **G12.1** Loads a dataset of several gigabytes · E3 · uses G19.5 ⏳, G3.2.3 ✅
+- ✅ **G12.1** Loads a dataset of several gigabytes · E3 · needs python · uses G19.5 ✅, G3.2.3 ✅
 - ⏳ **G12.2** Keeps a live Python session between questions · E3 · uses G19.1 ⏳
 - ⏳ **G12.3** Comes back a week later to the same session with its data still loaded · E3 · uses G19.2 ⏳, G1.8.1 ✅, G4.2 ✅
 - ⏳ **G12.4** Data cannot leave: the network is off or allow-listed · E4 · uses G5.3 ✅, G5.4 ⏳, G8.6 ✅
 - ⏳ **G12.5** A query that runs out of memory loses the query, not the session's files · E3 · uses G3.2.4 ✅, G3.2.5 ✅
-- ⏳ **G12.6** Charts and result files come back out · E3 · uses G1.4 ✅, G19.5 ⏳
+- ✅ **G12.6** Charts and result files come back out · E3 · needs python · uses G1.4 ✅, G19.5 ✅
 
 ## G13 A browser agent finishes a long web task with a person's help
 
@@ -324,6 +324,8 @@ Agents keep live sessions, people can look in and take over, and products hear a
 - ⏳ **G19.2** A session survives pause and resume · E3 · needs full_save, persistent_processes
 - ⏳ **G19.3** A person can open an interactive terminal in a running workspace · E4
 - ⏳ **G19.4** A port inside the workspace opens to a person through a preview link · later · needs network_control
-- ⏳ **G19.5** Files of several gigabytes move in and out as streams · E3
+- 📂 **G19.5** Files of several gigabytes move in and out as streams · E3
+  - ✅ **G19.5.1** A file of several gigabytes goes in and comes out byte for byte · E3
+  - ✅ **G19.5.2** An upload that would use up the engine's headroom is refused and leaves nothing behind · E3 · needs in_process
 - ⏳ **G19.6** Clients hear when a workspace pauses, wakes, hits a limit or finishes a command · E4
 

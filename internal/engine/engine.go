@@ -542,7 +542,19 @@ func (e *Engine) WriteFile(ctx context.Context, id, name string, r io.Reader, mo
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
-	_, err = io.Copy(f, r)
+	var dst io.Writer = f
+	if !spec.DiskImage {
+		// A plain folder shares the engine's volume: stop before the upload eats
+		// the headroom saves and the state database need. (A disk image is
+		// bounded by its own size.)
+		dst = &spaceGuard{w: f, check: func() error { return e.needSpace("writing "+rel, 0) }}
+	}
+	_, err = io.Copy(dst, r)
+	if errors.Is(err, ErrInsufficientStorage) {
+		f.Close()
+		_ = root.Remove(rel) // give the space back
+		return err
+	}
 	if err == nil {
 		err = fsync(f) // acknowledged means on disk: it survives a power cut
 	}
@@ -553,6 +565,25 @@ func (e *Engine) WriteFile(ctx context.Context, id, name string, r io.Reader, mo
 		err = syncDirsIn(root, path.Dir(rel)) // and so do the entries naming it
 	}
 	return diskFull(err, spec)
+}
+
+// spaceGuard checks free space every 64 MiB written.
+type spaceGuard struct {
+	w     io.Writer
+	check func() error
+	since int64
+}
+
+func (g *spaceGuard) Write(p []byte) (int, error) {
+	if g.since >= 64<<20 {
+		if err := g.check(); err != nil {
+			return 0, err
+		}
+		g.since = 0
+	}
+	n, err := g.w.Write(p)
+	g.since += int64(n)
+	return n, err
 }
 
 // syncDirsIn syncs dir and every folder above it inside root, so a file just
