@@ -25,6 +25,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -44,6 +45,10 @@ commands:
   template ls | template rm NAME          list or delete templates
   ls                                      list workspaces
   exec WORKSPACE -- COMMAND [ARGS...]     run a command
+  session new WORKSPACE [python|shell]    start a session (an interpreter that keeps its state)
+  session run WORKSPACE SESSION [CODE]    run code in it (CODE, or stdin if none)
+  session ls WORKSPACE | session rm WORKSPACE SESSION
+                                          list or stop sessions
   put WORKSPACE LOCAL_FILE REMOTE_PATH    upload a file
   get WORKSPACE REMOTE_PATH [LOCAL_FILE]  download a file (stdout if no LOCAL_FILE)
   save WORKSPACE [--full]                 save (quick by default)
@@ -250,6 +255,59 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 			return 0, c.DeleteTemplate(ctx, args[1])
 		default:
 			return 2, errors.New("usage: cairn template import NAME ROOTFS.tar | template pull NAME IMAGE [--insecure] | template ls | template rm NAME")
+		}
+
+	case "session":
+		switch {
+		case (len(args) == 2 || len(args) == 3) && args[0] == "new":
+			language := "python"
+			if len(args) == 3 {
+				language = args[2]
+			}
+			s, err := c.CreateSession(ctx, args[1], language)
+			if err != nil {
+				return 1, err
+			}
+			fmt.Println(s.ID)
+		case (len(args) == 3 || len(args) == 4) && args[0] == "run":
+			var code string
+			if len(args) == 4 {
+				code = args[3]
+			} else {
+				b, err := io.ReadAll(os.Stdin)
+				if err != nil {
+					return 1, err
+				}
+				code = string(b)
+			}
+			res, err := c.RunInSession(ctx, args[1], args[2], code, 0)
+			if err != nil {
+				return 1, err
+			}
+			os.Stdout.WriteString(res.Stdout)
+			os.Stderr.WriteString(res.Stderr)
+			switch {
+			case res.Ended:
+				return 1, errors.New("the session ended during this cell; start a new one")
+			case res.TimedOut:
+				return 124, errors.New("cell interrupted at its timeout; the session carries on")
+			}
+			return res.ExitCode, nil
+		case len(args) == 2 && args[0] == "ls":
+			list, err := c.ListSessions(ctx, args[1])
+			if err != nil {
+				return 1, err
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tLANGUAGE\tPID\tCELLS")
+			for _, s := range list {
+				fmt.Fprintf(tw, "%s\t%s\t%d\t%d\n", s.ID, s.Language, s.PID, s.Cells)
+			}
+			return 0, tw.Flush()
+		case len(args) == 3 && args[0] == "rm":
+			return 0, c.DeleteSession(ctx, args[1], args[2])
+		default:
+			return 2, errors.New("usage: cairn session new WORKSPACE [python|shell] | session run WORKSPACE SESSION [CODE] | session ls WORKSPACE | session rm WORKSPACE SESSION")
 		}
 
 	case "rm-save":

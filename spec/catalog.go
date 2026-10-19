@@ -274,8 +274,8 @@ var Catalog = []Scenario{
 		Milestone: E4,
 		Children: []Scenario{
 			{ID: "G12.1", Title: "Loads a dataset of several gigabytes", Proves: "A dataset streamed in from outside is analysed in the workspace, and the answer matches the data exactly.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G19.5", "G3.2.3"}},
-			{ID: "G12.2", Title: "Keeps a live Python session between questions", Milestone: E3, Uses: []string{"G19.1"}},
-			{ID: "G12.3", Title: "Comes back a week later to the same session with its data still loaded", Milestone: E3, Uses: []string{"G19.2", "G1.8.1", "G4.2"}},
+			{ID: "G12.2", Title: "Keeps a live Python session between questions", Proves: "A dataset loaded once into a Python session answers several questions, each faster than loading and matching the data, without being loaded again.", Milestone: E3, Needs: []Need{NeedPersistent}, Uses: []string{"G19.1"}},
+			{ID: "G12.3", Title: "Comes back a week later to the same session with its data still loaded", Proves: "After a full save and a long pause, the same Python session answers from the data it loaded before, without loading again, and sees the time that passed.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}, Uses: []string{"G19.2", "G1.8.1", "G4.2"}},
 			{ID: "G12.4", Title: "Data cannot leave: the network is off or allow-listed", Milestone: E4, Uses: []string{"G5.3", "G5.4", "G8.6"}},
 			{ID: "G12.5", Title: "A query that runs out of memory loses the query, not the session's files", Proves: "A query that outgrows the workspace's memory is stopped with an error; the session process and its files carry on, and the next query runs.", Milestone: E3, Needs: []Need{NeedResourceLimits, NeedPersistent}, Uses: []string{"G3.2.4", "G3.2.5"}},
 			{ID: "G12.6", Title: "Charts and result files come back out", Proves: "Result files the analysis writes, text and binary, download byte for byte.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G1.4", "G19.5"}},
@@ -363,8 +363,14 @@ var Catalog = []Scenario{
 		Proves:    "Agents keep live sessions, people can look in and take over, and products hear about what happens.",
 		Milestone: E4,
 		Children: []Scenario{
-			{ID: "G19.1", Title: "A session keeps its state between commands", Proves: "A Python or shell session keeps its variables and working state across calls.", Milestone: E3, Needs: []Need{NeedPersistent}},
-			{ID: "G19.2", Title: "A session survives pause and resume", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}},
+			{ID: "G19.1", Title: "A session keeps its state between commands", Proves: "A Python or shell session keeps its variables and working state across calls.", Milestone: E3,
+				Children: []Scenario{
+					{ID: "G19.1.1", Title: "A Python session keeps variables, imports and data between runs", Proves: "Each run sees what earlier runs defined; a final expression is shown; an exception costs the run, with a traceback naming the line, not the session.", Milestone: E3, Needs: []Need{NeedPersistent}},
+					{ID: "G19.1.2", Title: "A shell session keeps its working folder, variables and functions", Proves: "cd, exports and functions carry over; a failing command or a syntax error returns its status and the session carries on.", Milestone: E3, Needs: []Need{NeedPersistent}},
+					{ID: "G19.1.3", Title: "A run past its timeout is interrupted and the session carries on", Proves: "A Python loop and a shell command are interrupted at their timeout; the session keeps its state for the next run.", Milestone: E3, Needs: []Need{NeedPersistent}},
+					{ID: "G19.1.4", Title: "Sessions are listed, run one cell at a time and deleted; a session that dies says so", Proves: "A second run while one runs is a conflict; deleting stops what the session started; a session whose process exits reports it ended and is no longer listed.", Milestone: E3, Needs: []Need{NeedPersistent}},
+				}},
+			{ID: "G19.2", Title: "A session survives pause and resume", Proves: "Python and shell sessions keep their state across a full save and resume and across a pause; a quick save, which keeps files only, brings no session back.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}},
 			{ID: "G19.3", Title: "A person can open an interactive terminal in a running workspace", Milestone: E4},
 			{ID: "G19.4", Title: "A port inside the workspace opens to a person through a preview link", Milestone: Later, Needs: []Need{NeedNetworkControl}},
 			{ID: "G19.5", Title: "Files of several gigabytes move in and out as streams", Milestone: E3,

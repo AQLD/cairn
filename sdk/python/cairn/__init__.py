@@ -29,10 +29,10 @@ from ._errors import (  # noqa: E402
     Unauthorized,
     UnsupportedByRuntime,
 )
-from ._types import Capabilities, ExecResult, Info, Limits, Save, Template, Workspace  # noqa: E402
+from ._types import Capabilities, ExecResult, Info, Limits, RunResult, Save, Session, Template, Workspace  # noqa: E402
 
 __all__ = [
-    "Client", "Workspace", "Save", "Template", "Info", "Capabilities", "Limits", "ExecResult",
+    "Client", "Workspace", "Save", "Template", "Info", "Capabilities", "Limits", "ExecResult", "Session", "RunResult",
     "CairnError", "NotFound", "InvalidArgument", "Conflict", "SaveCorrupt", "InsufficientStorage",
     "TooManyRequests", "UnsupportedByRuntime", "Unauthorized", "InternalError", "ConnectionFailed",
     "CommandFailed",

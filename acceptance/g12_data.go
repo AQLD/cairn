@@ -3,6 +3,7 @@ package acceptance
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -112,6 +113,81 @@ while True:
 		Equal(e, "the same session carries on", running(e, ws.ID).PID, session.PID)
 		Equal(e, "a smaller query then works", strings.TrimSpace(e.Sh(ws.ID, `python3 -c "print(sum(int(x) for x in open('data/rows.csv')))"`)), "20000100000")
 	})
+
+	// G12.2, G12.3: the agent loads the data into a Python session once and
+	// asks its questions there, as in a notebook, today and a week later.
+	register("G12.2", func(e *Env) {
+		ws := e.Workspace("data-session")
+		ses, loadedIn := loadSalesSession(e, ws.ID)
+		for _, q := range salesQuestions {
+			start := time.Now()
+			Equal(e, q.code, cell(e, ws.ID, ses, q.code), q.want)
+			if took := time.Since(start); took > loadedIn {
+				e.T.Fatalf("%s took %v, longer than loading the data (%v): it was not kept loaded", q.code, took, loadedIn)
+			}
+		}
+		Equal(e, "loads", cell(e, ws.ID, ses, "loads"), "1\n")
+	})
+
+	register("G12.3", func(e *Env) {
+		ws := e.Workspace("data-week")
+		ses, _ := loadSalesSession(e, ws.ID)
+		Equal(e, salesQuestions[0].code, cell(e, ws.ID, ses, salesQuestions[0].code), salesQuestions[0].want)
+		saved, resumed := pauseAndResume(e, ws.ID) // the week away, at no compute cost
+
+		for _, q := range salesQuestions[1:] {
+			Equal(e, q.code+" after the pause", cell(e, ws.ID, ses, q.code), q.want)
+		}
+		Equal(e, "loads", cell(e, ws.ID, ses, "loads"), "1\n")
+		// the session knows how long it was away
+		away, err := strconv.ParseFloat(strings.TrimSpace(cell(e, ws.ID, ses, "print(round(time.time() - loaded_at, 1))")), 64)
+		e.Must(err)
+		if pause := resumed.Sub(saved).Seconds(); away < pause {
+			e.T.Fatalf("the session sees %.1fs since loading, less than the %.1fs pause", away, pause)
+		}
+	})
+}
+
+// salesQuestions are asked of the dataset loadSalesSession loads; the answers
+// follow from how it is generated (amount = i % 997 - 400, region = i % 4).
+var salesQuestions = []struct{ code, want string }{
+	{"len(rows)", "1000000\n"},
+	{"sum(a for _, a in rows)", fmt.Sprintf("%d\n", salesTotal(-1))},
+	{"sum(a for r, a in rows if r == 'north')", fmt.Sprintf("%d\n", salesTotal(0))},
+	{"max(a for r, a in rows if r == 'west')", "596\n"},
+}
+
+func salesTotal(region int) int64 {
+	var t int64
+	for i := 0; i < 1_000_000; i++ {
+		if region < 0 || i%4 == region {
+			t += int64(i%997 - 400)
+		}
+	}
+	return t
+}
+
+// loadSalesSession writes a dataset into the workspace and loads it into a
+// Python session; it returns the session and how long loading took.
+func loadSalesSession(e *Env, ws string) (string, time.Duration) {
+	e.T.Helper()
+	e.Sh(ws, `python3 -c "
+with open('/root/sales.csv', 'w') as f:
+    for i in range(1_000_000):
+        f.write('%d,%s,%d\n' % (i, ('north', 'south', 'east', 'west')[i % 4], i % 997 - 400))
+"`)
+	ses := session(e, ws, "python").ID
+	start := time.Now()
+	cell(e, ws, ses, `import csv, time
+loads = 0
+def load():
+    global rows, loads, loaded_at
+    with open('/root/sales.csv') as f:
+        rows = [(r, int(a)) for _, r, a in csv.reader(f)]
+    loads += 1
+    loaded_at = time.time()
+load()`)
+	return ses, time.Since(start)
 }
 
 // datasetRows: ~1 KiB rows; over 1 GiB in -short mode, about 3 GiB otherwise.

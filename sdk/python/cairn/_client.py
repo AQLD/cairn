@@ -17,7 +17,7 @@ from typing import IO, Any, Iterable, Optional, Sequence, Union
 
 from . import __version__
 from ._errors import CairnError, CommandFailed, ConnectionFailed, TooManyRequests, from_response
-from ._types import ExecResult, Info, Limits, OutputCallback, Save, Template, Workspace
+from ._types import ExecResult, Info, Limits, OutputCallback, RunResult, Save, Session, Template, Workspace
 
 Content = Union[bytes, str, IO[bytes], "os.PathLike[str]"]
 
@@ -160,6 +160,39 @@ class Client:
             why = "timed out" if res.timed_out else f"exited {res.exit_code}"
             raise CommandFailed(f"{shown!r} {why}: {res.stderr.decode('utf-8', 'replace').strip()}", res)
         return res.text
+
+    # -- sessions ----------------------------------------------------------
+
+    def create_session(self, workspace_id: str, language: str = "python") -> Session:
+        """Starts a "python" or "shell" session in a workspace. Not retried
+        after a dropped connection (a second session might start): list
+        sessions to find it."""
+        d = self._json("POST", f"/v1/workspaces/{_q(workspace_id)}/sessions", {"language": language})
+        return Session._from(d, workspace_id, self)
+
+    def sessions(self, workspace_id: str) -> list[Session]:
+        d = self._json("GET", f"/v1/workspaces/{_q(workspace_id)}/sessions")
+        return [Session._from(s, workspace_id, self) for s in d.get("sessions") or []]
+
+    def run_cell(self, workspace_id: str, session_id: str, code: str, *,
+                 timeout: Optional[float] = None) -> RunResult:
+        """Runs code in a session and returns how it ended. One cell runs at a
+        time per session (Conflict otherwise). Never retried: running a cell
+        twice is not safe in general."""
+        body: dict[str, Any] = {"code": code}
+        if timeout:
+            body["timeout_ms"] = int(timeout * 1000)
+        path = f"/v1/workspaces/{_q(workspace_id)}/sessions/{_q(session_id)}/run"
+        http_timeout = timeout + 60 if timeout else None
+        d = json.loads(self._request("POST", path, _body(body), retry=False, timeout=http_timeout))
+        return RunResult(exit_code=d.get("exit_code", 0), timed_out=d.get("timed_out", False),
+                         stdout=_output(d, "stdout"), stderr=_output(d, "stderr"),
+                         duration_ms=d.get("duration_ms", 0), stdout_truncated=d.get("stdout_truncated", False),
+                         stderr_truncated=d.get("stderr_truncated", False), ended=d.get("ended", False))
+
+    def delete_session(self, workspace_id: str, session_id: str) -> None:
+        """Stops a session and everything it started."""
+        self._request("DELETE", f"/v1/workspaces/{_q(workspace_id)}/sessions/{_q(session_id)}")
 
     # -- files -------------------------------------------------------------
 

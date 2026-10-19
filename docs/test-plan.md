@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 54 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 33 | 21 | 2 |
+| E3 | 40 | 17 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -23,7 +23,7 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 | Journey | For | Steps proven | Steps unblocked | Capability scenarios still pending |
 | --- | --- | --- | --- | --- |
 | [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 6 of 9 | 6 of 9 | 5 |
-| [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 3 of 6 | 3 of 6 | 3 |
+| [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 5 of 6 | 5 of 6 | 1 |
 | [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 3 of 6 | 3 of 6 | 3 |
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 3 of 5 | 4 of 5 | 1 |
 | [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 2 of 6 | 2 of 6 | 5 |
@@ -50,8 +50,8 @@ An agent sets up a repository, works on it across days, tries fixes in parallel 
 Data goes in, analysis runs in a live session that lasts for days, results come out, and nothing leaves the network. Gate: **E4**.
 
 - ✅ **G12.1** Loads a dataset of several gigabytes · E3 · needs python · uses G19.5 ✅, G3.2.3 ✅
-- ⏳ **G12.2** Keeps a live Python session between questions · E3 · uses G19.1 ⏳
-- ⏳ **G12.3** Comes back a week later to the same session with its data still loaded · E3 · uses G19.2 ⏳, G1.8.1 ✅, G4.2 ✅
+- ✅ **G12.2** Keeps a live Python session between questions · E3 · needs persistent_processes · uses G19.1 ✅
+- ✅ **G12.3** Comes back a week later to the same session with its data still loaded · E3 · needs full_save, persistent_processes · uses G19.2 ✅, G1.8.1 ✅, G4.2 ✅
 - ⏳ **G12.4** Data cannot leave: the network is off or allow-listed · E4 · uses G5.3 ✅, G5.4 ⏳, G8.6 ✅
 - ✅ **G12.5** A query that runs out of memory loses the query, not the session's files · E3 · needs resource_limits, persistent_processes · uses G3.2.4 ✅, G3.2.5 ✅
 - ✅ **G12.6** Charts and result files come back out · E3 · needs python · uses G1.4 ✅, G19.5 ✅
@@ -320,8 +320,12 @@ An agent's computer keeps a tree of its past states, cheap enough to checkpoint 
 
 Agents keep live sessions, people can look in and take over, and products hear about what happens. Gate: **E4**.
 
-- ⏳ **G19.1** A session keeps its state between commands · E3 · needs persistent_processes
-- ⏳ **G19.2** A session survives pause and resume · E3 · needs full_save, persistent_processes
+- 📂 **G19.1** A session keeps its state between commands · E3
+  - ✅ **G19.1.1** A Python session keeps variables, imports and data between runs · E3 · needs persistent_processes
+  - ✅ **G19.1.2** A shell session keeps its working folder, variables and functions · E3 · needs persistent_processes
+  - ✅ **G19.1.3** A run past its timeout is interrupted and the session carries on · E3 · needs persistent_processes
+  - ✅ **G19.1.4** Sessions are listed, run one cell at a time and deleted; a session that dies says so · E3 · needs persistent_processes
+- ✅ **G19.2** A session survives pause and resume · E3 · needs full_save, persistent_processes
 - ⏳ **G19.3** A person can open an interactive terminal in a running workspace · E4
 - ⏳ **G19.4** A port inside the workspace opens to a person through a preview link · later · needs network_control
 - 📂 **G19.5** Files of several gigabytes move in and out as streams · E3

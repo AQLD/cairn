@@ -101,6 +101,7 @@ type Engine struct {
 	locks    map[string]*wsLock   // per workspace
 	activity map[string]time.Time // last use per workspace, for pausing idle ones
 	ops      chan struct{}        // slots for heavy operations
+	running  sync.Map             // workspace/session -> struct{}: sessions running a cell
 
 	uploadKick   chan struct{}      // wakes the uploader
 	stopUploads  context.CancelFunc // ends it
