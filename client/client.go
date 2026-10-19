@@ -236,6 +236,70 @@ func (c *Client) Exec(ctx context.Context, id string, req Exec) (*ExecResult, er
 	return &out, nil
 }
 
+// Session is an interpreter kept running in a workspace: variables, imports,
+// loaded data and the working folder carry over between runs, and full saves
+// keep it like any other process.
+type Session struct {
+	ID       string `json:"id"`
+	Language string `json:"language"` // "python" or "shell"
+	PID      int    `json:"pid"`
+	Cells    int    `json:"cells"`
+}
+
+// RunResult is how a cell ended. In Python sessions the value of a final
+// expression is printed, as in a notebook, and an exception's traceback goes
+// to Stderr with ExitCode 1. TimedOut: the cell was interrupted at its
+// timeout and the session carries on. Ended: the session's process died
+// during the cell; start a new session.
+type RunResult struct {
+	ExecResult
+	Ended bool `json:"ended,omitempty"`
+}
+
+// CreateSession starts a "python" or "shell" session in a workspace.
+func (c *Client) CreateSession(ctx context.Context, id, language string) (*Session, error) {
+	var out Session
+	return &out, c.do(ctx, http.MethodPost, "/v1/workspaces/"+url.PathEscape(id)+"/sessions", map[string]string{"language": language}, &out)
+}
+
+// ListSessions lists a workspace's live sessions.
+func (c *Client) ListSessions(ctx context.Context, id string) ([]Session, error) {
+	var out struct {
+		Sessions []Session `json:"sessions"`
+	}
+	return out.Sessions, c.do(ctx, http.MethodGet, "/v1/workspaces/"+url.PathEscape(id)+"/sessions", nil, &out)
+}
+
+// RunInSession runs code in a session; timeout 0 means the engine's default.
+func (c *Client) RunInSession(ctx context.Context, id, session, code string, timeout time.Duration) (*RunResult, error) {
+	var out RunResult
+	body := map[string]any{"code": code}
+	if timeout > 0 {
+		body["timeout_ms"] = timeout.Milliseconds()
+	}
+	if err := c.do(ctx, http.MethodPost, "/v1/workspaces/"+url.PathEscape(id)+"/sessions/"+url.PathEscape(session)+"/run", body, &out); err != nil {
+		return nil, err
+	}
+	for _, f := range []struct {
+		enc *string
+		val *string
+	}{{&out.StdoutEncoding, &out.Stdout}, {&out.StderrEncoding, &out.Stderr}} {
+		if *f.enc == "base64" {
+			b, err := base64.StdEncoding.DecodeString(*f.val)
+			if err != nil {
+				return nil, fmt.Errorf("decode output: %w", err)
+			}
+			*f.val, *f.enc = string(b), ""
+		}
+	}
+	return &out, nil
+}
+
+// DeleteSession stops a session and everything it started.
+func (c *Client) DeleteSession(ctx context.Context, id, session string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/workspaces/"+url.PathEscape(id)+"/sessions/"+url.PathEscape(session), nil, nil)
+}
+
 // ExecEvent is one piece of a streamed command: output from Stream ("stdout" or
 // "stderr") as it was written.
 type ExecEvent struct {

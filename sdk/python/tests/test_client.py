@@ -298,6 +298,44 @@ class TestSaves(EngineTest):
         self.assertEqual(ws.run("echo", "awake"), "awake\n")
 
 
+class TestSessions(EngineTest):
+    def test_state_carries_over_or_sessions_are_refused(self):
+        ws = self.workspace("session")
+        if not self.info.capabilities.persistent_processes:
+            with self.assertRaises(cairn.UnsupportedByRuntime):
+                ws.session("python")
+            return
+        py = ws.session("python")
+        self.assertTrue(py.run("import math\nr = 2").ok)
+        self.assertEqual(py.run("round(math.pi * r * r, 2)").text, "12.57\n")
+        err = py.run("1 / 0")
+        self.assertEqual(err.exit_code, 1)
+        self.assertIn(b"ZeroDivisionError", err.stderr)
+        self.assertEqual(py.run("r").text, "2\n", "an error costs the cell, not the session")
+
+        sh = ws.session("shell")
+        sh.run("cd /tmp && export X=7")
+        self.assertEqual(sh.run("pwd; echo $X").text, "/tmp\n7\n")
+        self.assertTrue(sh.run("sleep 30", timeout=1).timed_out)
+        self.assertEqual(sh.run("echo $X").text, "7\n", "an interrupted cell keeps the session")
+
+        self.assertEqual(sorted(s.id for s in ws.sessions()), sorted([py.id, sh.id]))
+        sh.delete()
+        with self.assertRaises(cairn.NotFound):
+            sh.run("true")
+        self.assertEqual([s.id for s in ws.sessions()], [py.id])
+
+    def test_a_session_survives_a_full_save(self):
+        if not (self.info.capabilities.full_save and self.info.capabilities.persistent_processes):
+            self.skipTest(f"runtime {self.info.runtime} cannot save memory")
+        ws = self.workspace("session-full")
+        py = ws.session()
+        py.run("seen = ['before']")
+        ws.save("full").resume()
+        py.run("seen.append('after')")
+        self.assertEqual(py.run("seen").text, "['before', 'after']\n")
+
+
 class TestTemplates(EngineTest):
     def test_import_use_and_delete(self):
         buf = io.BytesIO()
@@ -468,6 +506,12 @@ class TestRetries(unittest.TestCase):
         with self.assertRaises(cairn.ConnectionFailed):
             c.exec("ws_1", ["rm", "-rf", "build"])
         self.assertEqual(len(f.seen), 1, "running a command twice is not safe")
+
+    def test_a_cell_is_never_retried_after_a_dropped_connection(self):
+        f, c = self.fake(["drop", {"exit_code": 0}])
+        with self.assertRaises(cairn.ConnectionFailed):
+            c.run_cell("ws_1", "ses_1", "counter += 1")
+        self.assertEqual(len(f.seen), 1, "running a cell twice is not safe")
 
     def test_resume_is_not_retried_after_a_dropped_connection(self):
         f, c = self.fake(["drop", WS])

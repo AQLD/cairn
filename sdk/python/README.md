@@ -37,6 +37,20 @@ A string runs with `sh -c`. Pass `on_output` to stream output while the command 
 ws.exec("make build", on_output=lambda stream, data: print(stream, data.decode(), end=""))
 ```
 
+## Sessions
+
+A session is an interpreter kept running in the workspace, so variables, imports, loaded data and the working folder carry over between calls, as in a notebook:
+
+```python
+py = ws.session("python")              # or "shell"
+py.run("import pandas as pd; df = pd.read_csv('sales.csv')")
+print(py.run("df.amount.sum()").text)  # a final expression is printed
+r = py.run("train()", timeout=600)     # past the timeout the cell is interrupted; the session carries on
+r.ok, r.exit_code, r.timed_out, r.ended, r.stderr
+```
+
+An exception's traceback goes to `stderr` with `exit_code` 1 and the session carries on. `ended` means the session's process died during the cell (it exited, or was stopped for memory). One cell runs at a time per session. Full saves and pauses keep sessions like any other process; a quick save keeps files only. Sessions need a runtime that keeps processes between commands (gVisor).
+
 ## Saves
 
 | Call | What it does |

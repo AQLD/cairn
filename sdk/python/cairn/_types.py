@@ -109,6 +109,46 @@ class ExecResult:
 
 
 @dataclass
+class RunResult(ExecResult):
+    """How a cell ended in a session. In Python sessions a final expression's
+    value is printed, as in a notebook; an exception's traceback goes to
+    stderr with exit_code 1. timed_out: the cell was interrupted at its
+    timeout and the session carries on. ended: the session's process died
+    during the cell (it exited, or was stopped for memory)."""
+
+    ended: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return self.exit_code == 0 and not self.timed_out and not self.ended
+
+
+@dataclass
+class Session:
+    """An interpreter kept running in a workspace: variables, imports, loaded
+    data and the working folder carry over between runs. Full saves and
+    pauses keep it, like any other process; a quick save does not."""
+
+    id: str
+    workspace_id: str
+    language: str  # python or shell
+    pid: int
+    cells: int
+    _client: Any = field(default=None, repr=False, compare=False)
+
+    @classmethod
+    def _from(cls, d: dict, workspace_id: str, client: "Client") -> "Session":
+        return cls(id=d["id"], workspace_id=workspace_id, language=d.get("language", ""), pid=d.get("pid", 0),
+                   cells=d.get("cells", 0), _client=client)
+
+    def run(self, code: str, *, timeout: Optional[float] = None) -> RunResult:
+        return self._client.run_cell(self.workspace_id, self.id, code, timeout=timeout)
+
+    def delete(self) -> None:
+        self._client.delete_session(self.workspace_id, self.id)
+
+
+@dataclass
 class Workspace:
     id: str
     name: str
@@ -148,6 +188,12 @@ class Workspace:
 
     def pause(self) -> "Workspace":
         return self._client.pause(self.id)
+
+    def session(self, language: str = "python") -> Session:
+        return self._client.create_session(self.id, language)
+
+    def sessions(self) -> list[Session]:
+        return self._client.sessions(self.id)
 
     def refresh(self) -> "Workspace":
         return self._client.workspace(self.id)
