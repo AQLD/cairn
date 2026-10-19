@@ -127,6 +127,7 @@ type Workspace struct {
 	Network    bool                 `json:"network"`
 	Template   string               `json:"template,omitempty"`
 	SourceSave string               `json:"source_save,omitempty"`
+	BaseSave   string               `json:"base_save,omitempty"` // the save its state comes from: last saved, resumed or copied
 	CreatedAt  time.Time            `json:"created_at"`
 	UpdatedAt  time.Time            `json:"updated_at"`
 }
@@ -142,6 +143,10 @@ type Save struct {
 	PurgeAfter  *time.Time      `json:"purge_after,omitempty"` // a deleted save can be undeleted until then
 	Auto        bool            `json:"auto,omitempty"`        // made by the engine to pause the workspace
 	Uploaded    bool            `json:"uploaded,omitempty"`    // a copy is in object storage
+	// Parent is the save the workspace's state came from when this one was
+	// made (the one it was last saved, resumed or copied from): a workspace's
+	// saves form a tree, and rewinding then saving starts a branch.
+	Parent string `json:"parent,omitempty"`
 }
 
 // Info describes the engine and what its runtime can do.
@@ -397,7 +402,7 @@ func (e *Engine) insertWorkspace(ctx context.Context, id, name string, spec Spec
 		return nil, err
 	}
 	now := time.Now().UTC()
-	w := store.Workspace{ID: id, Name: name, State: store.Creating, Spec: raw, SourceSave: sourceSave, RequestKey: requestKey, CreatedAt: now, UpdatedAt: now}
+	w := store.Workspace{ID: id, Name: name, State: store.Creating, Spec: raw, SourceSave: sourceSave, BaseSave: sourceSave, RequestKey: requestKey, CreatedAt: now, UpdatedAt: now}
 	if err := e.store.CreateWorkspace(ctx, w); err != nil {
 		return nil, err
 	}
@@ -710,7 +715,7 @@ func (e *Engine) Save(ctx context.Context, id string, kind save.Kind, requestKey
 
 	saveID := newID("sv")
 	now := time.Now().UTC()
-	if err := e.store.CreateSave(ctx, store.Save{ID: saveID, WorkspaceID: id, Kind: string(kind), State: store.SavePending, CreatedAt: now, RequestKey: requestKey}); err != nil {
+	if err := e.store.CreateSave(ctx, store.Save{ID: saveID, WorkspaceID: id, Kind: string(kind), State: store.SavePending, CreatedAt: now, RequestKey: requestKey, Parent: w.BaseSave}); err != nil {
 		if errors.Is(err, store.ErrDuplicateKey) {
 			return e.saveForKey(ctx, requestKey, id) // lost a race with the same key
 		}
@@ -736,6 +741,9 @@ func (e *Engine) Save(ctx context.Context, id string, kind save.Kind, requestKey
 	}
 	defer e.kickUploads()
 	if err := e.store.MarkSaveReady(ctx, saveID, m.Size()); err != nil {
+		return nil, err
+	}
+	if err := e.store.SetBaseSave(ctx, id, saveID); err != nil {
 		return nil, err
 	}
 	if kind == save.Full {
@@ -1142,6 +1150,9 @@ func (e *Engine) Resume(ctx context.Context, saveID string) (*Workspace, error) 
 	if err := e.cfg.Failpoints.Check(failpoint.ResumeAfterSwap); err != nil {
 		return nil, err
 	}
+	if err := e.store.SetBaseSave(ctx, id, saveID); err != nil {
+		return nil, err
+	}
 	if err := e.store.SetWorkspaceState(ctx, id, store.Running); err != nil {
 		return nil, err
 	}
@@ -1513,12 +1524,12 @@ func toWorkspace(w *store.Workspace) (*Workspace, error) {
 	}
 	return &Workspace{
 		ID: w.ID, Name: w.Name, State: w.State, Limits: spec.Limits, Network: spec.Network,
-		Template: spec.Template, SourceSave: w.SourceSave, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
+		Template: spec.Template, SourceSave: w.SourceSave, BaseSave: w.BaseSave, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
 	}, nil
 }
 
 func (e *Engine) toSave(sv *store.Save) *Save {
-	out := &Save{ID: sv.ID, WorkspaceID: sv.WorkspaceID, Kind: save.Kind(sv.Kind), State: sv.State, Size: sv.Size, CreatedAt: sv.CreatedAt, Auto: sv.Auto, Uploaded: sv.Uploaded}
+	out := &Save{ID: sv.ID, WorkspaceID: sv.WorkspaceID, Kind: save.Kind(sv.Kind), State: sv.State, Size: sv.Size, CreatedAt: sv.CreatedAt, Auto: sv.Auto, Uploaded: sv.Uploaded, Parent: sv.Parent}
 	if !sv.DeletedAt.IsZero() {
 		d, p := sv.DeletedAt, sv.DeletedAt.Add(e.cfg.Retention)
 		out.DeletedAt, out.PurgeAfter = &d, &p

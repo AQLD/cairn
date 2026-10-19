@@ -159,6 +159,7 @@ class Workspace:
     source_save: str
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
+    base_save: str = ""  # the save its state comes from: last saved, resumed or copied
     _client: Any = field(default=None, repr=False, compare=False)
 
     @classmethod
@@ -166,7 +167,8 @@ class Workspace:
         return cls(id=d["id"], name=d.get("name", ""), state=d.get("state", ""),
                    limits=Limits(**_pick(Limits, d.get("limits") or {})), network=d.get("network", False),
                    template=d.get("template", ""), source_save=d.get("source_save", ""),
-                   created_at=_time(d.get("created_at")), updated_at=_time(d.get("updated_at")), _client=client)
+                   created_at=_time(d.get("created_at")), updated_at=_time(d.get("updated_at")),
+                   base_save=d.get("base_save", ""), _client=client)
 
     def exec(self, command, **kw) -> ExecResult:
         return self._client.exec(self.id, command, **kw)
@@ -214,6 +216,7 @@ class Save:
     purge_after: Optional[datetime] = None  # a deleted save can be undeleted until then
     auto: bool = False  # made by the engine to pause the workspace
     uploaded: bool = False  # a copy is in object storage
+    parent: str = ""  # the save the workspace's state came from when this one was made
     _client: Any = field(default=None, repr=False, compare=False)
 
     @classmethod
@@ -221,7 +224,7 @@ class Save:
         return cls(id=d["id"], workspace_id=d.get("workspace_id", ""), kind=d.get("kind", ""), state=d.get("state", ""),
                    size=d.get("size", 0), created_at=_time(d.get("created_at")), deleted_at=_time(d.get("deleted_at")),
                    purge_after=_time(d.get("purge_after")), auto=d.get("auto", False), uploaded=d.get("uploaded", False),
-                   _client=client)
+                   parent=d.get("parent", ""), _client=client)
 
     def resume(self) -> Workspace:
         return self._client.resume(self.id)

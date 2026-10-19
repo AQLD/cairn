@@ -241,6 +241,29 @@ func init() {
 		Equal(e, "tests pass the next day", res.ExitCode, 0)
 	})
 
+	register("G11.6", func(e *Env) {
+		ws := codingProject(e, "coding-undo")
+		installDeps(e, ws.ID)
+		startDevServer(e, ws.ID)
+		Equal(e, "dev server before the command", fetchDevServer(e, ws.ID), "hello, agent")
+		pid := strings.TrimSpace(e.Read(ws.ID, "server.pid"))
+		before := stepSave(e, ws.ID) // the agent saves before each command
+
+		// a clean-up command that goes too far: the project, its environment
+		// and the dev server are gone
+		e.Sh(ws.ID, "rm -rf .venv app.py test_app.py; kill "+pid+"; true")
+		if _, err := e.C.ReadFile(e.Ctx, ws.ID, "app.py"); err == nil {
+			e.T.Fatal("the destructive command did nothing")
+		}
+
+		e.Resume(before.ID) // one step back
+		Equal(e, "the dev server after rewinding", fetchDevServer(e, ws.ID), "hello, agent")
+		e.Sh(ws.ID, "kill -0 "+pid) // the same process, not a restart
+		res, err := e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{".venv/bin/python", "-m", "unittest", "-q", "test_app"}})
+		e.Must(err)
+		Equal(e, "tests pass after rewinding", res.ExitCode, 0)
+	})
+
 	register("G11.5", func(e *Env) {
 		ws := e.Workspace("coding-fix")
 		e.Write(ws.ID, "calc.py", calcBuggy)

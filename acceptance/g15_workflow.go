@@ -107,6 +107,36 @@ func waitsForFree(e *Env, ws string) *client.Save {
 	return sv
 }
 
+// ordersWorkflow keeps a database connection open, as a long-running workflow
+// does, and answers how many orders it sees whenever count.req appears.
+const ordersWorkflow = `import os, sqlite3, time
+db = sqlite3.connect('orders.db', isolation_level=None)
+db.execute('CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY, total INTEGER)')
+if db.execute('SELECT count(*) FROM orders').fetchone()[0] == 0:
+    db.executemany('INSERT INTO orders (total) VALUES (?)', [(i * 10,) for i in range(1, 101)])
+open('workflow.pid', 'w').write(str(os.getpid()))
+while True:
+    if os.path.exists('count.req'):
+        os.remove('count.req')
+        n, s = db.execute('SELECT count(*), sum(total) FROM orders').fetchone()
+        open('count.tmp', 'w').write('%d %d %d' % (n, s or 0, os.getpid()))
+        os.replace('count.tmp', 'count.out')
+    time.sleep(0.05)
+`
+
+// orders asks the workflow process what it sees in its database.
+func orders(e *Env, ws string) string {
+	e.T.Helper()
+	e.Sh(ws, "rm -f count.out && touch count.req")
+	var out string
+	waitFor(e, "the workflow answers", 20*time.Second, func() bool {
+		b, err := e.C.ReadFile(e.Ctx, ws, "count.out")
+		out = string(b)
+		return err == nil
+	})
+	return out
+}
+
 func readSchedule(e *Env, ws string) schedule {
 	e.T.Helper()
 	var s schedule
@@ -144,6 +174,28 @@ func init() {
 			Equal(e, "one process ran every step", p, pids[0])
 		}
 		Equal(e, "the approved change is applied", e.Read(ws.ID, "applied.txt"), "drop table sessions\n")
+	})
+
+	register("G15.5", func(e *Env) {
+		ws := e.Workspace("bad-change")
+		e.Write(ws.ID, "workflow.py", ordersWorkflow)
+		background(e, ws.ID, "exec python3 workflow.py")
+		good := orders(e, ws.ID)
+		Equal(e, "orders before the change", good, "100 50500 "+strings.TrimSpace(e.Read(ws.ID, "workflow.pid")))
+		before := stepSave(e, ws.ID) // saved before the risky step
+
+		// the bad change: a migration that deletes what it should have archived
+		e.Sh(ws.ID, `python3 -c "
+import sqlite3
+db = sqlite3.connect('orders.db')
+db.execute('DELETE FROM orders WHERE total > 100')
+db.commit()
+"`)
+		Equal(e, "orders after the bad change", orders(e, ws.ID), "10 550 "+strings.TrimSpace(e.Read(ws.ID, "workflow.pid")))
+
+		e.Resume(before.ID)
+		Equal(e, "the same process sees every order again", orders(e, ws.ID), good)
+		Equal(e, "the database is intact", strings.TrimSpace(e.Sh(ws.ID, `python3 -c "import sqlite3; print(sqlite3.connect('orders.db').execute('PRAGMA integrity_check').fetchone()[0])"`)), "ok")
 	})
 
 	register("G15.6", func(e *Env) {
