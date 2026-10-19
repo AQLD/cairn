@@ -286,9 +286,9 @@ var Catalog = []Scenario{
 		Proves:    "A signed-in browser keeps its place through waits for a person, reaches only the task's sites, and leaves a record.",
 		Milestone: E4,
 		Children: []Scenario{
-			{ID: "G13.1", Title: "A signed-in browser stays signed in across pause and resume", Milestone: E3, Uses: []string{"G1.7.4", "G4.2"}},
-			{ID: "G13.2", Title: "Waits for a person's approval or one-time code at no compute cost", Milestone: E3, Uses: []string{"G4.1", "G4.4"}},
-			{ID: "G13.3", Title: "A person sees the page and takes over the session after a pause", Milestone: E3, Uses: []string{"G1.4", "G4.2"}},
+			{ID: "G13.1", Title: "A signed-in browser stays signed in across pause and resume", Proves: "After a full save and resume, the same browser and web app processes keep a sign-in held only in their memory: the account page loads signed in.", Milestone: E3, Needs: []Need{NeedAgentTools, NeedFullSave, NeedPersistent}, Uses: []string{"G1.7.4", "G4.2"}},
+			{ID: "G13.2", Title: "Waits for a person's approval or one-time code at no compute cost", Proves: "A browser waiting for a one-time code is saved with no sandbox left running; after resume the code sent before the pause signs it in.", Milestone: E3, Needs: []Need{NeedAgentTools, NeedFullSave, NeedPersistent}, Uses: []string{"G4.1", "G4.4"}},
+			{ID: "G13.3", Title: "A person sees the page and takes over the session after a pause", Proves: "After a resume, a person downloads a screenshot of the agent's page and, over their own connection to the browser, acts in the agent's signed-in session.", Milestone: E3, Needs: []Need{NeedAgentTools, NeedFullSave, NeedPersistent}, Uses: []string{"G1.4", "G4.2"}},
 			{ID: "G13.4", Title: "The browser reaches only the task's sites", Milestone: E4, Uses: []string{"G5.4"}},
 			{ID: "G13.5", Title: "Every action is on record", Milestone: E4, Uses: []string{"G5.8", "G10.4.2"}},
 			{ID: "G13.6", Title: "A person watches the browser live", Milestone: Later, Uses: []string{"G19.4"}},
@@ -301,7 +301,7 @@ var Catalog = []Scenario{
 		Children: []Scenario{
 			{ID: "G14.1", Title: "Each question starts from a warm save with its tools loaded", Proves: "Copies of a full save answer with the tool process loaded before the save, without loading again, and no copy sees another's questions.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}, Uses: []string{"G2.1", "G9.5"}},
 			{ID: "G14.2", Title: "Fetches only from allowed sources", Milestone: E4, Uses: []string{"G5.4"}},
-			{ID: "G14.3", Title: "Reads documents with installed tools (PDF, office files)", Milestone: E3, Uses: []string{"G1.2", "G1.10"}},
+			{ID: "G14.3", Title: "Reads documents with installed tools (PDF, office files)", Proves: "A PDF and a Word file written into a workspace from the team's template come out as their exact text through the template's tools.", Milestone: E3, Needs: []Need{NeedAgentTools}, Uses: []string{"G1.2", "G1.10"}},
 			{ID: "G14.4", Title: "A hundred questions run side by side on one server", Milestone: E4, Uses: []string{"G2.4", "G9.7"}},
 			{ID: "G14.5", Title: "Finished questions leave nothing behind", Proves: "After questions answered in copies of a warm save and deleted, the host and the engine's data hold what they held before: no folders, bytes, sandboxes or other host resources left over.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent, NeedInProcess}, Uses: []string{"G10.7"}},
 		},

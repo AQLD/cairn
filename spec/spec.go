@@ -50,6 +50,7 @@ const (
 	NeedMultiServer   Need = "multi_server"   // more than one engine server
 	NeedRealAgent     Need = "real_agent"     // a real coding agent driving the engine
 	NeedPython        Need = "python"         // python3, for the Python SDK's tests
+	NeedAgentTools    Need = "agent_tools"    // a template with a browser and document tools (CAIRN_TEST_AGENT_TOOLS)
 )
 
 // Scenario is one end-goal test or a piece of one.

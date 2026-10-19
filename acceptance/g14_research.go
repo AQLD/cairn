@@ -1,10 +1,13 @@
 package acceptance
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/AQLD/cairn/client"
@@ -138,7 +141,87 @@ func dataFootprint(e *Env) (dirs int, bytes int64) {
 	return dirs, bytes
 }
 
+// pdfWith is a one-page PDF with a line of text per entry.
+func pdfWith(lines ...string) []byte {
+	var text strings.Builder
+	text.WriteString("BT /F1 14 Tf 18 TL 72 720 Td")
+	for i, l := range lines {
+		if i > 0 {
+			text.WriteString(" T*")
+		}
+		fmt.Fprintf(&text, " (%s) Tj", l)
+	}
+	text.WriteString(" ET")
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", text.Len(), text.String()),
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+	}
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objects))
+	for i, o := range objects {
+		offsets[i] = b.Len()
+		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", i+1, o)
+	}
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(objects)+1)
+	for _, off := range offsets {
+		fmt.Fprintf(&b, "%010d 00000 n \n", off)
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objects)+1, xref)
+	return b.Bytes()
+}
+
+// docxWith is a Word document with a paragraph per entry.
+func docxWith(paragraphs ...string) []byte {
+	var body strings.Builder
+	for _, p := range paragraphs {
+		// paragraphs as Word writes them, with revision IDs
+		fmt.Fprintf(&body, `<w:p w:rsidR="00A1" w:rsidRDefault="00A1"><w:r><w:t>%s</w:t></w:r></w:p>`, p)
+	}
+	files := []struct{ name, data string }{
+		{"[Content_Types].xml", `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`},
+		{"_rels/.rels", `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`},
+		{"word/document.xml", `<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>` + body.String() + `</w:body></w:document>`},
+	}
+	var b bytes.Buffer
+	z := zip.NewWriter(&b)
+	for _, f := range files {
+		w, _ := z.Create(f.name)
+		_, _ = w.Write([]byte(f.data))
+	}
+	_ = z.Close()
+	return b.Bytes()
+}
+
 func init() {
+	register("G14.3", func(e *Env) {
+		ws := toolsWorkspace(e, "research-documents")
+		report := []string{"Quarterly revenue rose 12 percent", "Churn fell to 3 percent in the north region"}
+		memo := []string{"The board approved the new pricing on 14 March", "Next review in June"}
+		e.Must(e.C.WriteFile(e.Ctx, ws.ID, "root/docs/report.pdf", pdfWith(report...)))
+		e.Must(e.C.WriteFile(e.Ctx, ws.ID, "root/docs/memo.docx", docxWith(memo...)))
+		for name, out := range map[string]string{
+			"the PDF":       e.Sh(ws.ID, "pdftotext -layout /root/docs/report.pdf -"),
+			"the Word file": e.Sh(ws.ID, "docx2txt /root/docs/memo.docx -"),
+		} {
+			want := report
+			if name == "the Word file" {
+				want = memo
+			}
+			var got []string
+			for _, l := range strings.Split(out, "\n") {
+				if l = strings.TrimSpace(strings.Trim(l, "\f")); l != "" {
+					got = append(got, l)
+				}
+			}
+			Equal(e, "text of "+name, strings.Join(got, " | "), strings.Join(want, " | "))
+		}
+	})
+
 	register("G14.1", func(e *Env) {
 		warm, tool := warmResearch(e)
 		copies, err := e.C.Copy(e.Ctx, warm.ID, 4)

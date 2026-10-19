@@ -4,6 +4,8 @@
 #   base.tar              python:3.12-slim, every workspace's default template
 #   golden/<name>.tar     the E0 spike's workloads (G1.7); rebuilt when
 #                         spike/workloads/<name> changes. CAIRN_GOLDEN=0 skips them.
+#   agent-tools.tar       browser and document tools (G13, G14), from
+#                         acceptance/testdata/agent-tools. CAIRN_AGENT_TOOLS=0 skips it.
 # Usage: accept-runsc.sh REPO_DIR [go test args...]
 set -euo pipefail
 repo=$1; shift
@@ -31,6 +33,18 @@ if [[ ${CAIRN_GOLDEN:-1} != 0 ]]; then
     fi
   done
   export CAIRN_TEST_GOLDEN=$cache/golden
+fi
+
+if [[ ${CAIRN_AGENT_TOOLS:-1} != 0 ]]; then
+  dir=$repo/acceptance/testdata/agent-tools
+  sum=$(cd "$dir" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)
+  if [[ $(cat "$cache/agent-tools.sum" 2>/dev/null) != "$sum" || ! -s $cache/agent-tools.tar ]]; then
+    echo "[accept-runsc] building agent-tools" >&2
+    docker build -q -t cairn-test/agent-tools "$dir" >/dev/null
+    export_image cairn-test/agent-tools "$cache/agent-tools.tar"
+    echo "$sum" > "$cache/agent-tools.sum"
+  fi
+  export CAIRN_TEST_AGENT_TOOLS=$cache/agent-tools.tar
 fi
 
 export PATH=$PATH:/usr/local/go/bin GOFLAGS=-buildvcs=false GOCACHE=$cache/gocache GOMODCACHE=$cache/gomod

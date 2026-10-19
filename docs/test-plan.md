@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 54 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 29 | 25 | 2 |
+| E3 | 33 | 21 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -24,8 +24,8 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 | --- | --- | --- | --- | --- |
 | [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 6 of 9 | 6 of 9 | 5 |
 | [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 3 of 6 | 3 of 6 | 3 |
-| [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 0 of 6 | 3 of 6 | 3 |
-| [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 2 of 5 | 4 of 5 | 1 |
+| [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 3 of 6 | 3 of 6 | 3 |
+| [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 3 of 5 | 4 of 5 | 1 |
 | [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 2 of 6 | 2 of 6 | 5 |
 | [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 0 of 6 | 2 of 6 | 5 |
 | [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 2 of 6 | 3 of 6 | 3 |
@@ -60,9 +60,9 @@ Data goes in, analysis runs in a live session that lasts for days, results come 
 
 A signed-in browser keeps its place through waits for a person, reaches only the task's sites, and leaves a record. Gate: **E4**.
 
-- ⏳ **G13.1** A signed-in browser stays signed in across pause and resume · E3 · uses G1.7.4 ✅, G4.2 ✅
-- ⏳ **G13.2** Waits for a person's approval or one-time code at no compute cost · E3 · uses G4.1 ✅, G4.4 ✅
-- ⏳ **G13.3** A person sees the page and takes over the session after a pause · E3 · uses G1.4 ✅, G4.2 ✅
+- ✅ **G13.1** A signed-in browser stays signed in across pause and resume · E3 · needs agent_tools, full_save, persistent_processes · uses G1.7.4 ✅, G4.2 ✅
+- ✅ **G13.2** Waits for a person's approval or one-time code at no compute cost · E3 · needs agent_tools, full_save, persistent_processes · uses G4.1 ✅, G4.4 ✅
+- ✅ **G13.3** A person sees the page and takes over the session after a pause · E3 · needs agent_tools, full_save, persistent_processes · uses G1.4 ✅, G4.2 ✅
 - ⏳ **G13.4** The browser reaches only the task's sites · E4 · uses G5.4 ⏳
 - ⏳ **G13.5** Every action is on record · E4 · uses G5.8 ⏳, G10.4.2 ✅
 - ⏳ **G13.6** A person watches the browser live · later · uses G19.4 ⏳
@@ -73,7 +73,7 @@ Many short tasks start warm with their tools loaded, use only approved sources, 
 
 - ✅ **G14.1** Each question starts from a warm save with its tools loaded · E3 · needs full_save, persistent_processes · uses G2.1 ✅, G9.5 ✅
 - ⏳ **G14.2** Fetches only from allowed sources · E4 · uses G5.4 ⏳
-- ⏳ **G14.3** Reads documents with installed tools (PDF, office files) · E3 · uses G1.2 ✅, G1.10 ✅
+- ✅ **G14.3** Reads documents with installed tools (PDF, office files) · E3 · needs agent_tools · uses G1.2 ✅, G1.10 ✅
 - ⏳ **G14.4** A hundred questions run side by side on one server · E4 · uses G2.4 ✅, G9.7 ✅
 - ✅ **G14.5** Finished questions leave nothing behind · E3 · needs full_save, persistent_processes, in_process · uses G10.7 ✅
 
