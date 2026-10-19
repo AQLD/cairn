@@ -86,6 +86,30 @@ func installDeps(e *Env, ws string) {
 	e.Sh(ws, "python3 -m venv .venv && .venv/bin/pip install -q --disable-pip-version-check --no-index --find-links wheelhouse -r requirements.txt")
 }
 
+// startDevServer starts app.py on port 8000 in the background (pid in
+// server.pid).
+func startDevServer(e *Env, ws string) {
+	e.T.Helper()
+	e.Sh(ws, "nohup .venv/bin/python app.py 8000 > server.log 2>&1 & echo $! > server.pid")
+}
+
+// fetchDevServer GETs the dev server from inside the workspace, waiting up to
+// 10 s for it to listen.
+func fetchDevServer(e *Env, ws string) string {
+	e.T.Helper()
+	fetch := "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000', timeout=5).read().decode())"
+	var body string
+	var err error
+	for i := 0; i < 100; i++ {
+		if body, err = venvPython(e, ws, fetch); err == nil {
+			return strings.TrimSpace(body)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	e.T.Fatalf("dev server never answered: %v\nserver.log: %s", err, e.Read(ws, "server.log"))
+	return ""
+}
+
 // venvPython is a one-line Python program run with the project's interpreter.
 func venvPython(e *Env, ws, program string) (string, error) {
 	return e.C.Run(e.Ctx, ws, ".venv/bin/python", "-c", program)
@@ -182,28 +206,39 @@ func init() {
 	register("G11.3.3", func(e *Env) {
 		ws := codingProject(e, "coding-devserver")
 		installDeps(e, ws.ID)
-		e.Sh(ws.ID, "nohup .venv/bin/python app.py 8000 > server.log 2>&1 & echo $! > server.pid")
-		fetch := "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000', timeout=5).read().decode())"
-		var body string
-		var err error
-		for i := 0; i < 100; i++ { // the server takes a moment to start listening
-			if body, err = venvPython(e, ws.ID, fetch); err == nil {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-		if err != nil {
-			e.T.Fatalf("dev server never answered: %v\nserver.log: %s", err, e.Read(ws.ID, "server.log"))
-		}
-		Equal(e, "dev server response", strings.TrimSpace(body), "hello, agent")
+		startDevServer(e, ws.ID)
+		Equal(e, "dev server response", fetchDevServer(e, ws.ID), "hello, agent")
 
 		// the agent does other work in between; the server is still there
 		e.Sh(ws.ID, "ls > /dev/null")
 		time.Sleep(time.Second)
-		body, err = venvPython(e, ws.ID, fetch)
-		e.Must(err)
-		Equal(e, "dev server still serving", strings.TrimSpace(body), "hello, agent")
+		Equal(e, "dev server still serving", fetchDevServer(e, ws.ID), "hello, agent")
 		e.Sh(ws.ID, "kill -0 $(cat server.pid)")
+	})
+
+	register("G11.4", func(e *Env) {
+		ws := codingProject(e, "coding-overnight")
+		installDeps(e, ws.ID)
+		startDevServer(e, ws.ID)
+		Equal(e, "dev server before the night", fetchDevServer(e, ws.ID), "hello, agent")
+		pid := strings.TrimSpace(e.Read(ws.ID, "server.pid"))
+
+		// end of the day: a full save stops the workspace, so it holds no CPU or memory
+		sv, err := e.C.Save(e.Ctx, ws.ID, client.FullSave)
+		e.Must(err)
+		w, err := e.C.GetWorkspace(e.Ctx, ws.ID)
+		e.Must(err)
+		Equal(e, "workspace overnight", w.State, "stopped")
+		time.Sleep(pauseFor())
+
+		// next day: the same server answers, nothing was restarted or reinstalled
+		_, err = e.C.Resume(e.Ctx, sv.ID)
+		e.Must(err)
+		Equal(e, "dev server the next day", fetchDevServer(e, ws.ID), "hello, agent")
+		e.Sh(ws.ID, "kill -0 "+pid)
+		res, err := e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{".venv/bin/python", "-m", "unittest", "-q", "test_app"}})
+		e.Must(err)
+		Equal(e, "tests pass the next day", res.ExitCode, 0)
 	})
 
 	register("G11.5", func(e *Env) {
