@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/AQLD/cairn/client"
 )
 
 // G12: a data agent's own workflow, driven only through the public client:
@@ -81,6 +83,34 @@ for name in ('summary.csv', 'chart.png', 'model.bin'):
 		if !strings.HasPrefix(string(png), "\x89PNG\r\n\x1a\n") {
 			e.T.Fatal("the chart is not a PNG")
 		}
+	})
+
+	// G12.5: the session (a long-lived kernel holding the agent's state) and
+	// its files outlive a query that asks for more memory than the workspace has.
+	register("G12.5", func(e *Env) {
+		ws, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "data-oom", Limits: client.Limits{MemoryMB: 256}})
+		e.Must(err)
+		e.Sh(ws.ID, `mkdir -p data out && seq 1 200000 > data/rows.csv && echo "region,total" > out/summary.csv`)
+		sums := e.Sh(ws.ID, "sha256sum data/rows.csv out/summary.csv")
+		background(e, ws.ID, counterProgram) // the session
+		session := running(e, ws.ID)
+
+		res, err := e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"python3", "-c", `
+rows = open('data/rows.csv').read().split()
+joined = []
+while True:
+    joined.append(bytearray(32 << 20))  # a cross join that never fits
+`}, TimeoutMS: 60_000})
+		e.Must(err)
+		if res.ExitCode == 0 || res.TimedOut {
+			e.T.Fatalf("the query should have been stopped for memory: exit %d, timed out %v", res.ExitCode, res.TimedOut)
+		}
+		if !strings.Contains(res.Stderr, "out of memory") {
+			e.T.Fatalf("the query's error does not say it ran out of memory: %q", tail(res.Stderr, 300))
+		}
+		Equal(e, "the session's files", e.Sh(ws.ID, "sha256sum data/rows.csv out/summary.csv"), sums)
+		Equal(e, "the same session carries on", running(e, ws.ID).PID, session.PID)
+		Equal(e, "a smaller query then works", strings.TrimSpace(e.Sh(ws.ID, `python3 -c "print(sum(int(x) for x in open('data/rows.csv')))"`)), "20000100000")
 	})
 }
 
