@@ -367,7 +367,11 @@ var Catalog = []Scenario{
 			{ID: "G19.2", Title: "A session survives pause and resume", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}},
 			{ID: "G19.3", Title: "A person can open an interactive terminal in a running workspace", Milestone: E4},
 			{ID: "G19.4", Title: "A port inside the workspace opens to a person through a preview link", Milestone: Later, Needs: []Need{NeedNetworkControl}},
-			{ID: "G19.5", Title: "Files of several gigabytes move in and out as streams", Milestone: E3},
+			{ID: "G19.5", Title: "Files of several gigabytes move in and out as streams", Milestone: E3,
+				Children: []Scenario{
+					{ID: "G19.5.1", Title: "A file of several gigabytes goes in and comes out byte for byte", Proves: "Uploads and downloads are streamed both ways, never held in memory, past the old 1 GiB cap (CAIRN_BIGFILE_MB to choose the size).", Milestone: E3},
+					{ID: "G19.5.2", Title: "An upload that would use up the engine's headroom is refused and leaves nothing behind", Proves: "A workspace without its own disk cannot fill the volume the engine needs for saves and state.", Milestone: E3, Needs: []Need{NeedInProcess}},
+				}},
 			{ID: "G19.6", Title: "Clients hear when a workspace pauses, wakes, hits a limit or finishes a command", Milestone: E4},
 		},
 	},

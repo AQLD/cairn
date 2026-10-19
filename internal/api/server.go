@@ -36,6 +36,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -49,8 +50,10 @@ import (
 )
 
 const (
-	maxJSONBody      = 1 << 20 // 1 MiB
-	maxFileBytes     = 1 << 30 // 1 GiB per upload
+	maxJSONBody = 1 << 20 // 1 MiB
+	// An upload is streamed to disk, never held in memory; what really bounds it
+	// is the workspace's disk (or the engine's free space for a plain folder).
+	maxFileBytes     = 64 << 30
 	maxTemplateBytes = 8 << 30 // 8 GiB per template
 )
 
@@ -381,7 +384,11 @@ func (s *Server) decode(w http.ResponseWriter, r *http.Request, v any) bool {
 
 // fail maps engine errors to HTTP statuses and stable error codes.
 func (s *Server) fail(w http.ResponseWriter, err error) {
+	var tooBig *http.MaxBytesError
 	switch {
+	case errors.As(err, &tooBig):
+		// the request body passed its cap: the caller's mistake, not the engine's
+		writeError(w, http.StatusRequestEntityTooLarge, "invalid_argument", fmt.Sprintf("request body larger than %d bytes", tooBig.Limit))
 	case errors.Is(err, engine.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, engine.ErrInvalid):

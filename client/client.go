@@ -325,6 +325,19 @@ func (c *Client) WriteFile(ctx context.Context, id, path string, content []byte)
 	return c.doRaw(ctx, http.MethodPut, "/v1/workspaces/"+url.PathEscape(id)+"/files?"+q.Encode(), bytes.NewReader(content), nil)
 }
 
+// WriteFileFrom streams r into a file in the workspace, for files too big to
+// hold in memory.
+func (c *Client) WriteFileFrom(ctx context.Context, id, path string, r io.Reader) error {
+	q := url.Values{"path": {path}}
+	return c.doRaw(ctx, http.MethodPut, "/v1/workspaces/"+url.PathEscape(id)+"/files?"+q.Encode(), r, nil)
+}
+
+// ReadFileTo streams a file out of the workspace into w.
+func (c *Client) ReadFileTo(ctx context.Context, id, path string, w io.Writer) error {
+	q := url.Values{"path": {path}}
+	return c.doRaw(ctx, http.MethodGet, "/v1/workspaces/"+url.PathEscape(id)+"/files?"+q.Encode(), nil, w)
+}
+
 func (c *Client) ReadFile(ctx context.Context, id, path string) ([]byte, error) {
 	q := url.Values{"path": {path}}
 	var buf bytes.Buffer
