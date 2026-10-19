@@ -273,12 +273,12 @@ var Catalog = []Scenario{
 		Proves:    "Data goes in, analysis runs in a live session that lasts for days, results come out, and nothing leaves the network.",
 		Milestone: E4,
 		Children: []Scenario{
-			{ID: "G12.1", Title: "Loads a dataset of several gigabytes", Milestone: E3, Uses: []string{"G19.5", "G3.2.3"}},
+			{ID: "G12.1", Title: "Loads a dataset of several gigabytes", Proves: "A dataset streamed in from outside is analysed in the workspace, and the answer matches the data exactly.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G19.5", "G3.2.3"}},
 			{ID: "G12.2", Title: "Keeps a live Python session between questions", Milestone: E3, Uses: []string{"G19.1"}},
 			{ID: "G12.3", Title: "Comes back a week later to the same session with its data still loaded", Milestone: E3, Uses: []string{"G19.2", "G1.8.1", "G4.2"}},
 			{ID: "G12.4", Title: "Data cannot leave: the network is off or allow-listed", Milestone: E4, Uses: []string{"G5.3", "G5.4", "G8.6"}},
 			{ID: "G12.5", Title: "A query that runs out of memory loses the query, not the session's files", Milestone: E3, Uses: []string{"G3.2.4", "G3.2.5"}},
-			{ID: "G12.6", Title: "Charts and result files come back out", Milestone: E3, Uses: []string{"G1.4", "G19.5"}},
+			{ID: "G12.6", Title: "Charts and result files come back out", Proves: "Result files the analysis writes, text and binary, download byte for byte.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G1.4", "G19.5"}},
 		},
 	},
 	{
