@@ -124,6 +124,7 @@ type Workspace struct {
 	Network    bool      `json:"network"`
 	Template   string    `json:"template,omitempty"`
 	SourceSave string    `json:"source_save,omitempty"`
+	BaseSave   string    `json:"base_save,omitempty"` // the save its state comes from: last saved, resumed or copied
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
@@ -146,6 +147,9 @@ type Save struct {
 	PurgeAfter  *time.Time `json:"purge_after,omitempty"` // a deleted save can be undeleted until then
 	Auto        bool       `json:"auto,omitempty"`        // made by the engine to pause the workspace
 	Uploaded    bool       `json:"uploaded,omitempty"`    // a copy is in object storage
+	// Parent is the save the workspace's state came from when this one was
+	// made: a workspace's saves form a tree, and rewinding then saving branches.
+	Parent string `json:"parent,omitempty"`
 }
 
 type Exec struct {

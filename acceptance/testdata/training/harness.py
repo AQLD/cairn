@@ -1,7 +1,7 @@
 """A training harness driving Cairn through the Python SDK, as a reinforcement
 learning or evaluation run would. Run by the acceptance suite (G17):
 
-    python3 harness.py copy-live-setup | reset-between-episodes
+    python3 harness.py copy-live-setup | reset-between-episodes | branch-from-step
 
 Exits non-zero, with the reason on stderr, if the environment misbehaves.
 Prints one JSON line of measurements on success.
@@ -118,6 +118,54 @@ def reset_between_episodes():
     return {"episodes": len(resets), "reset_max_s": round(max(resets), 3)}
 
 
+def branch_from_step():
+    """G17.3: a rollout branches from any earlier step. The environment server
+    is full-saved after every step; copies of step 2's save play other
+    continuations while the original rollout goes on."""
+    ws, _ = new_env("train-branch")
+    world = json.loads(ws.read_file("world.json"))
+    ws.exec("nohup python3 env.py serve %d > serve.log 2>&1 &" % PORT)
+    first = wait_for_server(ws)
+
+    def expected(actions):
+        pos = 0
+        for a in actions:
+            nxt = max(0, min(world["size"] - 1, pos + a))
+            if nxt not in world["walls"]:
+                pos = nxt
+        return pos
+
+    rollout, saves = [2, 2, 1, 2, 2], []
+    for a in rollout:
+        get(ws, "/step?action=%d" % a)
+        save = ws.save("full")
+        save.resume()
+        saves.append(save)
+    for k in range(1, len(saves)):
+        check(client.get_save(saves[k].id).parent == saves[k - 1].id,
+              f"step {k + 1}'s save does not record step {k}'s as its parent")
+
+    branches = {"left": [1, 1, 1], "right": [3, 3]}
+    copies = saves[1].copy(len(branches))  # back to step 2
+    for (name, cont), env in zip(branches.items(), copies):
+        st = get(env, "/state")
+        check(st["pid"] == first["pid"], f"branch {name}: server pid {st['pid']}, want {first['pid']}")
+        check(st["steps"] == 2 and st["pos"] == expected(rollout[:2]), f"branch {name} does not start at step 2: {st}")
+        for a in cont:
+            get(env, "/step?action=%d" % a)
+        st = get(env, "/state")
+        want = expected(rollout[:2] + cont)
+        check(st["steps"] == 2 + len(cont) and st["pos"] == want, f"branch {name}: {st}, want pos {want}")
+    st = get(ws, "/state")
+    check(st["steps"] == len(rollout) and st["pos"] == expected(rollout), f"the original rollout changed: {st}")
+
+    for env in copies:
+        env.delete()
+    ws.delete()
+    return {"steps": len(saves), "branches": len(copies)}
+
+
 if __name__ == "__main__":
-    scenario = {"copy-live-setup": copy_live_setup, "reset-between-episodes": reset_between_episodes}[sys.argv[1]]
+    scenario = {"copy-live-setup": copy_live_setup, "reset-between-episodes": reset_between_episodes,
+                "branch-from-step": branch_from_step}[sys.argv[1]]
     print(json.dumps(scenario()))

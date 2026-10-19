@@ -37,4 +37,5 @@ func harness(e *Env, scenario string) {
 func init() {
 	register("G17.1", func(e *Env) { harness(e, "copy-live-setup") })
 	register("G17.2", func(e *Env) { harness(e, "reset-between-episodes") })
+	register("G17.3", func(e *Env) { harness(e, "branch-from-step") })
 }

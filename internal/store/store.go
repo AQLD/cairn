@@ -49,6 +49,7 @@ type Workspace struct {
 	Spec       json.RawMessage `json:"spec"`                  // limits, network, template
 	SourceSave string          `json:"source_save,omitempty"` // set for copies
 	PausedSave string          `json:"-"`                     // the save a paused workspace wakes from
+	BaseSave   string          `json:"base_save,omitempty"`   // the save its state comes from: last saved, resumed or copied
 	RequestKey string          `json:"-"`                     // caller's idempotency key, if any
 	CreatedAt  time.Time       `json:"created_at"`
 	UpdatedAt  time.Time       `json:"updated_at"`
@@ -75,6 +76,7 @@ type Save struct {
 	RequestKey  string    `json:"-"`          // caller's idempotency key, if any
 	Auto        bool      `json:"auto"`       // made by the engine (pausing), not by a caller
 	Uploaded    bool      `json:"uploaded"`   // a complete copy is in object storage
+	Parent      string    `json:"parent"`     // the save the workspace's state came from when this one was made
 }
 
 type Store struct{ db *sql.DB }
@@ -128,11 +130,18 @@ ALTER TABLE saves ADD COLUMN auto INTEGER NOT NULL DEFAULT 0;
 	`
 ALTER TABLE saves ADD COLUMN uploaded INTEGER NOT NULL DEFAULT 0;
 `,
+	// 6: history: each save records the save its workspace's state came from,
+	// so a workspace's saves form a tree (rewinding and saving again branches)
+	`
+ALTER TABLE workspaces ADD COLUMN base_save TEXT NOT NULL DEFAULT '';
+ALTER TABLE saves ADD COLUMN parent TEXT NOT NULL DEFAULT '';
+UPDATE workspaces SET base_save = source_save;
+`,
 }
 
 const (
-	workspaceCols = `id, name, state, spec, source_save, paused_save, created_at, updated_at`
-	saveCols      = `id, workspace_id, kind, state, size, created_at, deleted_at, auto, uploaded`
+	workspaceCols = `id, name, state, spec, source_save, paused_save, base_save, created_at, updated_at`
+	saveCols      = `id, workspace_id, kind, state, size, created_at, deleted_at, auto, uploaded, parent`
 )
 
 // SchemaVersion is the schema this engine writes.
@@ -267,8 +276,8 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) CreateWorkspace(ctx context.Context, w Workspace) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO workspaces (id, name, state, spec, source_save, created_at, updated_at, request_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		w.ID, w.Name, w.State, string(w.Spec), w.SourceSave, w.CreatedAt.UnixNano(), w.UpdatedAt.UnixNano(), nullable(w.RequestKey))
+		`INSERT INTO workspaces (id, name, state, spec, source_save, base_save, created_at, updated_at, request_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		w.ID, w.Name, w.State, string(w.Spec), w.SourceSave, w.BaseSave, w.CreatedAt.UnixNano(), w.UpdatedAt.UnixNano(), nullable(w.RequestKey))
 	return duplicate(err)
 }
 
@@ -426,8 +435,8 @@ func (s *Store) queryWorkspaces(ctx context.Context, q string, args ...any) ([]W
 
 func (s *Store) CreateSave(ctx context.Context, sv Save) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO saves (id, workspace_id, kind, state, size, created_at, request_key, auto, uploaded) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sv.ID, sv.WorkspaceID, sv.Kind, sv.State, sv.Size, sv.CreatedAt.UnixNano(), nullable(sv.RequestKey), sv.Auto, sv.Uploaded)
+		`INSERT INTO saves (id, workspace_id, kind, state, size, created_at, request_key, auto, uploaded, parent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		sv.ID, sv.WorkspaceID, sv.Kind, sv.State, sv.Size, sv.CreatedAt.UnixNano(), nullable(sv.RequestKey), sv.Auto, sv.Uploaded, sv.Parent)
 	return duplicate(err)
 }
 
@@ -468,6 +477,12 @@ func (s *Store) SoftDeleteSave(ctx context.Context, id string, t time.Time) erro
 // RestoreSave brings a deleted save back to ready.
 func (s *Store) RestoreSave(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE saves SET state = ?, deleted_at = 0 WHERE id = ?`, SaveReady, id)
+	return err
+}
+
+// SetBaseSave records the save a workspace's state now comes from.
+func (s *Store) SetBaseSave(ctx context.Context, workspaceID, saveID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE workspaces SET base_save = ? WHERE id = ?`, saveID, workspaceID)
 	return err
 }
 
@@ -521,7 +536,7 @@ func scanWorkspace(r scanner) (*Workspace, error) {
 	var w Workspace
 	var spec string
 	var created, updated int64
-	if err := r.Scan(&w.ID, &w.Name, &w.State, &spec, &w.SourceSave, &w.PausedSave, &created, &updated); err != nil {
+	if err := r.Scan(&w.ID, &w.Name, &w.State, &spec, &w.SourceSave, &w.PausedSave, &w.BaseSave, &created, &updated); err != nil {
 		return nil, err
 	}
 	w.Spec = json.RawMessage(spec)
@@ -533,7 +548,7 @@ func scanWorkspace(r scanner) (*Workspace, error) {
 func scanSave(r scanner) (*Save, error) {
 	var sv Save
 	var created, deleted int64
-	if err := r.Scan(&sv.ID, &sv.WorkspaceID, &sv.Kind, &sv.State, &sv.Size, &created, &deleted, &sv.Auto, &sv.Uploaded); err != nil {
+	if err := r.Scan(&sv.ID, &sv.WorkspaceID, &sv.Kind, &sv.State, &sv.Size, &created, &deleted, &sv.Auto, &sv.Uploaded, &sv.Parent); err != nil {
 		return nil, err
 	}
 	sv.CreatedAt = time.Unix(0, created).UTC()

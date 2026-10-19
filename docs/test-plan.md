@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 54 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 40 | 17 | 2 |
+| E3 | 46 | 11 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -22,13 +22,13 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 
 | Journey | For | Steps proven | Steps unblocked | Capability scenarios still pending |
 | --- | --- | --- | --- | --- |
-| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 6 of 9 | 6 of 9 | 5 |
+| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 7 of 9 | 7 of 9 | 4 |
 | [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 5 of 6 | 5 of 6 | 1 |
 | [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 3 of 6 | 3 of 6 | 3 |
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 3 of 5 | 4 of 5 | 1 |
-| [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 2 of 6 | 2 of 6 | 5 |
+| [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 3 of 6 | 3 of 6 | 4 |
 | [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 0 of 6 | 2 of 6 | 5 |
-| [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 2 of 6 | 3 of 6 | 3 |
+| [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 3 of 6 | 4 of 6 | 2 |
 
 ## G11 A coding agent ships a change over several days
 
@@ -42,7 +42,7 @@ An agent sets up a repository, works on it across days, tries fixes in parallel 
   - ✅ **G11.3.3** A dev server keeps serving between the agent's commands · E3 · needs python, persistent_processes · uses G1.5 ✅
 - ✅ **G11.4** Stops for the night at no compute cost and carries on next day with the dev server running · E3 · needs python, full_save, persistent_processes · uses G4.1 ✅, G4.2 ✅, G1.8.1 ✅, G1.8.2 ✅
 - ✅ **G11.5** Tries three fixes in parallel and keeps the one whose tests pass · E3 · needs python · uses G2.1 ✅, G2.2 ✅, G2.7 ✅
-- ⏳ **G11.6** Undoes a destructive command by rewinding one step · E3 · uses G18.3 ⏳
+- ✅ **G11.6** Undoes a destructive command by rewinding one step · E3 · needs python, full_save, persistent_processes · uses G18.3 ✅
 - ⏳ **G11.7** A person reviews what changed and takes over · E4 · uses G1.4 ✅, G18.4 ⏳, G19.3 ⏳
 
 ## G12 A data agent analyses private data across sessions
@@ -85,7 +85,7 @@ An agent acts on internal systems with credentials it cannot leak, waits for app
 - ⏳ **G15.2** Reaches only the internal hosts it is allowed · E4 · uses G5.4 ⏳, G8.6 ✅
 - ✅ **G15.3** Waits for approval before a risky step at no compute cost · E3 · needs full_save, persistent_processes · uses G4.1 ✅, G4.2 ✅
 - ⏳ **G15.4** Every command is recorded with the key that ran it · E4 · uses G5.7 ⏳, G5.8 ⏳
-- ⏳ **G15.5** A bad change inside the workspace is undone by rewinding · E3 · uses G18.3 ⏳
+- ✅ **G15.5** A bad change inside the workspace is undone by rewinding · E3 · needs full_save, persistent_processes · uses G18.3 ✅
 - ✅ **G15.6** A scheduled agent carries on from yesterday's state · E3 · needs full_save, persistent_processes · uses G1.3 ✅, G4.2 ✅, G1.8.1 ✅, G1.8.2 ✅
 
 ## G16 Every user of a product gets an agent computer that is always there
@@ -105,7 +105,7 @@ Expensive setup runs once; environments copy from its live state, reset between 
 
 - ✅ **G17.1** Setup runs once and environments copy from its live state · E3 · needs python, full_save, persistent_processes · uses G2.1 ✅, G2.6 ✅, G9.5 ✅
 - ✅ **G17.2** An environment resets to its start between episodes · E3 · needs python · uses G1.3 ✅, G9.4 ✅
-- ⏳ **G17.3** A rollout branches from any earlier step · E3 · uses G18.6 ⏳
+- ✅ **G17.3** A rollout branches from any earlier step · E3 · needs python, full_save, persistent_processes · uses G18.2 ✅, G18.6 ✅
 - ⏳ **G17.4** Copies keep or refresh their randomness, as the experiment needs · E3 · uses G2.6 ✅, G2.8 ⏳
 - ⏳ **G17.5** Thousands of environments run across servers · E5 · uses G7.8 ⏳
 - 📏 **G17.6** The cost of a thousand rollouts from a warm save is measured · E3 · `BenchmarkRollouts` · uses G9.5 ✅
@@ -310,11 +310,11 @@ An operator can install, observe and upgrade Cairn without surprises. Gate: **E4
 An agent's computer keeps a tree of its past states, cheap enough to checkpoint every step, to rewind, compare or branch from. Gate: **E3**.
 
 - 📏 **G18.1** A checkpoint after a small step stores only what changed · E3 · `BenchmarkStepCheckpoint`
-- ⏳ **G18.2** Every save records the save it came from · E3
-- ⏳ **G18.3** Rewinding returns the workspace to an earlier step, running processes included · E3 · needs full_save, persistent_processes
+- ✅ **G18.2** Every save records the save it came from · E3
+- ✅ **G18.3** Rewinding returns the workspace to an earlier step, running processes included · E3 · needs full_save, persistent_processes
 - ⏳ **G18.4** The files changed between two saves can be listed · E3
 - ⏳ **G18.5** Old steps are pruned by policy while pinned steps are kept · E3
-- ⏳ **G18.6** A copy can start from any earlier step · E3
+- ✅ **G18.6** A copy can start from any earlier step · E3
 
 ## G19 Agents and people share the computer
 
