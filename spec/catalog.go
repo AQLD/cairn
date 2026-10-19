@@ -277,7 +277,7 @@ var Catalog = []Scenario{
 			{ID: "G12.2", Title: "Keeps a live Python session between questions", Milestone: E3, Uses: []string{"G19.1"}},
 			{ID: "G12.3", Title: "Comes back a week later to the same session with its data still loaded", Milestone: E3, Uses: []string{"G19.2", "G1.8.1", "G4.2"}},
 			{ID: "G12.4", Title: "Data cannot leave: the network is off or allow-listed", Milestone: E4, Uses: []string{"G5.3", "G5.4", "G8.6"}},
-			{ID: "G12.5", Title: "A query that runs out of memory loses the query, not the session's files", Milestone: E3, Uses: []string{"G3.2.4", "G3.2.5"}},
+			{ID: "G12.5", Title: "A query that runs out of memory loses the query, not the session's files", Proves: "A query that outgrows the workspace's memory is stopped with an error; the session process and its files carry on, and the next query runs.", Milestone: E3, Needs: []Need{NeedResourceLimits, NeedPersistent}, Uses: []string{"G3.2.4", "G3.2.5"}},
 			{ID: "G12.6", Title: "Charts and result files come back out", Proves: "Result files the analysis writes, text and binary, download byte for byte.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G1.4", "G19.5"}},
 		},
 	},
@@ -299,11 +299,11 @@ var Catalog = []Scenario{
 		Proves:    "Many short tasks start warm with their tools loaded, use only approved sources, and cost little.",
 		Milestone: E4,
 		Children: []Scenario{
-			{ID: "G14.1", Title: "Each question starts from a warm save with its tools loaded", Milestone: E3, Uses: []string{"G2.1", "G9.5"}},
+			{ID: "G14.1", Title: "Each question starts from a warm save with its tools loaded", Proves: "Copies of a full save answer with the tool process loaded before the save, without loading again, and no copy sees another's questions.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}, Uses: []string{"G2.1", "G9.5"}},
 			{ID: "G14.2", Title: "Fetches only from allowed sources", Milestone: E4, Uses: []string{"G5.4"}},
 			{ID: "G14.3", Title: "Reads documents with installed tools (PDF, office files)", Milestone: E3, Uses: []string{"G1.2", "G1.10"}},
 			{ID: "G14.4", Title: "A hundred questions run side by side on one server", Milestone: E4, Uses: []string{"G2.4", "G9.7"}},
-			{ID: "G14.5", Title: "Finished questions leave nothing behind", Milestone: E3, Uses: []string{"G10.7"}},
+			{ID: "G14.5", Title: "Finished questions leave nothing behind", Proves: "After questions answered in copies of a warm save and deleted, the host and the engine's data hold what they held before: no folders, bytes, sandboxes or other host resources left over.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent, NeedInProcess}, Uses: []string{"G10.7"}},
 		},
 	},
 	{
@@ -313,10 +313,10 @@ var Catalog = []Scenario{
 		Children: []Scenario{
 			{ID: "G15.1", Title: "Calls internal APIs with secrets it cannot read back or leak", Milestone: E4, Uses: []string{"G5.9"}},
 			{ID: "G15.2", Title: "Reaches only the internal hosts it is allowed", Milestone: E4, Uses: []string{"G5.4", "G8.6"}},
-			{ID: "G15.3", Title: "Waits for approval before a risky step at no compute cost", Milestone: E3, Uses: []string{"G4.1", "G4.2"}},
+			{ID: "G15.3", Title: "Waits for approval before a risky step at no compute cost", Proves: "A workflow waiting for a decision is saved with no sandbox left running; after the person approves, the same process applies the change, with no step repeated.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}, Uses: []string{"G4.1", "G4.2"}},
 			{ID: "G15.4", Title: "Every command is recorded with the key that ran it", Milestone: E4, Uses: []string{"G5.7", "G5.8"}},
 			{ID: "G15.5", Title: "A bad change inside the workspace is undone by rewinding", Milestone: E3, Uses: []string{"G18.3"}},
-			{ID: "G15.6", Title: "A scheduled agent carries on from yesterday's state", Milestone: E3, Uses: []string{"G1.3", "G4.2", "G1.8.1", "G1.8.2"}},
+			{ID: "G15.6", Title: "A scheduled agent carries on from yesterday's state", Proves: "An agent saved overnight keeps its place in memory: after the pause the same process handles only the new items, each once, and sees the time that passed.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}, Uses: []string{"G1.3", "G4.2", "G1.8.1", "G1.8.2"}},
 		},
 	},
 	{
