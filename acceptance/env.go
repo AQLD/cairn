@@ -266,6 +266,9 @@ func (e *Env) has(n spec.Need) (bool, string) {
 	case spec.NeedPython:
 		_, err := exec.LookPath("python3")
 		return err == nil, "python3 is not installed"
+	case spec.NeedAgentTools:
+		_, err := os.Stat(os.Getenv("CAIRN_TEST_AGENT_TOOLS"))
+		return os.Getenv("CAIRN_TEST_AGENT_TOOLS") != "" && err == nil, "set CAIRN_TEST_AGENT_TOOLS to a template built from acceptance/testdata/agent-tools (devenv/accept-runsc.sh builds it)"
 	case spec.NeedLinuxBench, spec.NeedObjectStorage, spec.NeedMultiServer, spec.NeedRealAgent:
 		return os.Getenv("CAIRN_ENV_"+envName(n)) == "1", "set CAIRN_ENV_" + envName(n) + "=1 on an environment that provides it"
 	}
