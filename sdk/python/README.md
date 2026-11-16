@@ -65,6 +65,14 @@ An exception's traceback goes to `stderr` with `exit_code` 1 and the session car
 
 `write_file` takes bytes, text, an open binary file or a local path. `read_file` returns bytes. `download_file` streams a large file to disk without holding it in memory.
 
+Whole folders move with `push` and `pull`, which merge with what is already there and keep modes, times, symlinks and empty folders:
+
+```python
+ws.push("./my-project", "/root/my-project", exclude=["node_modules", ".venv", "*.pyc"])
+ws.run("cd /root/my-project && pytest -q")
+ws.pull("/root/my-project", "./my-project")   # the agent's changes, back on your machine
+```
+
 ## Retries and errors
 
 - **Safe retries:** after a dropped connection, the client retries what is safe to repeat: reads, writes and deletes.

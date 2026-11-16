@@ -111,6 +111,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/workspaces/{id}/exec", s.exec)
 	s.mux.HandleFunc("PUT /v1/workspaces/{id}/files", s.writeFile)
 	s.mux.HandleFunc("GET /v1/workspaces/{id}/files", s.readFile)
+	s.mux.HandleFunc("PUT /v1/workspaces/{id}/archive", s.pushArchive)
+	s.mux.HandleFunc("GET /v1/workspaces/{id}/archive", s.pullArchive)
 	s.mux.HandleFunc("POST /v1/workspaces/{id}/sessions", s.createSession)
 	s.mux.HandleFunc("GET /v1/workspaces/{id}/sessions", s.listSessions)
 	s.mux.HandleFunc("POST /v1/workspaces/{id}/sessions/{sid}/run", s.runInSession)
@@ -211,6 +213,33 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
 	_, _ = io.Copy(w, f)
+}
+
+// pushArchive merges a tar stream into a folder of the workspace.
+func (s *Server) pushArchive(w http.ResponseWriter, r *http.Request) {
+	body := http.MaxBytesReader(w, r.Body, maxFileBytes)
+	st, err := s.eng.PushArchive(r.Context(), r.PathValue("id"), r.URL.Query().Get("path"), body, maxFileBytes)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+// pullArchive streams a folder of the workspace as a tar stream.
+func (s *Server) pullArchive(w http.ResponseWriter, r *http.Request) {
+	root, err := s.eng.OpenArchive(r.Context(), r.PathValue("id"), r.URL.Query().Get("path"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	defer root.Close()
+	w.Header().Set("Content-Type", "application/x-tar")
+	if _, err := save.TarRoot(root, w, nil); err != nil {
+		// the status is already sent: a cut-off stream is how the client learns
+		s.log.Warn("archive stream failed", "request_id", RequestID(r.Context()), "err", err)
+		panic(http.ErrAbortHandler)
+	}
 }
 
 func (s *Server) createSave(w http.ResponseWriter, r *http.Request) {

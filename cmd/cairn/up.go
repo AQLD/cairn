@@ -171,6 +171,8 @@ func cmdUp(ctx context.Context, args []string) (int, error) {
 	fmt.Println("  ws=$(cairn create)")
 	fmt.Println("  cairn exec $ws -- python3 -c 'print(\"hello from a sandbox\")'")
 	fmt.Println("  cairn save $ws --full     # memory and running processes too")
+	fmt.Println("use it from your coding agent:")
+	fmt.Println("  cairn mcp install claude --write   # or cursor, codex, vscode (see docs/agents.md)")
 	fmt.Println("stop with `cairn down` (workspaces and their processes are kept)")
 	return 0, nil
 }

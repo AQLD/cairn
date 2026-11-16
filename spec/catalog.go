@@ -37,6 +37,7 @@ var Catalog = []Scenario{
 				}},
 			{ID: "G1.12", Title: "An app and its database stay connected across a full save", Proves: "Connections between processes inside the workspace (loopback TCP, unix sockets) survive save and resume; only connections to the outside world are reset.", Milestone: E1, Needs: []Need{NeedFullSave, NeedPersistent}},
 			{ID: "G1.13", Title: "A file written through the API is seen whole by the workspace's programs", Proves: "Programs inside see a file's new content and size at once, even a file they have read before (the API writes the folder the sandbox serves).", Milestone: E1},
+			{ID: "G1.14", Title: "A project folder goes into a workspace and comes back unchanged", Proves: "Pushing a folder and pulling it back keeps every file's bytes, permissions, times, symlinks and empty folders, merges with what is there, and leaves out only what the caller excluded.", Milestone: E3},
 			{ID: "G1.11", Title: "Files in /tmp are kept like any other file", Proves: "Scratch files agents leave in /tmp are in quick saves and survive an engine restart.", Milestone: E1, Needs: []Need{NeedIsolation, NeedInProcess}},
 			{ID: "G1.7", Title: "Golden workloads save and resume correctly", Proves: "Saves work for real agent work, not toy programs.", Milestone: E0, Needs: []Need{NeedFullSave},
 				Children: []Scenario{
@@ -208,6 +209,7 @@ var Catalog = []Scenario{
 			{ID: "G8.5", Title: "A disk fill is contained", Proves: "The host and other workspaces keep their disk.", Milestone: E4, Needs: []Need{NeedIsolation, NeedDiskLimits, NeedInProcess}},
 			{ID: "G8.6", Title: "Cloud metadata and the host network are unreachable", Proves: "Credentials on the host cannot be stolen over the network.", Milestone: E4, Needs: []Need{NeedNetworkControl}},
 			{ID: "G8.7", Title: "Host files and processes are invisible", Proves: "The sandbox boundary holds.", Milestone: E4, Needs: []Need{NeedIsolation}},
+			{ID: "G8.8", Title: "Folder archives cannot reach outside the workspace", Proves: "A pushed archive with climbing, absolute or link-escaping paths is refused without touching the host, and pulling a folder through a planted symlink never reads host files.", Milestone: E1},
 		},
 	},
 	{
@@ -249,6 +251,11 @@ var Catalog = []Scenario{
 					{ID: "G10.11.1", Title: "`cairn up` starts an engine in Docker with gVisor, full saves and a ready default template", Proves: "One command and no Linux VM: the engine runs in a plain Docker container (it leaves the container's root cgroup so runsc can create sandboxes), pulls the default template, and writes the client config the CLI and the SDKs read with nothing set.", Milestone: E3, Needs: []Need{NeedDocker}},
 					{ID: "G10.11.2", Title: "`cairn down` then `cairn up` keeps workspaces and their running processes", Proves: "Stopping the local engine (or rebooting the laptop) pauses every workspace; starting it again brings back the same processes.", Milestone: E3, Needs: []Need{NeedDocker}},
 					{ID: "G10.11.3", Title: "`cairn up` with a new image or settings replaces the engine and keeps workspaces and their processes", Proves: "A developer who rebuilds or upgrades the engine keeps their agents' work; `cairn up` never silently keeps an old engine, and never touches containers or volumes it did not make.", Milestone: E3, Needs: []Need{NeedDocker}},
+				}},
+			{ID: "G10.12", Title: "Local coding agents drive workspaces through MCP", Proves: "`cairn mcp` speaks the Model Context Protocol on stdio, so Claude Code, Cursor, Codex and other agents use workspaces with no code (engine feature #17).", Milestone: E3,
+				Children: []Scenario{
+					{ID: "G10.12.1", Title: "An agent creates, runs, saves, rewinds and copies through MCP tools", Proves: "The handshake, tool list and every core tool work against a real engine, failures come back as tool errors with Cairn's code, and stdout carries only protocol messages.", Milestone: E3},
+					{ID: "G10.12.2", Title: "A background server and a session survive an MCP full save and rewind", Proves: "exec background=true leaves a server running between calls, save full=true carries on at once, and rewinding to it brings back the same server process and the session's variables.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}},
 				}},
 		},
 	},

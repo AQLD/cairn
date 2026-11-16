@@ -236,6 +236,33 @@ class TestFiles(EngineTest):
         with self.assertRaises(cairn.NotFound):
             self.ws.read_file("nope.txt")
 
+    def test_folder_push_and_pull(self):
+        src = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, src)
+        (src / "pkg" / "empty").mkdir(parents=True)
+        (src / "pkg" / "run.sh").write_text("#!/bin/sh\necho ok\n")
+        os.chmod(src / "pkg" / "run.sh", 0o755)
+        (src / "pkg" / "x.pyc").write_bytes(b"junk")
+        (src / "node_modules").mkdir()
+        (src / "node_modules" / "m.js").write_text("1")
+        os.symlink("pkg/run.sh", src / "link")
+        st = self.ws.push(src, "proj", exclude=["node_modules", "*.pyc"])
+        self.assertEqual((st["files"], st["links"]), (1, 1))
+        self.ws.write_file("proj/made-inside.txt", "agent")
+
+        dst = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, dst)
+        self.ws.pull("proj", dst)
+        self.assertEqual((dst / "pkg" / "run.sh").read_text(), "#!/bin/sh\necho ok\n")
+        self.assertEqual(os.stat(dst / "pkg" / "run.sh").st_mode & 0o777, 0o755)
+        self.assertTrue((dst / "pkg" / "empty").is_dir())
+        self.assertEqual(os.readlink(dst / "link"), "pkg/run.sh")
+        self.assertEqual((dst / "made-inside.txt").read_text(), "agent")
+        self.assertFalse((dst / "node_modules").exists())
+        self.assertFalse((dst / "pkg" / "x.pyc").exists())
+        with self.assertRaises(cairn.NotFound):
+            self.ws.pull("no-such-folder", dst)
+
 
 class TestSaves(EngineTest):
     def test_resume_rolls_back_and_copies_are_independent(self):

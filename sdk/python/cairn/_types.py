@@ -182,6 +182,14 @@ class Workspace:
     def read_file(self, path: str) -> bytes:
         return self._client.read_file(self.id, path)
 
+    def push(self, local_dir, remote_dir: str, exclude=()) -> dict:
+        """Copies a local folder into the workspace, merging (see Client.push_dir)."""
+        return self._client.push_dir(self.id, local_dir, remote_dir, exclude)
+
+    def pull(self, remote_dir: str, local_dir) -> int:
+        """Copies a folder of the workspace to the local machine, merging."""
+        return self._client.pull_dir(self.id, remote_dir, local_dir)
+
     def save(self, kind: str = "quick", **kw) -> "Save":
         return self._client.save(self.id, kind, **kw)
 
