@@ -28,6 +28,7 @@ import (
 	"github.com/AQLD/cairn/internal/eventlog"
 	"github.com/AQLD/cairn/internal/failpoint"
 	"github.com/AQLD/cairn/internal/objstore"
+	"github.com/AQLD/cairn/internal/redact"
 	"github.com/AQLD/cairn/internal/runtime"
 	"github.com/AQLD/cairn/internal/save"
 	"github.com/AQLD/cairn/internal/store"
@@ -510,7 +511,7 @@ func (e *Engine) Exec(ctx context.Context, id string, req ExecRequest) (ExecResu
 	start := time.Now()
 	res, err := e.exec(ctx, id, req)
 	took := time.Since(start)
-	data := map[string]any{"command": boundedArgs(orig.Argv), "duration_ms": took.Milliseconds(),
+	data := map[string]any{"command": boundedArgs(redact.Args(orig.Argv)), "duration_ms": took.Milliseconds(),
 		"stdout_bytes": stdout.n, "stderr_bytes": stderr.n}
 	if orig.Dir != "" {
 		data["dir"] = orig.Dir
@@ -523,7 +524,7 @@ func (e *Engine) Exec(ctx context.Context, id string, req ExecRequest) (ExecResu
 		sort.Strings(keys)
 		data["env"] = keys
 	}
-	summary := "exec: " + oneLine(commandLine(orig.Argv))
+	summary := "exec: " + oneLine(commandLine(redact.Args(orig.Argv)))
 	if err == nil {
 		data["exit_code"], data["timed_out"] = res.ExitCode, res.TimedOut
 		data["stdout_tail"], data["stderr_tail"] = stdout.String(), stderr.String()

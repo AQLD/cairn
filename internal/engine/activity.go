@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/AQLD/cairn/internal/eventlog"
+	"github.com/AQLD/cairn/internal/redact"
 	"github.com/AQLD/cairn/internal/store"
 )
 
@@ -19,6 +20,11 @@ import (
 // the "state before action" rule does not apply to it. Operations the engine
 // does on its own (pausing idle workspaces, pausing for shutdown, waking) are
 // recorded too, so a log explains why a workspace changed state.
+//
+// Secrets are redacted before an event is stored (internal/redact): every
+// string in an event passes through note, and commands and code are redacted
+// before they are cut short, so a clipped secret cannot slip past. Redaction
+// is best-effort; output tails are still workspace contents.
 
 type Event = eventlog.Event
 type EventQuery = eventlog.Query
@@ -39,15 +45,19 @@ func (e *Engine) note(ctx context.Context, ws, kind, summary string, err error, 
 	if e.events == nil {
 		return
 	}
-	ev := Event{Workspace: ws, Time: e.cfg.Now().UTC(), Kind: kind, Summary: summary, Data: data}
+	ev := Event{Workspace: ws, Time: e.cfg.Now().UTC(), Kind: kind, Summary: redact.String(summary)}
+	if data != nil {
+		ev.Data = redact.Any(data).(map[string]any)
+	}
 	ev.RequestID, _ = ctx.Value(requestIDKey{}).(string)
 	if err != nil {
 		// a request for a workspace that does not exist leaves no log behind
 		if _, gerr := e.store.GetWorkspace(context.WithoutCancel(ctx), ws); errors.Is(gerr, store.ErrNotFound) {
 			return
 		}
-		ev.Error = err.Error()
-		ev.Summary += " failed: " + clip(err.Error(), 200)
+		msg := redact.String(err.Error())
+		ev.Error = msg
+		ev.Summary += " failed: " + clip(msg, 200)
 	}
 	e.events.Record(ev)
 }

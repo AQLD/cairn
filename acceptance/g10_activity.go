@@ -353,4 +353,102 @@ func init() {
 		// the plumbing behind sessions is not logged as commands of its own
 		Equal(e, "no stray commands", len(eventsOf(e, ws.ID, "exec")), 0)
 	})
+
+	register("G10.13.6", func(e *Env) {
+		sec := fakeSecrets()
+		ws := e.Workspace("secrets")
+		// in a script, in its output and on stderr
+		e.Sh(ws.ID, "GITHUB_TOKEN="+sec["gh"]+" sh -c 'echo token is $GITHUB_TOKEN'; "+
+			"echo 'password: "+sec["pw"]+"' >&2; "+
+			"echo 'curl -H \"Authorization: Bearer "+sec["bearer"]+"\" https://api'; "+
+			"echo 'git remote add o https://bob:"+sec["url"]+"@git.example/r.git'; "+
+			"printf -- '-----BEGIN RSA PRIVATE KEY-----\\n"+sec["pem"]+"\\n-----END RSA PRIVATE KEY-----\\n'; "+
+			"echo key "+sec["anthropic"]+" and "+sec["aws"])
+		// where a summary is cut short (120 characters): 12 of its characters
+		// would be kept, too few to recognise unless it is redacted first
+		e.Sh(ws.ID, "echo "+strings.Repeat("a", 102)+" "+sec["cut"])
+		// as separate arguments: a flag and its value
+		_, err := e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"sh", "-c", "true", "sh", "--api-key", sec["flag"], "--password=" + sec["flag2"]}})
+		e.Must(err)
+		// in a failing command's output, with a secret in its environment too
+		r, err := e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"sh", "-c", "echo DB_PASSWORD=$DB_PASSWORD; exit 3"},
+			Env: map[string]string{"DB_PASSWORD": sec["env"]}})
+		e.Must(err)
+		Equal(e, "failing command", r.ExitCode, 3)
+
+		evs := eventsOf(e, ws.ID, "exec")
+		raw, err := json.Marshal(evs)
+		e.Must(err)
+		for name, v := range sec {
+			if secretIn(string(raw), v) {
+				e.T.Errorf("secret %s (%q) is in the activity log", name, v)
+			}
+		}
+		if n := strings.Count(string(raw), "[redacted]"); n < len(sec) {
+			e.T.Errorf("%d redactions for %d secrets:\n%s", n, len(sec), raw)
+		}
+		// the rest of each command is still there to read
+		for _, keep := range []string{"echo token is", "--api-key", "exit 3", "git.example/r.git"} {
+			if !strings.Contains(string(raw), keep) {
+				e.T.Errorf("redaction removed %q, which is not a secret", keep)
+			}
+		}
+		if e.T.Failed() {
+			e.T.FailNow()
+		}
+		// and the workspace itself is untouched: only the log is redacted
+		out := e.Sh(ws.ID, "GITHUB_TOKEN="+sec["gh"]+" sh -c 'echo $GITHUB_TOKEN'")
+		Equal(e, "command output", strings.TrimSpace(out), sec["gh"])
+	})
+
+	register("G10.13.7", func(e *Env) {
+		sec := fakeSecrets()
+		ws := e.Workspace("secret-cells")
+		s := session(e, ws.ID, "python")
+		cell(e, ws.ID, s.ID, "api_key = '"+sec["flag"]+"'\nprint('token=' + api_key)\nprint('"+sec["anthropic"]+"')")
+		// a secret straddling the point where a cell's code is cut short
+		// (4 KiB): 12 of its characters would be kept, too few to recognise
+		// unless the code is redacted first
+		cell(e, ws.ID, s.ID, "#"+strings.Repeat("x", 4080)+"\n# "+sec["cut"]+"\nprint(1)")
+		raw, err := json.Marshal(eventsOf(e, ws.ID, "session_run"))
+		e.Must(err)
+		for _, name := range []string{"flag", "anthropic", "cut"} {
+			if secretIn(string(raw), sec[name]) {
+				e.T.Fatalf("secret %s is in the session's log: %s", name, raw)
+			}
+		}
+		if !strings.Contains(string(raw), "[redacted]") {
+			e.T.Fatalf("nothing redacted: %s", raw)
+		}
+	})
+}
+
+// secretIn reports whether any of a secret, even its first 12 characters
+// (what is left of one cut short), is in s.
+func secretIn(s, secret string) bool { return strings.Contains(s, secret[:12]) }
+
+// fakeSecrets are values shaped like real credentials, made at run time so
+// the repository holds nothing a secret scanner would flag.
+func fakeSecrets() map[string]string {
+	n := fmt.Sprint(time.Now().UnixNano())
+	pad := func(prefix string, size int) string {
+		s := prefix + n
+		for len(s) < size {
+			s += "Q7x"
+		}
+		return s[:size]
+	}
+	return map[string]string{
+		"gh":        pad("ghp_", 40),
+		"anthropic": pad("sk-ant-", 48),
+		"aws":       "AKIA" + strings.ToUpper(pad("Z", 16)),
+		"bearer":    pad("bt", 32),
+		"pw":        pad("pw", 20),
+		"url":       pad("up", 18),
+		"pem":       pad("MIIEpAIBAAKCAQEA", 64),
+		"flag":      pad("fv", 24),
+		"flag2":     pad("fw", 24),
+		"env":       pad("ev", 24),
+		"cut":       pad("sk-ant-api03-", 60),
+	}
 }
