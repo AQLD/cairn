@@ -47,7 +47,13 @@ func runMCP(ctx context.Context, c *client.Client, args []string) (int, error) {
 	return 0, mcp.New(c, version(), *ws, log).Serve(ctx, os.Stdin, os.Stdout)
 }
 
+// buildVersion is set by release builds (-ldflags "-X main.buildVersion=v1.2.3").
+var buildVersion string
+
 func version() string {
+	if buildVersion != "" {
+		return buildVersion
+	}
 	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
 		return bi.Main.Version
 	}

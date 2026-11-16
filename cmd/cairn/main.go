@@ -52,6 +52,7 @@ commands:
                                           a workspace and tells its agents to use it
   doctor                                  check the engine, agents and project; say how to fix
   run [--no-push] -- COMMAND [ARGS...]    push this project's edits into its workspace, run there
+  version                                 print this CLI's version
   create [--name NAME] [--template T] [--network] [--memory MB] [--disk MB] [--cpus N]
                                           create a workspace (from a template)
   template import NAME ROOTFS.tar         import a root filesystem tar as a template
@@ -105,6 +106,8 @@ func main() {
 	var code int
 	var err error
 	switch os.Args[1] {
+	case "version", "--version":
+		fmt.Println(version())
 	case "up":
 		code, err = cmdUp(ctx, os.Args[2:])
 	case "down":
