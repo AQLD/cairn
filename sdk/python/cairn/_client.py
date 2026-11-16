@@ -7,8 +7,11 @@ import fnmatch
 import io
 import json
 import os
+import posixpath
 import random
+import shutil
 import socket
+import stat
 import tarfile
 import tempfile
 import time
@@ -28,6 +31,88 @@ Content = Union[bytes, str, IO[bytes], "os.PathLike[str]"]
 # idempotency key: the engine then returns the first result instead of doing
 # the work twice.
 _SAFE = {"GET", "HEAD", "PUT", "DELETE"}
+
+
+def _archive_name(name: str) -> str:
+    """An entry's name, cleaned; raises ValueError for one that leaves the folder."""
+    n = posixpath.normpath(name.replace("\\", "/").rstrip("/") or ".")
+    if n.startswith("/") or n == ".." or n.startswith("../"):
+        raise ValueError(f"unsafe path in archive: {name!r}")
+    return n
+
+
+def _inside(base: str, path: str) -> str:
+    """path with every link resolved, which must stay inside base (links
+    within the folder are followed, as os.Root follows them)."""
+    real = os.path.realpath(path)
+    if real != base and os.path.commonpath([base, real]) != base:
+        raise ValueError(f"unsafe path in archive: {path!r} leads outside {base!r}")
+    return real
+
+
+def _replaceable(path: str) -> None:
+    """Clears the way for a new entry: a file or link goes; a folder stays and
+    the entry is refused (it would drop the folder's contents)."""
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return
+    if stat.S_ISDIR(st.st_mode):
+        raise ValueError(f"{path!r} is a folder")
+    os.unlink(path)
+
+
+def _extract(tf: "tarfile.TarFile", dest: str) -> int:
+    """Merges a tar archive into dest with the rules of the Go client's
+    save.ExtractTo, so every client pulls a folder the same way."""
+    base = os.path.realpath(dest)
+    dirs = []  # (path, mode, mtime): applied last, deepest first
+    n = 0
+    for m in tf:
+        name = _archive_name(m.name)
+        if name == ".":
+            continue  # the folder itself
+        mode = m.mode & 0o777
+        parent = _inside(base, os.path.join(base, posixpath.dirname(name)))
+        os.makedirs(parent, exist_ok=True)
+        parent = _inside(base, parent)
+        path = os.path.join(parent, posixpath.basename(name))
+        if m.isdir():
+            try:
+                if not stat.S_ISDIR(os.lstat(path).st_mode):
+                    os.unlink(path)
+            except FileNotFoundError:
+                pass
+            try:
+                os.mkdir(path, 0o700)
+            except FileExistsError:
+                pass
+            dirs.append((path, mode, m.mtime))
+        elif m.isreg():
+            _replaceable(path)
+            src = tf.extractfile(m)
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0), 0o600)
+            with os.fdopen(fd, "wb") as f:
+                shutil.copyfileobj(src, f)
+            os.chmod(path, mode)
+            os.utime(path, (m.mtime, m.mtime))
+        elif m.issym():
+            _replaceable(path)
+            os.symlink(m.linkname, path)  # stored as is; never followed out of dest
+        elif m.islnk():
+            target = _archive_name(m.linkname)
+            if target == ".":
+                raise ValueError(f"unsafe link target in archive: {m.linkname!r}")
+            tparent = _inside(base, os.path.join(base, posixpath.dirname(target)))
+            _replaceable(path)
+            os.link(os.path.join(tparent, posixpath.basename(target)), path, follow_symlinks=False)
+        else:
+            continue  # devices, fifos and the like are not project files
+        n += 1
+    for path, mode, mtime in reversed(dirs):
+        os.chmod(path, mode)
+        os.utime(path, (mtime, mtime))
+    return n
 
 
 def config_path() -> str:
@@ -287,8 +372,11 @@ class Client:
 
     def pull_dir(self, workspace_id: str, remote_dir: str, local_dir: Union[str, "os.PathLike[str]"]) -> int:
         """Copies remote_dir of the workspace into a local folder (created if
-        missing), merging with what is there. Nothing extracted can land
-        outside local_dir. Returns the number of entries copied."""
+        missing), merging with what is there, as the Go client and `cairn pull`
+        do: folders are kept, a file or link replaces a file or link of the
+        same name (never writing through a link), permission bits and times
+        are kept (not setuid/setgid/sticky, not ownership). Nothing extracted
+        can land outside local_dir. Returns the number of entries copied."""
         dest = os.fspath(local_dir)
         os.makedirs(dest, exist_ok=True)
         q = urllib.parse.urlencode({"path": remote_dir})
@@ -298,17 +386,7 @@ class Client:
                     buf.write(chunk)
             buf.seek(0)
             with tarfile.open(fileobj=buf, mode="r:") as tf:
-                members = tf.getmembers()
-                if hasattr(tarfile, "tar_filter"):
-                    tf.extractall(dest, filter="tar")
-                else:  # Python without extraction filters: check every path ourselves
-                    base = os.path.realpath(dest)
-                    for m in members:
-                        target = os.path.realpath(os.path.join(base, m.name))
-                        if os.path.isabs(m.name) or os.path.commonpath([base, target]) != base:
-                            raise ValueError(f"unsafe path in archive: {m.name!r}")
-                    tf.extractall(dest)
-        return len(members)
+                return _extract(tf, dest)
 
     def _file_path(self, workspace_id: str, path: str) -> str:
         return f"/v1/workspaces/{_q(workspace_id)}/files?" + urllib.parse.urlencode({"path": path})
