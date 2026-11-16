@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 54 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 46 | 11 | 2 |
+| E3 | 49 | 11 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -304,6 +304,10 @@ An operator can install, observe and upgrade Cairn without surprises. Gate: **E4
 - ⏳ **G10.8** Every release is signed and ships a bill of materials · E3
 - ⏳ **G10.9** An operator can produce a diagnostics bundle that holds no workspace contents · E3 · needs in_process
 - ✅ **G10.10** The Python SDK drives every API operation · E3 · needs python
+- 📂 **G10.11** A developer runs a local engine with one command · E3
+  - ✅ **G10.11.1** `cairn up` starts an engine in Docker with gVisor, full saves and a ready default template · E3 · needs docker
+  - ✅ **G10.11.2** `cairn down` then `cairn up` keeps workspaces and their running processes · E3 · needs docker
+  - ✅ **G10.11.3** `cairn up` with a new image or settings replaces the engine and keeps workspaces and their processes · E3 · needs docker
 
 ## G18 Every step can be rewound
 

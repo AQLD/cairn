@@ -37,6 +37,8 @@ make chaos       # real kill -9 rounds against a cairnd process (ROUNDS=200 make
 make plan        # regenerate docs/test-plan.md (commit the result)
 make sdk-test    # Python SDK tests against a fresh cairnd
 make run         # cairnd on ./data with the host runtime, localhost only
+go run ./cmd/cairn up --build   # this checkout's engine in Docker with gVisor (macOS or Linux, no VM)
+CAIRN_TEST_DOCKER_IMAGE=cairnd:local go test ./acceptance -run 'TestEndGoals/G10_/G10.11_'   # cairn up scenarios
 go test ./acceptance -run 'TestEndGoals/G6' -v                 # one goal
 CAIRN_CYCLES=10000 go test ./acceptance -run G6.2 -timeout 0   # E1 loop gate
 ```

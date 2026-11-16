@@ -51,6 +51,7 @@ const (
 	NeedRealAgent     Need = "real_agent"     // a real coding agent driving the engine
 	NeedPython        Need = "python"         // python3, for the Python SDK's tests
 	NeedAgentTools    Need = "agent_tools"    // a template with a browser and document tools (CAIRN_TEST_AGENT_TOOLS)
+	NeedDocker        Need = "docker"         // a Docker daemon and an engine image to run in it (CAIRN_TEST_DOCKER_IMAGE)
 )
 
 // Scenario is one end-goal test or a piece of one.

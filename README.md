@@ -19,7 +19,7 @@
 
 Cairn is an open-source engine that gives each AI agent a private Linux workspace. The agent can save its workspace at any moment, resume it days later on another server, or copy it to try several ideas at once. It runs on your own servers.
 
-> **Status: early development.** There is nothing to install yet. Watch or star the repository to follow along.
+> **Status: early development.** There is no release yet; you can run the development build on your laptop (below). Watch or star the repository to follow along.
 
 ## How it works
 
@@ -35,20 +35,33 @@ Cairn is an open-source engine that gives each AI agent a private Linux workspac
 - **Your assistant waits for your answer.** When an agent needs an approval or a password, its computer is saved and switched off until you reply.
 - **Agents that stay inside your walls.** Install it on your own servers, on ordinary virtual machines, and nothing leaves your network.
 
-## Try the development build
+## Run it on your laptop
 
-The engine runs on gVisor in production (Linux). For development there is a `host` runtime that runs commands directly on your machine with **no isolation**; use it only with code you trust.
+Needs Docker (Docker Desktop, OrbStack or colima on macOS; Docker Engine on Linux) and Go 1.25 or newer for the CLI until there are releases.
 
 ```sh
-make build
-./bin/cairnd --runtime host --data ./data &        # engine on 127.0.0.1:7420
-WS=$(./bin/cairn create --name demo)
-./bin/cairn exec $WS -- sh -c 'echo hello > note.txt'
-SAVE=$(./bin/cairn save $WS)
-./bin/cairn exec $WS -- sh -c 'echo changed > note.txt'
-./bin/cairn resume $SAVE && ./bin/cairn get $WS note.txt   # hello
-./bin/cairn copy $SAVE --count 3
+go install github.com/AQLD/cairn/cmd/cairn@latest
+cairn up                      # engine in Docker, real gVisor workspaces, ~10 s the first time
 ```
+
+From a checkout of this repository, `go run ./cmd/cairn up --build` builds the engine image locally instead of pulling it.
+
+`cairn up` writes `~/.config/cairn/config.json`, so the CLI and the Python SDK find the engine with nothing to set. Then:
+
+```sh
+ws=$(cairn create)                                   # python:3.12-slim by default
+cairn exec $ws -- sh -c 'nohup python3 -m http.server 8000 >/dev/null 2>&1 &'
+cairn exec $ws -- sh -c 'echo hello > note.txt'
+save=$(cairn save $ws --full)                        # files, memory and the running server (the workspace pauses)
+cairn resume $save                                   # carry on from the save
+cairn exec $ws -- sh -c 'echo broken > note.txt'
+cairn resume $save                                   # rewind: note.txt says hello, the same server still runs
+cairn copy $save --count 3                           # three independent copies to try three ideas
+```
+
+`cairn down` stops the engine and pauses every workspace (their processes come back on `cairn up`); `cairn down --purge` deletes everything. The engine container is privileged because gVisor builds each sandbox's namespaces and cgroups. Workspaces run on gVisor's own kernel, so agent code never reaches your machine's kernel directly; a flaw that let code escape gVisor would land in that privileged container, which is root on Docker's VM (macOS) or on the machine itself (Docker Engine on Linux).
+
+For working on Cairn itself there is also a `host` runtime (`make run`) that runs commands directly on your machine with **no isolation** and no full saves; use it only with code you trust.
 
 ## Planned for v0.1
 
