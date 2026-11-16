@@ -240,12 +240,21 @@ func init() {
 			_ = exec.Command("docker", "rm", "-f", other).Run()
 			_ = exec.Command("docker", "volume", "rm", other+"-data").Run()
 		})
+		foreign := func(what string) {
+			e.T.Helper()
+			out, err := exec.Command("docker", "container", "inspect", "-f", "{{.State.Running}} {{.Config.Image}}", other).CombinedOutput()
+			if err != nil || strings.TrimSpace(string(out)) != "true busybox" {
+				e.T.Fatalf("after %s the foreign container is %q (%v)", what, out, err)
+			}
+		}
 		if out, err := le.cairn("up", "--name", other); err == nil {
 			e.T.Fatalf("cairn up took over a container it did not make:\n%s", out)
 		}
+		foreign("cairn up")
 		if out, err := le.cairn("down", "--purge", "--name", other); err == nil {
 			e.T.Fatalf("cairn down --purge deleted a container it did not make:\n%s", out)
 		}
+		foreign("cairn down --purge")
 		if out, err := exec.Command("docker", "volume", "inspect", other+"-data").CombinedOutput(); err != nil {
 			e.T.Fatalf("foreign volume gone: %v %s", err, out)
 		}
