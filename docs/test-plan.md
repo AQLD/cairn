@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 63 | 11 | 2 |
+| E3 | 64 | 11 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -313,6 +313,7 @@ An operator can install, observe and upgrade Cairn without surprises. Gate: **E4
 - 📂 **G10.12** Local coding agents drive workspaces through MCP · E3
   - ✅ **G10.12.1** An agent creates, runs, saves, rewinds and copies through MCP tools · E3
   - ✅ **G10.12.2** A background server and a session survive an MCP full save and rewind · E3 · needs full_save, persistent_processes
+  - ✅ **G10.12.3** An agent recalls what it did through the MCP history tool · E3
 - 📂 **G10.13** Every operation on a workspace shows up in its activity log · E3
   - ✅ **G10.13.1** Commands are logged with their exit code, duration and output tail; files with their path and size · E3
   - ✅ **G10.13.2** The log can be followed live · E3

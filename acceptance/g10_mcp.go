@@ -183,7 +183,7 @@ func init() {
 			names[name] = true
 		}
 		for _, want := range []string{"workspace_create", "exec", "write_file", "read_file", "push_dir", "pull_dir",
-			"session_run", "save", "rewind", "copy", "list_saves", "workspace_list", "pause", "workspace_delete"} {
+			"session_run", "save", "rewind", "copy", "list_saves", "history", "workspace_list", "pause", "workspace_delete"} {
 			if !names[want] {
 				e.T.Errorf("tool %s is missing", want)
 			}
@@ -341,6 +341,55 @@ func init() {
 		out := m.ok("session_run", map[string]any{"code": "answer + 1"})
 		if !strings.Contains(out, "42") {
 			e.T.Fatalf("the session's variables did not come back with the rewind: %q", out)
+		}
+	})
+
+	register("G10.12.3", func(e *Env) {
+		m := startMCP(e)
+		m.initialize()
+		ws := firstMatch(e, wsIDPattern, m.ok("workspace_create", map[string]any{"name": "recall"}))
+		m.ok("exec", map[string]any{"command": "echo built > out.txt"})
+		m.ok("exec", map[string]any{"command": "echo failing-step; exit 3"})
+		sv := firstMatch(e, saveIDPattern, m.ok("save", map[string]any{}))
+		m.ok("write_file", map[string]any{"path": "notes.md", "content": "wip"})
+		m.ok("rewind", map[string]any{"save": sv})
+
+		h := m.ok("history", map[string]any{})
+		lines := strings.Split(strings.TrimSpace(h), "\n")
+		find := func(what string) int {
+			for i, l := range lines {
+				if strings.Contains(l, what) {
+					return i
+				}
+			}
+			e.T.Fatalf("history has no line with %q:\n%s", what, h)
+			return -1
+		}
+		failed := find("exit 3")
+		if !strings.Contains(lines[failed], "failing-step") {
+			e.T.Fatalf("the failing command's line does not show the command: %q", lines[failed])
+		}
+		saved, wrote, rewound := find(sv), find("notes.md"), find("resume")
+		if !(find("echo built") < failed && failed < saved && saved < wrote && wrote < rewound) {
+			e.T.Fatalf("history is not oldest first:\n%s", h)
+		}
+
+		// only commands
+		for _, l := range strings.Split(strings.TrimSpace(m.ok("history", map[string]any{"kind": "exec"})), "\n")[1:] {
+			if !strings.Contains(l, "exec:") {
+				e.T.Fatalf("kind=exec returned %q", l)
+			}
+		}
+		// the newest one
+		if one := strings.Split(strings.TrimSpace(m.ok("history", map[string]any{"limit": 1})), "\n"); len(one) != 2 || !strings.Contains(one[1], "resume") {
+			e.T.Fatalf("limit=1: %q", one)
+		}
+
+		// a new conversation, which never saw any of it
+		m2 := startMCP(e)
+		m2.initialize()
+		if h2 := m2.ok("history", map[string]any{"workspace": ws}); !strings.Contains(h2, "exit 3") || !strings.Contains(h2, sv) {
+			e.T.Fatalf("history from a new conversation:\n%s", h2)
 		}
 	})
 }
