@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AQLD/cairn/internal/redact"
 	"github.com/AQLD/cairn/internal/save"
 )
 
@@ -179,6 +180,7 @@ func (e *Engine) RunInSession(ctx context.Context, id, sid string, run SessionRu
 	start := time.Now()
 	res, err := e.runInSession(ctx, id, sid, run)
 	took := time.Since(start)
+	code = redact.String(code) // before it is cut short
 	data := map[string]any{"session": sid, "code": clip(code, tailBytes), "duration_ms": took.Milliseconds(),
 		"stdout_bytes": stdout.n, "stderr_bytes": stderr.n}
 	summary := "session " + sid + ": " + oneLine(code)

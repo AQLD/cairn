@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 63 | 11 | 2 |
+| E3 | 66 | 11 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -313,12 +313,15 @@ An operator can install, observe and upgrade Cairn without surprises. Gate: **E4
 - 📂 **G10.12** Local coding agents drive workspaces through MCP · E3
   - ✅ **G10.12.1** An agent creates, runs, saves, rewinds and copies through MCP tools · E3
   - ✅ **G10.12.2** A background server and a session survive an MCP full save and rewind · E3 · needs full_save, persistent_processes
+  - ✅ **G10.12.3** An agent recalls what it did through the MCP history tool · E3
 - 📂 **G10.13** Every operation on a workspace shows up in its activity log · E3
   - ✅ **G10.13.1** Commands are logged with their exit code, duration and output tail; files with their path and size · E3
   - ✅ **G10.13.2** The log can be followed live · E3
   - ✅ **G10.13.3** Copies start their own log naming their source; a rewind is recorded, not erased · E3
   - ✅ **G10.13.4** The log survives restarts, is bounded, and outlives its workspace for the retention window · E3 · needs in_process
   - ✅ **G10.13.5** Session cells, full saves, pauses and wakes are logged · E3 · needs full_save, persistent_processes
+  - ✅ **G10.13.6** Secrets are redacted from the activity log · E3
+  - ✅ **G10.13.7** Secrets in session cells are redacted from the activity log · E3 · needs persistent_processes
 - 📂 **G10.14** A developer connects their coding agents with one command · E3
   - ✅ **G10.14.1** `cairn setup` installs the Cairn skill and registers MCP for each agent it finds · E3
   - ✅ **G10.14.2** `cairn setup --project` gives a repository its workspace and tells its agents to use it · E3

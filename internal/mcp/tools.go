@@ -50,7 +50,7 @@ func toolList() []*tool {
 }
 
 var order = []string{"workspace_create", "exec", "write_file", "read_file", "push_dir", "pull_dir", "session_run",
-	"save", "rewind", "copy", "list_saves", "workspace_list", "pause", "workspace_delete"}
+	"save", "rewind", "copy", "list_saves", "history", "workspace_list", "pause", "workspace_delete"}
 
 func toolOrder(name string) int {
 	for i, n := range order {
@@ -363,6 +363,43 @@ func init() {
 	})
 
 	register(&tool{
+		Name: "history",
+		Description: "What was done in a workspace, by you or anyone else: commands with their exit codes, file writes, saves, " +
+			"rewinds and copies, oldest first. Use it to recall what you already ran (after a long session or in a new " +
+			"conversation) or to find the save to rewind to. Secrets are redacted.",
+		InputSchema: props(nil, map[string][2]string{
+			"workspace": {"string", wsArg},
+			"limit":     {"integer", "How many of the newest events. Default 30, at most 200."},
+			"kind":      {"string", "Only this kind: exec, file_write, save, resume, copy, session_run, ... (session_* for all session events)."},
+		}),
+		run: func(ctx context.Context, s *Server, args json.RawMessage) (toolResult, error) {
+			var a struct {
+				Workspace string
+				Limit     int
+				Kind      string
+			}
+			if err := decode(args, &a); err != nil {
+				return toolResult{}, err
+			}
+			ws, err := s.workspace(a.Workspace)
+			if err != nil {
+				return toolResult{}, err
+			}
+			switch {
+			case a.Limit <= 0:
+				a.Limit = 30
+			case a.Limit > 200:
+				a.Limit = 200
+			}
+			evs, err := s.c.Events(ctx, ws, client.EventQuery{Last: a.Limit, Kind: a.Kind})
+			if err != nil {
+				return toolResult{}, err
+			}
+			return text("%s", formatHistory(ws, evs, a.Kind)), nil
+		},
+	})
+
+	register(&tool{
 		Name:        "workspace_list",
 		Description: "Lists all workspaces with their state. Use it to find workspaces from earlier conversations or copies.",
 		InputSchema: props(nil, nil),
@@ -636,3 +673,20 @@ func size(n int64) string {
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// formatHistory is one line per event: when, what, and how it ended.
+func formatHistory(ws string, evs []client.Event, kind string) string {
+	if len(evs) == 0 {
+		if kind != "" {
+			return fmt.Sprintf("No %s events in %s.", kind, ws)
+		}
+		return fmt.Sprintf("Nothing recorded in %s yet.", ws)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s, oldest first:\n", ws)
+	for _, ev := range evs {
+		// summaries already say how a command ended ("→ exit 1 in 0.2 s")
+		fmt.Fprintf(&b, "#%d %s  %s\n", ev.ID, ev.Time.Local().Format(time.DateTime), ev.Summary)
+	}
+	return b.String()
+}

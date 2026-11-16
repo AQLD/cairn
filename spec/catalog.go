@@ -256,6 +256,7 @@ var Catalog = []Scenario{
 				Children: []Scenario{
 					{ID: "G10.12.1", Title: "An agent creates, runs, saves, rewinds and copies through MCP tools", Proves: "The handshake, tool list and every core tool work against a real engine, failures come back as tool errors with Cairn's code, and stdout carries only protocol messages.", Milestone: E3},
 					{ID: "G10.12.2", Title: "A background server and a session survive an MCP full save and rewind", Proves: "exec background=true leaves a server running between calls, save full=true carries on at once, and rewinding to it brings back the same server process and the session's variables.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}},
+					{ID: "G10.12.3", Title: "An agent recalls what it did through the MCP history tool", Proves: "history lists the workspace's commands with their exit codes, its saves and rewinds, oldest first, filtered by kind, and works from a new conversation that never saw them.", Milestone: E3},
 				}},
 			// G10.13: the activity log (what an agent did in its workspace)
 			{ID: "G10.13", Title: "Every operation on a workspace shows up in its activity log", Proves: "A person can see what an agent did in its workspace, and watch it live, without the agent's help.", Milestone: E3,
@@ -265,6 +266,8 @@ var Catalog = []Scenario{
 					{ID: "G10.13.3", Title: "Copies start their own log naming their source; a rewind is recorded, not erased", Proves: "A copy's log begins with the save and workspace it came from, the original's log lists the copies, and resuming an earlier save adds an event while the history before it stays.", Milestone: E3},
 					{ID: "G10.13.4", Title: "The log survives restarts, is bounded, and outlives its workspace for the retention window", Proves: "Events written before an engine restart are still listed after it; each workspace keeps only its newest events; a deleted workspace's log stays readable until the retention window ends, then is purged.", Milestone: E3, Needs: []Need{NeedInProcess}},
 					{ID: "G10.13.5", Title: "Session cells, full saves, pauses and wakes are logged", Proves: "A session cell shows its code and result; a full save, a pause and the wake that follows show with the save they used and whether processes came back.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}},
+					{ID: "G10.13.6", Title: "Secrets are redacted from the activity log", Proves: "Tokens, passwords and keys in command lines, arguments, output tails and errors are stored as [redacted]: values named as secrets (TOKEN=, --password, Authorization:, user:pass@ in URLs), well-known token shapes and private keys. Best-effort: anything else in an output tail is still workspace contents.", Milestone: E3},
+					{ID: "G10.13.7", Title: "Secrets in session cells are redacted from the activity log", Proves: "A cell's code and output are redacted like commands, before they are cut short.", Milestone: E3, Needs: []Need{NeedPersistent}},
 				}},
 			// G10.14: connecting a developer's coding agents
 			{ID: "G10.14", Title: "A developer connects their coding agents with one command", Proves: "`cairn setup` takes a developer from an engine to Claude Code, Codex, pi or Cursor working in a workspace, and every step is safe to repeat.", Milestone: E3,
