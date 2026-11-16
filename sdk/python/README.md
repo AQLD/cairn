@@ -9,7 +9,7 @@ pip install ./sdk/python        # from a checkout of the repository
 ```python
 import cairn
 
-client = cairn.Client("http://127.0.0.1:7420", token="...")  # or CAIRN_ENDPOINT / CAIRN_TOKEN
+client = cairn.Client()   # the engine `cairn up` started; or Client(url, token=...), CAIRN_ENDPOINT / CAIRN_TOKEN
 
 ws = client.create_workspace(name="demo", memory_mb=1024)
 ws.write_file("app.py", "print('hello')")

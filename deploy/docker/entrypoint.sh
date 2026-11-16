@@ -7,11 +7,11 @@
 # "cgroup.subtree_control: device or resource busy". Kubernetes hides this;
 # plain Docker (Docker Desktop, OrbStack, Linux) does not. Move every process
 # here into a leaf cgroup and enable the controllers for the children, as
-# docker-in-docker does.
+# docker-in-docker does. Without write access (not privileged) this is skipped
+# and cairnd reports what it cannot do.
 set -eu
 cg=/sys/fs/cgroup
-if [ -f "$cg/cgroup.controllers" ] && [ "$(cat /proc/self/cgroup)" = "0::/" ]; then
-	mkdir -p "$cg/engine"
+if [ -f "$cg/cgroup.controllers" ] && [ "$(cat /proc/self/cgroup)" = "0::/" ] && mkdir -p "$cg/engine" 2>/dev/null; then
 	for pid in $(cat "$cg/cgroup.procs"); do
 		echo "$pid" >"$cg/engine/cgroup.procs" 2>/dev/null || true
 	done

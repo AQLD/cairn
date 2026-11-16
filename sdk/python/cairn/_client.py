@@ -27,6 +27,23 @@ Content = Union[bytes, str, IO[bytes], "os.PathLike[str]"]
 _SAFE = {"GET", "HEAD", "PUT", "DELETE"}
 
 
+def config_path() -> str:
+    """Where `cairn up` writes how to reach the local engine (the same file the CLI reads)."""
+    if os.environ.get("CAIRN_CONFIG"):
+        return os.environ["CAIRN_CONFIG"]
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "cairn", "config.json")
+
+
+def _read_config() -> dict:
+    try:
+        with open(config_path(), encoding="utf-8") as f:
+            cfg = json.load(f)
+        return cfg if isinstance(cfg, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 class Client:
     """A client for one Cairn engine.
 
@@ -44,9 +61,17 @@ class Client:
 
     def __init__(self, endpoint: Optional[str] = None, token: Optional[str] = None, *,
                  timeout: float = 60.0, retries: int = 4):
-        endpoint = endpoint or os.environ.get("CAIRN_ENDPOINT") or "http://127.0.0.1:7420"
+        env_token = os.environ.get("CAIRN_TOKEN", "")
+        if not endpoint:
+            endpoint = os.environ.get("CAIRN_ENDPOINT", "")
+        if not endpoint:
+            # the config `cairn up` writes; its token goes only to its endpoint
+            cfg = _read_config()
+            endpoint = cfg.get("endpoint") or "http://127.0.0.1:7420"
+            if token is None and not env_token and cfg.get("endpoint"):
+                token = cfg.get("token", "")
         self.endpoint = endpoint.rstrip("/")
-        self.token = token if token is not None else os.environ.get("CAIRN_TOKEN", "")
+        self.token = token if token is not None else env_token
         self.timeout = timeout
         self.retries = retries
 

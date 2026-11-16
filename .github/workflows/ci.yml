@@ -76,3 +76,25 @@ jobs:
         with:
           name: gvisor-accept-log
           path: accept.log
+
+  docker:
+    # What a developer runs on a laptop: the engine image under plain Docker,
+    # started by `cairn up` (G10.11). Kubernetes and the gVisor job above run
+    # cairnd differently, so neither catches a container-only problem.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build the engine image
+        run: docker build -f deploy/docker/Dockerfile -t cairnd:ci .
+      - name: cairn up scenarios (G10.11)
+        shell: bash
+        run: |
+          CAIRN_TEST_DOCKER_IMAGE=cairnd:ci go test -count=1 -v -timeout 15m ./acceptance \
+            -run 'TestEndGoals/G10_/G10.11_' 2>&1 | tee docker.log
+          # these must run here, never skip (`! grep` would not stop a set -e script)
+          if grep -E -- '--- SKIP' docker.log; then echo "G10.11 skipped in the docker job"; exit 1; fi
+          grep -E -- '--- PASS: .*G10.11.1_' docker.log && grep -E -- '--- PASS: .*G10.11.2_' docker.log
