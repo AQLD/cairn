@@ -545,6 +545,10 @@ func (e *Engine) exec(ctx context.Context, id string, req ExecRequest) (ExecResu
 	if len(req.Argv) == 0 {
 		return ExecResult{}, fmt.Errorf("%w: command is empty", ErrInvalid)
 	}
+	// relative to the workspace's root, or absolute inside it; never above it
+	if c := path.Clean(filepath.ToSlash(req.Dir)); req.Dir != "" && (c == ".." || strings.HasPrefix(c, "../")) {
+		return ExecResult{}, fmt.Errorf("%w: working directory %q is outside the workspace", ErrInvalid, req.Dir)
+	}
 	if err := e.checkDisk(ctx, id); err != nil {
 		return ExecResult{}, err
 	}

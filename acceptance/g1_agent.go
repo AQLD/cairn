@@ -95,9 +95,14 @@ func init() {
 		e.Must(err)
 		Equal(e, "stdout", res.Stdout, "hi there\ndir\n")
 
-		_, err = e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"pwd"}, Dir: "../.."})
-		if err == nil {
-			e.T.Fatal("working folder outside the workspace was accepted")
+		// an absolute folder is inside the workspace, on every runtime
+		res, err = e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"sh", "-c", `pwd | sed 's|.*/||'`}, Dir: "/sub/dir"})
+		e.Must(err)
+		Equal(e, "absolute working folder", res.Stdout, "dir\n")
+
+		for _, dir := range []string{"../..", "..", "sub/../../x"} {
+			_, err = e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"pwd"}, Dir: dir})
+			e.ErrCode(err, "invalid_argument")
 		}
 	})
 

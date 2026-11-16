@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -43,11 +44,11 @@ func (*Host) Exec(ctx context.Context, spec Spec, req ExecRequest) (ExecResult, 
 	}
 	dir := spec.RootDir
 	if req.Dir != "" {
-		clean := filepath.Clean(filepath.FromSlash(req.Dir))
-		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		// as in a sandbox: absolute paths are inside the workspace
+		if c := path.Clean(filepath.ToSlash(req.Dir)); c == ".." || strings.HasPrefix(c, "../") {
 			return ExecResult{}, fmt.Errorf("working directory %q is outside the workspace", req.Dir)
 		}
-		dir = filepath.Join(spec.RootDir, clean)
+		dir = filepath.Join(spec.RootDir, filepath.FromSlash(path.Clean("/"+filepath.ToSlash(req.Dir))))
 	}
 
 	if req.Timeout > 0 {
