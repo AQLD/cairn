@@ -41,7 +41,7 @@ Needs Docker (Docker Desktop, OrbStack or colima on macOS; Docker Engine on Linu
 
 ```sh
 go install github.com/AQLD/cairn/cmd/cairn@latest
-cairn up                      # engine in Docker, real gVisor workspaces, ~10 s the first time
+cairn up                      # engine in Docker with real gVisor workspaces (under a minute the first time)
 ```
 
 From a checkout of this repository, `go run ./cmd/cairn up --build` builds the engine image locally instead of pulling it.
@@ -60,17 +60,25 @@ cairn copy $save --count 3                           # three independent copies 
 
 `cairn down` stops the engine and pauses every workspace (their processes come back on `cairn up`); `cairn down --purge` deletes everything. The engine container is privileged because gVisor builds each sandbox's namespaces and cgroups. Workspaces run on gVisor's own kernel, so agent code never reaches your machine's kernel directly; a flaw that let code escape gVisor would land in that privileged container, which is root on Docker's VM (macOS) or on the machine itself (Docker Engine on Linux).
 
-### Use it from your coding agent
-
-`cairn mcp` serves the Model Context Protocol, so Claude Code, Cursor, Codex and other agents work in Cairn workspaces with no code: they run installs, tests and servers there, save before risky steps, rewind when something breaks, and copy a save to try several fixes at once.
+### Connect your coding agent
 
 ```sh
-cairn mcp install claude --write       # or cursor, codex, vscode, windsurf, goose
-cairn push $ws ./my-project            # a folder in (to /root/my-project) ...
-cairn pull $ws /root/my-project out    # ... and back out
+cd ~/code/my-project
+cairn setup --project
 ```
 
-See [docs/agents.md](docs/agents.md) for every client and tool.
+`cairn setup` finds the coding agents on your machine (Claude Code, Codex, pi and Cursor) and connects each one: it installs the Cairn skill where the agent loads [Agent Skills](https://agentskills.io) and registers `cairn mcp` where the agent speaks MCP (pi uses the skill and the CLI). With `--project` it also gives the repository its own workspace with the code pushed in, and adds a short Cairn section to `AGENTS.md` (Claude Code's `CLAUDE.md` imports it) telling the agent to run builds, tests and servers there, save before risky steps, and rewind instead of repairing by hand. Run it again any time; it only changes what is out of date.
+
+Inside the project, `.` names its workspace and `cairn run` copies your edits in before running:
+
+```sh
+cairn run -- pytest -q                 # local edits, run in the workspace
+cairn save . --full                    # what an agent does before a risky step
+cairn log . -f                         # watch everything the agent runs
+cairn doctor                           # what is wrong, and the command that fixes it
+```
+
+See [docs/agents.md](docs/agents.md) for each agent, the MCP tools and other MCP clients.
 
 For working on Cairn itself there is also a `host` runtime (`make run`) that runs commands directly on your machine with **no isolation** and no full saves; use it only with code you trust.
 
