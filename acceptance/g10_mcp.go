@@ -295,8 +295,9 @@ func init() {
 			e.T.Helper()
 			deadline := time.Now().Add(10 * time.Second)
 			for time.Now().Before(deadline) {
-				if p := strings.TrimSpace(m.ok("read_file", map[string]any{"path": "/tmp/server.pid"})); p != "" {
-					return p
+				// not_found until the background command has started
+				if p, isErr := m.tool("read_file", map[string]any{"path": "/tmp/server.pid"}); !isErr && strings.TrimSpace(p) != "" {
+					return strings.TrimSpace(p)
 				}
 				time.Sleep(100 * time.Millisecond)
 			}
