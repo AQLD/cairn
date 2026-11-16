@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import base64
+import fnmatch
 import io
 import json
 import os
 import random
 import socket
+import tarfile
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -250,6 +253,62 @@ class Client:
             if close:
                 out.close()
         return n
+
+    def push_dir(self, workspace_id: str, local_dir: Union[str, "os.PathLike[str]"], remote_dir: str,
+                 exclude: Sequence[str] = ()) -> dict:
+        """Copies a local folder into remote_dir of the workspace (created if
+        missing), merging with what is there: modes, times, symlinks and empty
+        folders are kept, ownership is not. exclude holds fnmatch patterns
+        matched against each entry's name and its path relative to local_dir
+        (e.g. "node_modules", "*.pyc"); a matching folder is left out whole.
+        Returns what was copied: files, dirs, links and bytes."""
+        root = os.fspath(local_dir)
+
+        def keep(info: tarfile.TarInfo) -> Optional[tarfile.TarInfo]:
+            rel = info.name[2:] if info.name.startswith("./") else info.name
+            if rel not in (".", "") and any(fnmatch.fnmatchcase(os.path.basename(rel), p) or fnmatch.fnmatchcase(rel, p)
+                                            for p in exclude):
+                return None
+            if not (info.isreg() or info.isdir() or info.issym()):
+                return None  # devices, fifos and the like are not project files
+            info.uid = info.gid = 0
+            info.uname = info.gname = ""
+            return info
+
+        # spooled to a temporary file so a retry after a dropped connection can
+        # send it again (a push merges, so repeating it is safe)
+        with tempfile.TemporaryFile() as buf:
+            with tarfile.open(fileobj=buf, mode="w", format=tarfile.PAX_FORMAT) as tf:
+                for name in sorted(os.listdir(root)):
+                    tf.add(os.path.join(root, name), arcname=name, filter=keep)
+            buf.seek(0)
+            q = urllib.parse.urlencode({"path": remote_dir})
+            return json.loads(self._request("PUT", f"/v1/workspaces/{_q(workspace_id)}/archive?{q}", buf))
+
+    def pull_dir(self, workspace_id: str, remote_dir: str, local_dir: Union[str, "os.PathLike[str]"]) -> int:
+        """Copies remote_dir of the workspace into a local folder (created if
+        missing), merging with what is there. Nothing extracted can land
+        outside local_dir. Returns the number of entries copied."""
+        dest = os.fspath(local_dir)
+        os.makedirs(dest, exist_ok=True)
+        q = urllib.parse.urlencode({"path": remote_dir})
+        with tempfile.TemporaryFile() as buf:
+            with self._open("GET", f"/v1/workspaces/{_q(workspace_id)}/archive?{q}") as resp:
+                while chunk := resp.read(1 << 20):
+                    buf.write(chunk)
+            buf.seek(0)
+            with tarfile.open(fileobj=buf, mode="r:") as tf:
+                members = tf.getmembers()
+                if hasattr(tarfile, "tar_filter"):
+                    tf.extractall(dest, filter="tar")
+                else:  # Python without extraction filters: check every path ourselves
+                    base = os.path.realpath(dest)
+                    for m in members:
+                        target = os.path.realpath(os.path.join(base, m.name))
+                        if os.path.isabs(m.name) or os.path.commonpath([base, target]) != base:
+                            raise ValueError(f"unsafe path in archive: {m.name!r}")
+                    tf.extractall(dest)
+        return len(members)
 
     def _file_path(self, workspace_id: str, path: str) -> str:
         return f"/v1/workspaces/{_q(workspace_id)}/files?" + urllib.parse.urlencode({"path": path})

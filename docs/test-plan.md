@@ -7,9 +7,9 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
 | E0 | 4 | 0 | 1 |
-| E1 | 54 | 0 | 4 |
+| E1 | 55 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 49 | 11 | 2 |
+| E3 | 52 | 11 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -137,6 +137,7 @@ Work done in a workspace is still there, exactly as it was, after a save and res
   - ✅ **G1.10.5** A template is built from a container image in a private registry · E3 · needs in_process
 - ✅ **G1.12** An app and its database stay connected across a full save · E1 · needs full_save, persistent_processes
 - ✅ **G1.13** A file written through the API is seen whole by the workspace's programs · E1
+- ✅ **G1.14** A project folder goes into a workspace and comes back unchanged · E3
 - ✅ **G1.11** Files in /tmp are kept like any other file · E1 · needs isolation, in_process
 - 📂 **G1.7** Golden workloads save and resume correctly · E0 · needs full_save
   - ✅ **G1.7.1** Python script with open files · E0 · needs full_save
@@ -274,6 +275,7 @@ Untrusted, even hostile, code stays inside its workspace. Gate: **E4**.
 - ✅ **G8.5** A disk fill is contained · E4 · needs isolation, disk_limits, in_process
 - ✅ **G8.6** Cloud metadata and the host network are unreachable · E4 · needs network_control
 - ✅ **G8.7** Host files and processes are invisible · E4 · needs isolation
+- ✅ **G8.8** Folder archives cannot reach outside the workspace · E1
 
 ## G9 Fast and cheap enough to run
 
@@ -308,6 +310,9 @@ An operator can install, observe and upgrade Cairn without surprises. Gate: **E4
   - ✅ **G10.11.1** `cairn up` starts an engine in Docker with gVisor, full saves and a ready default template · E3 · needs docker
   - ✅ **G10.11.2** `cairn down` then `cairn up` keeps workspaces and their running processes · E3 · needs docker
   - ✅ **G10.11.3** `cairn up` with a new image or settings replaces the engine and keeps workspaces and their processes · E3 · needs docker
+- 📂 **G10.12** Local coding agents drive workspaces through MCP · E3
+  - ✅ **G10.12.1** An agent creates, runs, saves, rewinds and copies through MCP tools · E3
+  - ✅ **G10.12.2** A background server and a session survive an MCP full save and rewind · E3 · needs full_save, persistent_processes
 
 ## G18 Every step can be rewound
 

@@ -29,6 +29,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -44,7 +46,8 @@ commands:
                                           full saves) and write the client config
   down [--purge]                          stop it (workspaces kept); --purge deletes everything
   status                                  show the engine and its workspaces
-  create [--name NAME] [--template T]     create a workspace (from a template)
+  create [--name NAME] [--template T] [--network] [--memory MB] [--disk MB] [--cpus N]
+                                          create a workspace (from a template)
   template import NAME ROOTFS.tar         import a root filesystem tar as a template
                                           (e.g. docker export $(docker create python:3.12-slim) > python.tar)
   template pull NAME IMAGE [--insecure]   build a template from a container image in a registry
@@ -58,6 +61,9 @@ commands:
                                           list or stop sessions
   put WORKSPACE LOCAL_FILE REMOTE_PATH    upload a file
   get WORKSPACE REMOTE_PATH [LOCAL_FILE]  download a file (stdout if no LOCAL_FILE)
+  push WORKSPACE LOCAL_DIR [REMOTE_DIR] [--exclude PATTERN]...
+                                          copy a folder in (default /root/<its name>), merging
+  pull WORKSPACE REMOTE_DIR [LOCAL_DIR]   copy a folder out (default ./<its name>), merging
   save WORKSPACE [--full]                 save (quick by default)
   saves WORKSPACE                         list a workspace's saves
   resume SAVE                             restore a workspace to a save
@@ -68,6 +74,9 @@ commands:
   pause WORKSPACE                         free its memory now; the next command wakes it
   rm WORKSPACE                            delete a workspace (saves are kept)
   info                                    show the engine's runtime and capabilities
+  mcp [--workspace ID]                    serve the Model Context Protocol on stdio, for coding agents
+  mcp install CLIENT [--project] [--write]
+                                          register Cairn with claude, cursor, codex, vscode, windsurf or goose
 
 environment:
   CAIRN_ENDPOINT  engine URL (default: from the config cairn up writes, else http://127.0.0.1:7420)
@@ -111,15 +120,22 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 	switch cmd {
 	case "status":
 		return cmdStatus(ctx, c, args)
+	case "mcp":
+		return runMCP(ctx, c, args)
 
 	case "create":
 		fs := flag.NewFlagSet("create", flag.ContinueOnError)
 		name := fs.String("name", "", "workspace name")
 		template := fs.String("template", "", "template to start from (default: the engine's)")
+		network := fs.Bool("network", false, "allow outbound network access")
+		memory := fs.Int64("memory", 0, "memory limit in MB (default: the engine's)")
+		disk := fs.Int64("disk", 0, "disk size in MB (default: the engine's)")
+		cpus := fs.Float64("cpus", 0, "CPU limit, in CPUs (default: the engine's)")
 		if err := fs.Parse(args); err != nil {
 			return 2, err
 		}
-		ws, err := c.CreateWorkspace(ctx, client.CreateWorkspace{Name: *name, Template: *template})
+		ws, err := c.CreateWorkspace(ctx, client.CreateWorkspace{Name: *name, Template: *template, Network: *network,
+			Limits: client.Limits{MemoryMB: *memory, DiskMB: *disk, CPUs: *cpus}})
 		if err != nil {
 			return 1, err
 		}
@@ -179,6 +195,40 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 		}
 		_, err = os.Stdout.Write(data)
 		return 0, err
+
+	case "push":
+		fs := flag.NewFlagSet("push", flag.ContinueOnError)
+		var exclude stringList
+		fs.Var(&exclude, "exclude", "leave out names or paths matching this pattern (repeatable), e.g. node_modules")
+		pos, err := interleaved(fs, args)
+		if err != nil || len(pos) < 2 || len(pos) > 3 {
+			return 2, errors.New("usage: cairn push WORKSPACE LOCAL_DIR [REMOTE_DIR] [--exclude PATTERN]...")
+		}
+		remote := ""
+		if len(pos) == 3 {
+			remote = pos[2]
+		} else if remote, err = defaultRemote(pos[1]); err != nil {
+			return 1, err
+		}
+		st, err := c.PushDir(ctx, pos[0], pos[1], remote, client.PushOptions{Exclude: exclude})
+		if err != nil {
+			return 1, err
+		}
+		fmt.Printf("%s: %d files, %d folders, %d links, %d bytes\n", remote, st.Files, st.Dirs, st.Links, st.Bytes)
+
+	case "pull":
+		if len(args) < 2 || len(args) > 3 {
+			return 2, errors.New("usage: cairn pull WORKSPACE REMOTE_DIR [LOCAL_DIR]")
+		}
+		local := path.Base(path.Clean("/" + args[1]))
+		if len(args) == 3 {
+			local = args[2]
+		}
+		st, err := c.PullDir(ctx, args[0], args[1], local)
+		if err != nil {
+			return 1, err
+		}
+		fmt.Printf("%s: %d files, %d folders, %d links, %d bytes\n", local, st.Files, st.Dirs, st.Links, st.Bytes)
 
 	case "save":
 		fs := flag.NewFlagSet("save", flag.ContinueOnError)
@@ -391,6 +441,38 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 		return 2, fmt.Errorf("unknown command %q", cmd)
 	}
 	return 0, nil
+}
+
+// interleaved parses flags that may come before, between or after the
+// positional arguments, which it returns in order.
+func interleaved(fs *flag.FlagSet, args []string) ([]string, error) {
+	var pos []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		if fs.NArg() == 0 {
+			return pos, nil
+		}
+		pos = append(pos, fs.Arg(0))
+		args = fs.Args()[1:]
+	}
+}
+
+// stringList collects a repeatable flag.
+type stringList []string
+
+func (l *stringList) String() string     { return strings.Join(*l, ",") }
+func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
+
+// defaultRemote is where `cairn push WS DIR` puts DIR: /root/<its name>, in
+// the home folder of the workspace's user.
+func defaultRemote(local string) (string, error) {
+	abs, err := filepath.Abs(local)
+	if err != nil {
+		return "", err
+	}
+	return "/root/" + filepath.Base(abs), nil
 }
 
 // splitID takes the first non-flag argument as the ID, so flags may come
