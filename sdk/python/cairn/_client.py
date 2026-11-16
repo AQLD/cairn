@@ -315,10 +315,16 @@ class Client:
 
     # -- saves -------------------------------------------------------------
 
-    def save(self, workspace_id: str, kind: str = "quick", *, idempotency_key: Optional[str] = None) -> Save:
+    def save(self, workspace_id: str, kind: str = "quick", *, keep_running: bool = False,
+             idempotency_key: Optional[str] = None) -> Save:
         """Saves the workspace. "quick" keeps files; "full" keeps memory and
-        running processes too, and stops the workspace until it is resumed."""
-        d = self._json("POST", f"/v1/workspaces/{_q(workspace_id)}/saves", {"kind": kind},
+        running processes too, and stops the workspace until it is resumed,
+        unless keep_running=True: then it carries on straight away, its
+        processes still running (save before a risky step, keep working)."""
+        body: dict[str, Any] = {"kind": kind}
+        if keep_running:
+            body["keep_running"] = True
+        d = self._json("POST", f"/v1/workspaces/{_q(workspace_id)}/saves", body,
                        key=idempotency_key or _key())
         return Save._from(d, self)
 

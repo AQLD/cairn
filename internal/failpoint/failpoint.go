@@ -24,6 +24,9 @@ const (
 	SaveWrite         = "save/write"          // writing the save's files fails (e.g. disk full)
 	PauseAfterCommit  = "pause/after-commit"  // pause save committed, not yet recorded as paused
 	WakeBeforeRestore = "wake/before-restore" // waking: state is resuming, memory not restored yet
+
+	SaveBeforeThaw = "save/before-thaw" // a full save that keeps running is ready; the sandbox is still frozen
+	SaveAfterThaw  = "save/after-thaw"  // thawed, the workspace still recorded as saving
 )
 
 type Set struct {

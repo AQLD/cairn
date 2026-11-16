@@ -271,22 +271,14 @@ func init() {
 			if err != nil {
 				return toolResult{}, err
 			}
-			kind := client.QuickSave
+			opts := client.SaveOptions{Kind: client.QuickSave}
 			if a.Full {
-				kind = client.FullSave
+				// keep running: saving is a checkpoint, not a shutdown
+				opts = client.SaveOptions{Kind: client.FullSave, KeepRunning: true}
 			}
-			sv, err := s.c.Save(ctx, ws, kind)
+			sv, err := s.c.SaveWith(ctx, ws, opts)
 			if err != nil {
 				return toolResult{}, err
-			}
-			if a.Full {
-				// A full save stops the workspace; carry on from it at once, so
-				// saving is a checkpoint, not a shutdown (the save itself is
-				// unaffected). Swap for the engine's keep_running save option
-				// once it exists.
-				if _, err := s.c.Resume(ctx, sv.ID); err != nil {
-					return toolResult{}, fmt.Errorf("saved %s, but could not carry on from it: %w", sv.ID, err)
-				}
 			}
 			return text("Saved %s as %s (%s, %s). Rewind to it with rewind save=%s; copy it to try alternatives.", ws, sv.ID, sv.Kind, size(sv.Size), sv.ID), nil
 		},

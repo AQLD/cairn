@@ -662,10 +662,38 @@ func workspacePath(name string) (string, error) {
 // --- saves ---
 
 // Save writes a quick (filesystem) or full (filesystem, memory and processes)
-// save. A full save stops the workspace; resume it to continue.
+// save. A full save stops the workspace; resume it to continue (or use
+// SaveWith and KeepRunning).
 // requestKey, if set, makes the save idempotent: a retry returns the save the
 // first request made, even if the engine crashed before replying.
 func (e *Engine) Save(ctx context.Context, id string, kind save.Kind, requestKey string) (*Save, error) {
+	return e.SaveWith(ctx, id, SaveOptions{Kind: kind, RequestKey: requestKey})
+}
+
+// SaveOptions are a save's settings.
+type SaveOptions struct {
+	Kind       save.Kind
+	RequestKey string
+	// KeepRunning brings a full save's workspace straight back from the save
+	// it just wrote, memory and processes included, so the caller can carry
+	// on (an agent saving before a risky step). Quick saves always keep
+	// running.
+	KeepRunning bool
+}
+
+// SaveWith is Save with options.
+//
+// With KeepRunning, the sandbox is frozen instead of stopped: its memory is
+// written while every process is held where it is, the filesystem is archived
+// while nothing can touch it (so both halves describe the same moment), and
+// the processes carry on once the save is committed. Nothing is restored, so
+// keeping running costs no more than the save. The workspace stays recorded
+// as saving until it is thawed: if the engine dies in between, recovery
+// treats it like any interrupted save (the save is published if it was
+// committed) and the runtime thaws the frozen sandbox when it adopts it, so
+// the processes are never lost.
+func (e *Engine) SaveWith(ctx context.Context, id string, opts SaveOptions) (*Save, error) {
+	kind, requestKey := opts.Kind, opts.RequestKey
 	if kind == "" {
 		kind = save.Quick
 	}
@@ -679,6 +707,11 @@ func (e *Engine) Save(ctx context.Context, id string, kind save.Kind, requestKey
 	}
 	if kind == save.Full && !e.cfg.Runtime.Capabilities().FullSave {
 		return nil, fmt.Errorf("full save: %w (runtime %s)", ErrUnsupported, e.cfg.Runtime.Name())
+	}
+	keepRunning := kind == save.Full && opts.KeepRunning // quick saves always keep running
+	freezer, canFreeze := e.cfg.Runtime.(runtime.Freezer)
+	if keepRunning && !canFreeze {
+		return nil, fmt.Errorf("full save that keeps running: %w (runtime %s)", ErrUnsupported, e.cfg.Runtime.Name())
 	}
 	release, err := e.heavy(ctx)
 	if err != nil {
@@ -727,7 +760,12 @@ func (e *Engine) Save(ctx context.Context, id string, kind save.Kind, requestKey
 		}
 	}
 
-	m, err := e.writeSave(ctx, spec, saveID, kind, now)
+	var m *save.Manifest
+	if keepRunning {
+		m, err = e.writeSaveFrozen(ctx, freezer, spec, saveID, now)
+	} else {
+		m, err = e.writeSave(ctx, spec, saveID, kind, now)
+	}
 	if failpoint.Crashed(err) {
 		return nil, err
 	}
@@ -746,7 +784,24 @@ func (e *Engine) Save(ctx context.Context, id string, kind save.Kind, requestKey
 	if err := e.store.SetBaseSave(ctx, id, saveID); err != nil {
 		return nil, err
 	}
-	if kind == save.Full {
+	switch {
+	case keepRunning:
+		if err := e.cfg.Failpoints.Check(failpoint.SaveBeforeThaw); err != nil {
+			return nil, err
+		}
+		if err := freezer.Thaw(ctx, spec); err != nil {
+			// the save is good; the processes are not coming back from here
+			_ = e.cfg.Runtime.Stop(ctx, spec)
+			_ = e.store.SetWorkspaceState(ctx, id, store.Stopped)
+			return nil, fmt.Errorf("saved %s, but the workspace could not carry on (resume that save to continue): %w", saveID, err)
+		}
+		if err := e.cfg.Failpoints.Check(failpoint.SaveAfterThaw); err != nil {
+			return nil, err
+		}
+		if err := e.store.SetWorkspaceState(ctx, id, store.Running); err != nil {
+			return nil, err
+		}
+	case kind == save.Full:
 		if err := e.store.SetWorkspaceState(ctx, id, store.Stopped); err != nil {
 			return nil, err
 		}
@@ -799,6 +854,33 @@ func noSpace(err error) error {
 }
 
 func (e *Engine) writeSave(ctx context.Context, spec runtime.Spec, saveID string, kind save.Kind, now time.Time) (*save.Manifest, error) {
+	var memory func(dir string) error
+	if kind == save.Full {
+		memory = func(dir string) error { return e.cfg.Runtime.Checkpoint(ctx, spec, dir) }
+	}
+	return e.buildSave(ctx, spec, saveID, kind, now, memory)
+}
+
+// writeSaveFrozen writes a full save of a workspace that is frozen, not
+// stopped, for the length of the save; the caller thaws it. If the save
+// fails, the workspace is thawed here, its processes untouched.
+func (e *Engine) writeSaveFrozen(ctx context.Context, f runtime.Freezer, spec runtime.Spec, saveID string, now time.Time) (*save.Manifest, error) {
+	frozen := false
+	m, err := e.buildSave(ctx, spec, saveID, save.Full, now, func(dir string) error {
+		err := f.CheckpointFrozen(ctx, spec, dir)
+		frozen = err == nil
+		return err
+	})
+	if err != nil && frozen && !failpoint.Crashed(err) {
+		if terr := f.Thaw(ctx, spec); terr != nil {
+			e.log.Error("could not thaw a workspace after its save failed", "workspace", spec.ID, "err", terr)
+		}
+	}
+	return m, err
+}
+
+// buildSave writes a save; memory, if set, writes a full save's memory first.
+func (e *Engine) buildSave(ctx context.Context, spec runtime.Spec, saveID string, kind save.Kind, now time.Time, memory func(dir string) error) (*save.Manifest, error) {
 	var info *save.WorkspaceInfo
 	if w, err := e.store.GetWorkspace(ctx, spec.ID); err == nil {
 		info = &save.WorkspaceInfo{Name: w.Name, Spec: w.Spec}
@@ -822,14 +904,15 @@ func (e *Engine) writeSave(ctx context.Context, spec runtime.Spec, saveID string
 		}
 	}()
 
-	// A full save checkpoints first: that stops the sandbox, so the filesystem is
-	// quiet when it is archived and the two halves describe the same moment.
-	if kind == save.Full {
+	// A full save checkpoints first: that stops (or freezes) the sandbox, so the
+	// filesystem is quiet when it is archived and the two halves describe the
+	// same moment.
+	if memory != nil {
 		memDir, err := b.MemoryDir()
 		if err != nil {
 			return nil, err
 		}
-		if err := e.cfg.Runtime.Checkpoint(ctx, spec, memDir); err != nil {
+		if err := memory(memDir); err != nil {
 			return nil, fmt.Errorf("save memory: %w", err)
 		}
 		if err := b.AddMemory(); err != nil {

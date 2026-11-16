@@ -315,6 +315,21 @@ class TestSaves(EngineTest):
         self.assertEqual(ws.run("cat", "/tmp/pid").encode(), pid)
         self.assertEqual(ws.exec(f"kill -0 {pid.decode().strip()}").exit_code, 0, "the process is still alive")
 
+    def test_full_save_can_keep_running(self):
+        ws = self.workspace("keep")
+        if not (self.info.capabilities.full_save and self.info.capabilities.persistent_processes):
+            with self.assertRaises(cairn.UnsupportedByRuntime):
+                ws.save("full", keep_running=True)
+            ws.save(keep_running=True)  # quick saves always keep running
+            return
+        ws.exec("nohup sh -c 'echo $$ > /tmp/pid; while :; do sleep 1; done' >/dev/null 2>&1 &")
+        time.sleep(0.5)
+        pid = ws.read_file("tmp/pid").decode().strip()
+        save = ws.save("full", keep_running=True)
+        self.assertEqual(save.kind, "full")
+        self.assertEqual(self.c.workspace(ws.id).state, "running")
+        self.assertEqual(ws.exec(f"kill -0 {pid}").exit_code, 0, "the process kept running")
+
     def test_pause_frees_memory_or_says_it_cannot(self):
         ws = self.workspace("pause")
         if not self.info.capabilities.full_save:

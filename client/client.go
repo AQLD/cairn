@@ -414,8 +414,22 @@ func (c *Client) ReadFile(ctx context.Context, id, path string) ([]byte, error) 
 }
 
 func (c *Client) Save(ctx context.Context, id string, kind SaveKind) (*Save, error) {
+	return c.SaveWith(ctx, id, SaveOptions{Kind: kind})
+}
+
+// SaveOptions are a save's settings.
+type SaveOptions struct {
+	Kind SaveKind `json:"kind"`
+	// KeepRunning: a full save brings the workspace straight back from the
+	// save, memory and processes included, instead of leaving it stopped
+	// until a resume. Quick saves always keep running.
+	KeepRunning bool `json:"keep_running,omitempty"`
+}
+
+// SaveWith saves a workspace with options.
+func (c *Client) SaveWith(ctx context.Context, id string, opts SaveOptions) (*Save, error) {
 	var out Save
-	return &out, c.do(ctx, http.MethodPost, "/v1/workspaces/"+url.PathEscape(id)+"/saves", map[string]SaveKind{"kind": kind}, &out)
+	return &out, c.do(ctx, http.MethodPost, "/v1/workspaces/"+url.PathEscape(id)+"/saves", opts, &out)
 }
 
 func (c *Client) ListSaves(ctx context.Context, workspaceID string) ([]Save, error) {
