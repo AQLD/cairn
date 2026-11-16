@@ -62,10 +62,10 @@ func (le *localEngine) cairn(args ...string) (string, error) {
 	return string(out), err
 }
 
-func (le *localEngine) up() {
+func (le *localEngine) up(extra ...string) {
 	le.e.T.Helper()
 	start := time.Now()
-	out, err := le.cairn("up", "--image", os.Getenv("CAIRN_TEST_DOCKER_IMAGE"), "--name", le.name, "--port", le.port)
+	out, err := le.cairn(append([]string{"up", "--image", os.Getenv("CAIRN_TEST_DOCKER_IMAGE"), "--name", le.name, "--port", le.port}, extra...)...)
 	if err != nil {
 		le.e.T.Fatalf("cairn up: %v\n%s", err, out)
 	}
@@ -77,6 +77,13 @@ func (le *localEngine) down() {
 	if out, err := le.cairn("down", "--name", le.name); err != nil {
 		le.e.T.Fatalf("cairn down: %v\n%s", err, out)
 	}
+}
+
+func (le *localEngine) containerID() string {
+	le.e.T.Helper()
+	out, err := exec.Command("docker", "container", "inspect", "-f", "{{.Id}}", le.name).Output()
+	le.e.Must(err)
+	return strings.TrimSpace(string(out))
 }
 
 // client reads the config `cairn up` wrote, as every other tool would.
@@ -125,6 +132,18 @@ func init() {
 		_, err = client.New(cfg.Endpoint, "").ListWorkspaces(e.Ctx)
 		e.ErrCode(err, "unauthorized")
 
+		// the CLI finds the engine through the config alone
+		out, err := le.cairn("status", "--name", le.name)
+		if err != nil || !strings.Contains(out, "runtime runsc") {
+			e.T.Fatalf("cairn status: %v\n%s", err, out)
+		}
+		out, err = le.cairn("create", "--name", "from-cli")
+		e.Must(err)
+		cliWS := strings.TrimSpace(out)
+		if out, err = le.cairn("exec", cliWS, "--", "echo", "hi"); err != nil || strings.TrimSpace(out) != "hi" {
+			e.T.Fatalf("cairn exec through the config: %v\n%s", err, out)
+		}
+
 		c := le.client()
 		info, err := c.Info(e.Ctx)
 		e.Must(err)
@@ -138,7 +157,7 @@ func init() {
 		// no template named: the default one, python, in gVisor
 		ws, err := c.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "first"})
 		e.Must(err)
-		out, err := c.Run(e.Ctx, ws.ID, "python3", "-c", "import platform; print(platform.release())")
+		out, err = c.Run(e.Ctx, ws.ID, "python3", "-c", "import platform; print(platform.release())")
 		e.Must(err)
 		if !strings.Contains(out, "gvisor") {
 			e.T.Fatalf("kernel %q: want gVisor's", out)
@@ -187,5 +206,48 @@ func init() {
 		got, err := c.ReadFile(e.Ctx, ws.ID, "notes.txt")
 		e.Must(err)
 		Equal(e, "file after cairn down and up", string(got), "half done")
+	})
+	register("G10.11.3", func(e *Env) {
+		le := startLocalEngine(e)
+		c := le.client()
+		ws, err := c.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "kept"})
+		e.Must(err)
+		pid, _ := localCounter(e, c, ws.ID)
+		id1 := le.containerID()
+
+		// same settings: nothing replaced
+		le.up()
+		Equal(e, "container after a plain cairn up", le.containerID(), id1)
+
+		// a new setting (here: no default template) replaces the container
+		le.up("--template", "")
+		if le.containerID() == id1 {
+			e.T.Fatal("cairn up with a new setting kept the old engine container")
+		}
+		pid2, n2 := readLocalCounter(e, c, ws.ID)
+		Equal(e, "pid after the engine was replaced", pid2, pid)
+		time.Sleep(500 * time.Millisecond)
+		if _, n3 := readLocalCounter(e, c, ws.ID); n3 <= n2 {
+			e.T.Fatalf("counter %d -> %d: the process did not carry on", n2, n3)
+		}
+
+		// names it did not make are refused, never replaced or deleted
+		other := le.name + "-other"
+		if out, err := exec.Command("docker", "run", "-d", "--name", other, "-v", other+"-data:/x", "busybox", "sleep", "300").CombinedOutput(); err != nil {
+			e.T.Skipf("cannot start a foreign container: %v %s", err, out)
+		}
+		e.T.Cleanup(func() {
+			_ = exec.Command("docker", "rm", "-f", other).Run()
+			_ = exec.Command("docker", "volume", "rm", other+"-data").Run()
+		})
+		if out, err := le.cairn("up", "--name", other); err == nil {
+			e.T.Fatalf("cairn up took over a container it did not make:\n%s", out)
+		}
+		if out, err := le.cairn("down", "--purge", "--name", other); err == nil {
+			e.T.Fatalf("cairn down --purge deleted a container it did not make:\n%s", out)
+		}
+		if out, err := exec.Command("docker", "volume", "inspect", other+"-data").CombinedOutput(); err != nil {
+			e.T.Fatalf("foreign volume gone: %v %s", err, out)
+		}
 	})
 }

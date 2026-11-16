@@ -59,7 +59,7 @@ cairn resume $save                                   # rewind: note.txt says hel
 cairn copy $save --count 3                           # three independent copies to try three ideas
 ```
 
-`cairn down` stops the engine and pauses every workspace (their processes come back on `cairn up`); `cairn down --purge` deletes everything. The engine container is privileged because gVisor builds each sandbox's namespaces and cgroups; the workspaces themselves run on gVisor's kernel, walled off from your machine.
+`cairn down` stops the engine and pauses every workspace (their processes come back on `cairn up`); `cairn down --purge` deletes everything. The engine container is privileged because gVisor builds each sandbox's namespaces and cgroups. Workspaces run on gVisor's own kernel, so agent code never reaches your machine's kernel directly; a flaw that let code escape gVisor would land in that privileged container, which is root on Docker's VM (macOS) or on the machine itself (Docker Engine on Linux).
 
 For working on Cairn itself there is also a `host` runtime (`make run`) that runs commands directly on your machine with **no isolation** and no full saves; use it only with code you trust.
 

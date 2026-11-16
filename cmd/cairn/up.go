@@ -5,12 +5,16 @@ package main
 // full saves in one command. The engine runs privileged in its container
 // (gVisor builds each sandbox's namespaces and cgroups); the workspaces
 // themselves run on gVisor's kernel, not the container's.
+//
+// Only containers and volumes labelled upLabel are ever touched, so a name
+// that collides with something else is refused rather than replaced.
 
 import (
 	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,95 +35,120 @@ const DefaultImage = "ghcr.io/aqld/cairnd:latest"
 // localImage is what `cairn up --build` tags.
 const localImage = "cairnd:local"
 
+// upLabel marks the containers and volumes cairn up made.
+const upLabel = "dev.cairn.up"
+
+// labels cairn up records on the container, so a later `up` can tell whether
+// the engine already matches what was asked for.
+const (
+	labelImage    = "dev.cairn.image"
+	labelTemplate = "dev.cairn.template"
+)
+
 type upOptions struct {
 	name, image, template string
 	port                  int
 	build                 bool
+	set                   map[string]bool // flags given on the command line
 }
 
-func upFlags(name string, args []string) (*upOptions, *flag.FlagSet, error) {
-	o := &upOptions{}
-	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+func cmdUp(ctx context.Context, args []string) (int, error) {
+	o := &upOptions{set: map[string]bool{}}
+	fs := flag.NewFlagSet("up", flag.ContinueOnError)
 	fs.StringVar(&o.name, "name", "cairn", "container name (its data volume is NAME-data)")
 	fs.IntVar(&o.port, "port", 7420, "port on 127.0.0.1 for the engine's API")
 	fs.StringVar(&o.image, "image", DefaultImage, "engine image")
 	fs.BoolVar(&o.build, "build", false, "build the image from this checkout of the Cairn repository instead of pulling it")
 	fs.StringVar(&o.template, "template", "python=python:3.12-slim", "NAME=IMAGE pulled on first start and used for workspaces created without a template (empty: none)")
-	return o, fs, fs.Parse(args)
-}
-
-func cmdUp(ctx context.Context, args []string) (int, error) {
-	o, _, err := upFlags("up", args)
-	if err != nil {
+	if err := fs.Parse(args); err != nil {
 		return 2, err
+	}
+	fs.Visit(func(f *flag.Flag) { o.set[f.Name] = true })
+	if o.template != "" {
+		if n, i, ok := strings.Cut(o.template, "="); !ok || n == "" || i == "" {
+			return 2, fmt.Errorf("--template: want NAME=IMAGE, got %q", o.template)
+		}
 	}
 	if err := dockerReady(ctx); err != nil {
 		return 1, err
 	}
-	endpoint := fmt.Sprintf("http://127.0.0.1:%d", o.port)
 
-	state := containerState(ctx, o.name)
-	switch state {
-	case "running":
-		fmt.Fprintf(os.Stderr, "cairn: engine %q already running\n", o.name)
-	case "":
+	ct, err := inspect(ctx, o.name)
+	if err != nil {
+		return 1, err
+	}
+	if ct != nil && !ct.ours() {
+		return 1, fmt.Errorf("a container named %q exists and was not made by cairn up; pick another --name", o.name)
+	}
+	if ct != nil {
+		// unless asked otherwise, keep what the engine was started with
+		if !o.set["port"] && ct.port() != 0 {
+			o.port = ct.port()
+		}
+		if !o.set["image"] && !o.build {
+			o.image = ct.Config.Labels[labelImage]
+		}
+		if !o.set["template"] {
+			o.template = ct.Config.Labels[labelTemplate]
+		}
+	}
+	if o.build {
+		if o.image, err = buildImage(ctx); err != nil {
+			return 1, err
+		}
+	}
+
+	started := time.Now()
+	fresh := false // the container is new: wait for its first template pull
+	switch {
+	case ct == nil:
 		token := ""
-		if cfg, err := client.ReadConfig(client.ConfigPath()); err == nil && cfg.Endpoint == endpoint {
-			token = cfg.Token // keep the token clients already have
+		if cfg, err := client.ReadConfig(client.ConfigPath()); err == nil && cfg.Endpoint == endpointFor(o.port) {
+			token = cfg.Token // a purged engine on this port: keep the token clients have
 		}
 		if token == "" {
-			var b [32]byte
-			_, _ = rand.Read(b[:])
-			token = hex.EncodeToString(b[:])
+			token = newToken()
 		}
-		image := o.image
-		if o.build {
-			if image, err = buildImage(ctx); err != nil {
-				return 1, err
+		if err := runEngine(ctx, o, token); err != nil {
+			return 1, err
+		}
+		fresh = true
+	case ct.differs(o, imageID(ctx, o.image)):
+		// a new image (an upgrade or a --build), port or template: replace the
+		// container, keep the volume and token. Stopping pauses the workspaces;
+		// the new engine wakes them.
+		fmt.Fprintf(os.Stderr, "cairn: replacing engine %q (%s), keeping its workspaces\n", o.name, ct.describe(o))
+		if ct.State.Running {
+			if out, err := docker(ctx, "stop", "--time", "150", o.name); err != nil {
+				return 1, fmt.Errorf("docker stop: %v: %s", err, out)
 			}
 		}
-		run := []string{"run", "-d", "--name", o.name,
-			"--privileged", // gVisor creates namespaces, cgroups and mounts per sandbox
-			"--restart", "unless-stopped",
-			// stopping pauses every workspace (a full save each) so their
-			// processes come back on the next start; Docker's default 10 s
-			// would cut that short
-			"--stop-timeout", "150",
-			"-p", fmt.Sprintf("127.0.0.1:%d:7420", o.port),
-			"-v", o.name + "-data:/var/lib/cairn",
-			"-e", "CAIRN_TOKEN=" + token,
-			"--label", "dev.cairn.up=1",
-			image, "--shutdown-timeout", "2m"}
-		if tname, timage, ok := strings.Cut(o.template, "="); ok && tname != "" && timage != "" {
-			run = append(run, "--pull-template", o.template, "--default-template", tname)
-		} else if o.template != "" {
-			return 2, fmt.Errorf("--template: want NAME=IMAGE, got %q", o.template)
+		if out, err := docker(ctx, "rm", o.name); err != nil {
+			return 1, fmt.Errorf("docker rm: %v: %s", err, out)
 		}
-		fmt.Fprintf(os.Stderr, "cairn: starting engine %q from %s\n", o.name, image)
-		if out, err := docker(ctx, run...); err != nil {
-			hint := ""
-			if !o.build && image == DefaultImage {
-				if _, rerr := repoRoot(); rerr == nil {
-					hint = "\n(in a checkout of the repository, `cairn up --build` builds the image locally)"
-				}
-			}
-			return 1, fmt.Errorf("docker run: %v: %s%s", err, out, hint)
+		if err := runEngine(ctx, o, ct.token()); err != nil {
+			return 1, err
 		}
-		if err := client.WriteConfig(client.ConfigPath(), client.Config{Endpoint: endpoint, Token: token}); err != nil {
-			return 1, fmt.Errorf("writing %s: %w", client.ConfigPath(), err)
-		}
+		fresh = true
+	case ct.State.Running:
+		fmt.Fprintf(os.Stderr, "cairn: engine %q already running\n", o.name)
 	default:
-		fmt.Fprintf(os.Stderr, "cairn: starting stopped engine %q (its workspaces wake on first use)\n", o.name)
+		fmt.Fprintf(os.Stderr, "cairn: starting engine %q (its workspaces wake on first use)\n", o.name)
 		if out, err := docker(ctx, "start", o.name); err != nil {
 			return 1, fmt.Errorf("docker start: %v: %s", err, out)
 		}
 	}
 
-	cfg, err := client.ReadConfig(client.ConfigPath())
-	if err != nil || cfg.Endpoint != endpoint {
-		return 1, fmt.Errorf("no config for %s in %s: run `cairn down --purge` and `cairn up` again", endpoint, client.ConfigPath())
+	if ct, err = inspect(ctx, o.name); err != nil || ct == nil {
+		return 1, fmt.Errorf("engine container %q vanished: %v", o.name, err)
 	}
-	c := client.New(endpoint, cfg.Token)
+	endpoint := endpointFor(ct.port())
+	// the config always names the engine brought up last, so every tool
+	// follows `cairn up --name other` without being told
+	if err := client.WriteConfig(client.ConfigPath(), client.Config{Endpoint: endpoint, Token: ct.token()}); err != nil {
+		return 1, fmt.Errorf("writing %s: %w", client.ConfigPath(), err)
+	}
+	c := client.New(endpoint, ct.token())
 	if err := waitHealthy(ctx, endpoint, 90*time.Second); err != nil {
 		logs, _ := docker(ctx, "logs", "--tail", "20", o.name)
 		return 1, fmt.Errorf("%w\nengine log:\n%s", err, logs)
@@ -130,8 +160,8 @@ func cmdUp(ctx context.Context, args []string) (int, error) {
 	if !info.Capabilities.Isolation || !info.Capabilities.FullSave {
 		fmt.Fprintf(os.Stderr, "cairn: warning: runtime %s has no isolation or full saves here\n", info.Runtime)
 	}
-	if tname, _, ok := strings.Cut(o.template, "="); ok && tname != "" {
-		if err := waitTemplate(ctx, c, o.name, tname, 10*time.Minute); err != nil {
+	if tname, _, ok := strings.Cut(o.template, "="); ok && fresh {
+		if err := waitTemplate(ctx, c, o.name, tname, started, 10*time.Minute); err != nil {
 			return 1, err
 		}
 	}
@@ -145,32 +175,92 @@ func cmdUp(ctx context.Context, args []string) (int, error) {
 	return 0, nil
 }
 
+// runEngine creates and starts the engine container. On failure nothing is
+// left behind but the (labelled) volume, so a retry starts clean.
+func runEngine(ctx context.Context, o *upOptions, token string) error {
+	vol := o.name + "-data"
+	if out, err := docker(ctx, "volume", "create", "--label", upLabel+"=1", vol); err != nil {
+		return fmt.Errorf("docker volume create: %v: %s", err, out)
+	}
+	run := []string{"run", "-d", "--name", o.name,
+		"--privileged", // gVisor creates namespaces, cgroups and mounts per sandbox
+		"--restart", "unless-stopped",
+		// stopping pauses every workspace (a full save each) so their
+		// processes come back on the next start; Docker's default 10 s
+		// would cut that short
+		"--stop-timeout", "150",
+		"-p", fmt.Sprintf("127.0.0.1:%d:7420", o.port),
+		"-v", vol + ":/var/lib/cairn",
+		"-e", "CAIRN_TOKEN", // the value comes from our environment, not argv
+		"--label", upLabel + "=1",
+		"--label", labelImage + "=" + o.image,
+		"--label", labelTemplate + "=" + o.template,
+		o.image, "--shutdown-timeout", "2m"}
+	if tname, _, ok := strings.Cut(o.template, "="); ok {
+		run = append(run, "--pull-template", o.template, "--default-template", tname)
+	}
+	fmt.Fprintf(os.Stderr, "cairn: starting engine %q from %s\n", o.name, o.image)
+	out, err := dockerEnv(ctx, []string{"CAIRN_TOKEN=" + token}, run...)
+	if err == nil {
+		return nil
+	}
+	_, _ = docker(ctx, "rm", "-f", o.name) // docker run may leave it "created"
+	hint := ""
+	if !o.build && o.image == DefaultImage {
+		if _, rerr := repoRoot(); rerr == nil {
+			hint = "\n(in a checkout of the repository, `cairn up --build` builds the image locally)"
+		}
+	}
+	return fmt.Errorf("docker run: %v: %s%s", err, out, hint)
+}
+
 func cmdDown(ctx context.Context, args []string) (int, error) {
 	fs := flag.NewFlagSet("down", flag.ContinueOnError)
 	name := fs.String("name", "cairn", "container name")
-	purge := fs.Bool("purge", false, "also delete the container, its data volume (every workspace and save) and the client config")
+	purge := fs.Bool("purge", false, "also delete the container, its data volume (every workspace and save) and its client config")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
 	if err := dockerReady(ctx); err != nil {
 		return 1, err
 	}
-	if containerState(ctx, *name) == "running" {
+	ct, err := inspect(ctx, *name)
+	if err != nil {
+		return 1, err
+	}
+	if ct != nil && !ct.ours() {
+		return 1, fmt.Errorf("container %q was not made by cairn up; not touching it", *name)
+	}
+	if ct != nil && ct.State.Running {
 		fmt.Fprintf(os.Stderr, "cairn: stopping %q (pausing its workspaces first)\n", *name)
 		if out, err := docker(ctx, "stop", "--time", "150", *name); err != nil {
 			return 1, fmt.Errorf("docker stop: %v: %s", err, out)
 		}
 	}
 	if !*purge {
-		fmt.Fprintln(os.Stderr, "cairn: stopped; `cairn up` starts it again with every workspace")
+		if ct == nil {
+			fmt.Fprintf(os.Stderr, "cairn: no engine %q\n", *name)
+		} else {
+			fmt.Fprintln(os.Stderr, "cairn: stopped; `cairn up` starts it again with every workspace")
+		}
 		return 0, nil
 	}
-	_, _ = docker(ctx, "rm", "-f", *name)
-	if out, err := docker(ctx, "volume", "rm", *name+"-data"); err != nil && !strings.Contains(out, "no such volume") {
-		return 1, fmt.Errorf("docker volume rm: %v: %s", err, out)
+	if ct != nil {
+		if out, err := docker(ctx, "rm", "-f", *name); err != nil {
+			return 1, fmt.Errorf("docker rm: %v: %s", err, out)
+		}
+		if cfg, err := client.ReadConfig(client.ConfigPath()); err == nil && ct.port() != 0 && cfg.Endpoint == endpointFor(ct.port()) {
+			_ = os.Remove(client.ConfigPath())
+		}
 	}
-	if cfg, err := client.ReadConfig(client.ConfigPath()); err == nil && strings.HasPrefix(cfg.Endpoint, "http://127.0.0.1:") {
-		_ = os.Remove(client.ConfigPath())
+	vol := *name + "-data"
+	if label, err := docker(ctx, "volume", "inspect", "-f", "{{index .Labels \""+upLabel+"\"}}", vol); err == nil {
+		if label != "1" {
+			return 1, fmt.Errorf("volume %q was not made by cairn up; not deleting it", vol)
+		}
+		if out, err := docker(ctx, "volume", "rm", vol); err != nil {
+			return 1, fmt.Errorf("docker volume rm: %v: %s", err, out)
+		}
 	}
 	fmt.Fprintf(os.Stderr, "cairn: removed %q and all its workspaces and saves\n", *name)
 	return 0, nil
@@ -183,8 +273,8 @@ func cmdStatus(ctx context.Context, c *client.Client, args []string) (int, error
 		return 2, err
 	}
 	if dockerReady(ctx) == nil {
-		if state := containerState(ctx, *name); state != "" {
-			fmt.Printf("container %s: %s\n", *name, state)
+		if ct, _ := inspect(ctx, *name); ct != nil {
+			fmt.Printf("container %s: %s since %s, image %s\n", *name, ct.State.Status, ct.State.StartedAt, ct.Config.Labels[labelImage])
 		}
 	}
 	cfg, _ := client.LoadConfig()
@@ -206,6 +296,101 @@ func cmdStatus(ctx context.Context, c *client.Client, args []string) (int, error
 	return 0, nil
 }
 
+// container is the part of `docker inspect` cairn up uses.
+type container struct {
+	Image string // image ID
+	State struct {
+		Status    string
+		Running   bool
+		StartedAt string
+	}
+	Config struct {
+		Env    []string
+		Labels map[string]string
+	}
+	HostConfig struct {
+		PortBindings map[string][]struct{ HostIP, HostPort string }
+	}
+}
+
+func (c *container) ours() bool { return c.Config.Labels[upLabel] == "1" }
+
+func (c *container) token() string {
+	for _, kv := range c.Config.Env {
+		if v, ok := strings.CutPrefix(kv, "CAIRN_TOKEN="); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+func (c *container) port() int {
+	for _, b := range c.HostConfig.PortBindings["7420/tcp"] {
+		if p, err := strconv.Atoi(b.HostPort); err == nil {
+			return p
+		}
+	}
+	return 0
+}
+
+// differs reports whether the container is not what o asks for. newID is the
+// local ID of o.image ("" if unknown), so a rebuilt or re-pulled tag counts.
+func (c *container) differs(o *upOptions, newID string) bool {
+	return c.port() != o.port || c.Config.Labels[labelImage] != o.image ||
+		c.Config.Labels[labelTemplate] != o.template || (newID != "" && newID != c.Image)
+}
+
+func (c *container) describe(o *upOptions) string {
+	var d []string
+	if c.port() != o.port {
+		d = append(d, fmt.Sprintf("port %d -> %d", c.port(), o.port))
+	}
+	if c.Config.Labels[labelImage] != o.image {
+		d = append(d, "image "+c.Config.Labels[labelImage]+" -> "+o.image)
+	} else {
+		d = append(d, "new build of "+o.image)
+	}
+	if c.Config.Labels[labelTemplate] != o.template {
+		d = append(d, fmt.Sprintf("template %q -> %q", c.Config.Labels[labelTemplate], o.template))
+	}
+	return strings.Join(d, ", ")
+}
+
+// inspect returns the named container, or nil if there is none.
+func inspect(ctx context.Context, name string) (*container, error) {
+	var out, errb bytes.Buffer
+	cmd := exec.CommandContext(ctx, "docker", "container", "inspect", name)
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		if strings.Contains(strings.ToLower(errb.String()), "no such") {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("docker inspect %s: %v: %s", name, err, strings.TrimSpace(errb.String()))
+	}
+	var cs []container
+	if err := json.Unmarshal(out.Bytes(), &cs); err != nil || len(cs) != 1 {
+		return nil, fmt.Errorf("docker inspect %s: unexpected output", name)
+	}
+	return &cs[0], nil
+}
+
+// imageID is the local ID of an image, or "" if it is not present locally.
+func imageID(ctx context.Context, image string) string {
+	id, err := docker(ctx, "image", "inspect", "-f", "{{.Id}}", image)
+	if err != nil {
+		return ""
+	}
+	return id
+}
+
+func endpointFor(port int) string { return fmt.Sprintf("http://127.0.0.1:%d", port) }
+
+func newToken() string {
+	var b [32]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
 func dockerReady(ctx context.Context) error {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return errors.New("docker not found: install Docker Desktop, OrbStack or colima (macOS) or Docker Engine (Linux)")
@@ -216,21 +401,16 @@ func dockerReady(ctx context.Context) error {
 	return nil
 }
 
-// containerState is the container's state (running, exited, ...), or "" if
-// there is no such container.
-func containerState(ctx context.Context, name string) string {
-	out, err := docker(ctx, "inspect", "-f", "{{.State.Status}}", name)
-	if err != nil {
-		return ""
-	}
-	return out
-}
-
 // docker runs a docker command and returns its trimmed combined output.
-func docker(ctx context.Context, args ...string) (string, error) {
+func docker(ctx context.Context, args ...string) (string, error) { return dockerEnv(ctx, nil, args...) }
+
+func dockerEnv(ctx context.Context, env []string, args ...string) (string, error) {
 	var out bytes.Buffer
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdout, cmd.Stderr = &out, &out
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	err := cmd.Run()
 	return strings.TrimSpace(out.String()), err
 }
@@ -287,16 +467,23 @@ func waitHealthy(ctx context.Context, endpoint string, limit time.Duration) erro
 	return fmt.Errorf("engine at %s did not answer within %s", endpoint, limit)
 }
 
-// waitTemplate waits for the engine's background pull of the default template.
-func waitTemplate(ctx context.Context, c *client.Client, container, name string, limit time.Duration) error {
+// waitTemplate waits for a new engine's background pull of its default
+// template, reading only the log lines written since since.
+func waitTemplate(ctx context.Context, c *client.Client, container, name string, since time.Time, limit time.Duration) error {
 	deadline := time.Now().Add(limit)
 	said := false
 	for time.Now().Before(deadline) {
-		if _, err := c.GetTemplate(ctx, name); err == nil {
+		_, err := c.GetTemplate(ctx, name)
+		if err == nil {
 			return nil
 		}
-		if logs, _ := docker(ctx, "logs", "--tail", "50", container); strings.Contains(logs, `"template pull failed"`) && strings.Contains(logs, `"template":"`+name+`"`) {
-			return fmt.Errorf("pulling template %s failed (offline?); the engine is up, retry with `cairn template pull`:\n%s", name, lastLine(logs, "template pull failed"))
+		var apiErr *client.Error
+		if !errors.As(err, &apiErr) || apiErr.Code != "not_found" {
+			return fmt.Errorf("checking template %s: %w", name, err)
+		}
+		logs, _ := docker(ctx, "logs", "--since", since.UTC().Format(time.RFC3339), container)
+		if line := lastLine(logs, `"template pull failed"`); line != "" && strings.Contains(line, `"template":"`+name+`"`) {
+			return fmt.Errorf("pulling template %s failed (offline?); the engine is up, retry with `cairn template pull`:\n%s", name, line)
 		}
 		if !said {
 			fmt.Fprintf(os.Stderr, "cairn: pulling template %s (first start only)\n", name)

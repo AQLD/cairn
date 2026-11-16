@@ -1,11 +1,15 @@
 name: image
 
 # Publishes the engine image `cairn up` runs: ghcr.io/aqld/cairnd:latest from
-# main, and :X.Y.Z for release tags. Both architectures, so Apple Silicon
-# laptops and x86 servers pull the same name.
+# main once CI has passed on it (every `cairn up` pulls :latest, so a broken
+# main must not reach it), and :X.Y.Z for release tags. Both architectures,
+# so Apple Silicon laptops and x86 servers pull the same name.
 on:
-  push:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
     branches: [main]
+  push:
     tags: ["v*"]
   workflow_dispatch:
 
@@ -15,10 +19,13 @@ permissions:
 
 jobs:
   publish:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -28,12 +35,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: tags
         shell: bash
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           img=ghcr.io/$(echo "${{ github.repository_owner }}" | tr A-Z a-z)/cairnd
           if [[ $GITHUB_REF == refs/tags/v* ]]; then
             echo "tags=$img:${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           else
-            echo "tags=$img:latest,$img:sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+            echo "tags=$img:latest,$img:sha-${SHA::12}" >> "$GITHUB_OUTPUT"
           fi
       - uses: docker/build-push-action@v6
         with:

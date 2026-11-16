@@ -246,8 +246,9 @@ var Catalog = []Scenario{
 			{ID: "G10.10", Title: "The Python SDK drives every API operation", Proves: "Agents written in Python get the whole API, with safe retries, from a client with no dependencies (engine feature #18).", Milestone: E3, Needs: []Need{NeedPython}},
 			{ID: "G10.11", Title: "A developer runs a local engine with one command", Proves: "`cairn up` on a laptop (macOS through Docker Desktop or OrbStack, or Linux) gives real gVisor workspaces, so agents get full saves and sessions on day one, not the unisolated host runtime.", Milestone: E3,
 				Children: []Scenario{
-					{ID: "G10.11.1", Title: "`cairn up` starts an engine in Docker with gVisor, full saves and a ready default template", Proves: "One command and no Linux VM: the engine runs in a plain Docker container (it leaves the container's root cgroup so runsc can create sandboxes), pulls the default template, and writes the client config the CLI, `cairn mcp` and the SDKs read.", Milestone: E3, Needs: []Need{NeedDocker}},
+					{ID: "G10.11.1", Title: "`cairn up` starts an engine in Docker with gVisor, full saves and a ready default template", Proves: "One command and no Linux VM: the engine runs in a plain Docker container (it leaves the container's root cgroup so runsc can create sandboxes), pulls the default template, and writes the client config the CLI and the SDKs read with nothing set.", Milestone: E3, Needs: []Need{NeedDocker}},
 					{ID: "G10.11.2", Title: "`cairn down` then `cairn up` keeps workspaces and their running processes", Proves: "Stopping the local engine (or rebooting the laptop) pauses every workspace; starting it again brings back the same processes.", Milestone: E3, Needs: []Need{NeedDocker}},
+					{ID: "G10.11.3", Title: "`cairn up` with a new image or settings replaces the engine and keeps workspaces and their processes", Proves: "A developer who rebuilds or upgrades the engine keeps their agents' work; `cairn up` never silently keeps an old engine, and never touches containers or volumes it did not make.", Milestone: E3, Needs: []Need{NeedDocker}},
 				}},
 		},
 	},

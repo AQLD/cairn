@@ -67,9 +67,11 @@ class Client:
         if not endpoint:
             # the config `cairn up` writes; its token goes only to its endpoint
             cfg = _read_config()
-            endpoint = cfg.get("endpoint") or "http://127.0.0.1:7420"
-            if token is None and not env_token and cfg.get("endpoint"):
-                token = cfg.get("token", "")
+            file_endpoint = cfg.get("endpoint") if isinstance(cfg.get("endpoint"), str) else ""
+            endpoint = file_endpoint or "http://127.0.0.1:7420"
+            if token is None and not env_token and file_endpoint:
+                file_token = cfg.get("token", "")
+                token = file_token if isinstance(file_token, str) else ""
         self.endpoint = endpoint.rstrip("/")
         self.token = token if token is not None else env_token
         self.timeout = timeout
