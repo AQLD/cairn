@@ -455,6 +455,12 @@ func (c *Client) ListTemplates(ctx context.Context) ([]Template, error) {
 	return out.Templates, c.do(ctx, http.MethodGet, "/v1/templates", nil, &out)
 }
 
+// GetTemplate returns one template (not_found if the engine has none by that name).
+func (c *Client) GetTemplate(ctx context.Context, name string) (*Template, error) {
+	var out Template
+	return &out, c.do(ctx, http.MethodGet, "/v1/templates/"+url.PathEscape(name), nil, &out)
+}
+
 func (c *Client) DeleteTemplate(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/templates/"+url.PathEscape(name), nil, nil)
 }

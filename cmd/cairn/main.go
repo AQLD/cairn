@@ -1,6 +1,7 @@
 // cairn is the command-line tool for a Cairn engine. It talks to the engine only
 // through the REST API.
 //
+//	cairn up [--build] | down [--purge] | status
 //	cairn create [--name NAME] [--template T]
 //	cairn template import NAME ROOTFS.tar | template pull NAME IMAGE | template ls | template rm NAME
 //	cairn ls
@@ -16,7 +17,8 @@
 //	cairn rm WORKSPACE
 //	cairn info
 //
-// CAIRN_ENDPOINT (default http://127.0.0.1:7420) and CAIRN_TOKEN select the engine.
+// CAIRN_ENDPOINT and CAIRN_TOKEN select the engine; without them, the config
+// file `cairn up` writes (client.ConfigPath), else http://127.0.0.1:7420.
 package main
 
 import (
@@ -37,6 +39,11 @@ import (
 const usage = `usage: cairn <command> [arguments]
 
 commands:
+  up [--build] [--port P] [--template NAME=IMAGE]
+                                          start a local engine in Docker (gVisor workspaces,
+                                          full saves) and write the client config
+  down [--purge]                          stop it (workspaces kept); --purge deletes everything
+  status                                  show the engine and its workspaces
   create [--name NAME] [--template T]     create a workspace (from a template)
   template import NAME ROOTFS.tar         import a root filesystem tar as a template
                                           (e.g. docker export $(docker create python:3.12-slim) > python.tar)
@@ -63,8 +70,9 @@ commands:
   info                                    show the engine's runtime and capabilities
 
 environment:
-  CAIRN_ENDPOINT  engine URL (default http://127.0.0.1:7420)
+  CAIRN_ENDPOINT  engine URL (default: from the config cairn up writes, else http://127.0.0.1:7420)
   CAIRN_TOKEN     API token
+  CAIRN_CONFIG    config file (default ~/.config/cairn/config.json)
 `
 
 func main() {
@@ -72,12 +80,20 @@ func main() {
 		fmt.Print(usage)
 		return
 	}
-	endpoint := os.Getenv("CAIRN_ENDPOINT")
-	if endpoint == "" {
-		endpoint = "http://127.0.0.1:7420"
+	ctx := context.Background()
+	var code int
+	var err error
+	switch os.Args[1] {
+	case "up":
+		code, err = cmdUp(ctx, os.Args[2:])
+	case "down":
+		code, err = cmdDown(ctx, os.Args[2:])
+	default:
+		var c *client.Client
+		if c, err = client.FromConfig(); err == nil {
+			code, err = run(ctx, c, os.Args[1], os.Args[2:])
+		}
 	}
-	c := client.New(endpoint, os.Getenv("CAIRN_TOKEN"))
-	code, err := run(context.Background(), c, os.Args[1], os.Args[2:])
 	if err != nil {
 		if _, isAPI := err.(*client.Error); isAPI {
 			fmt.Fprintln(os.Stderr, err) // already prefixed "cairn:"
@@ -93,6 +109,9 @@ func main() {
 
 func run(ctx context.Context, c *client.Client, cmd string, args []string) (int, error) {
 	switch cmd {
+	case "status":
+		return cmdStatus(ctx, c, args)
+
 	case "create":
 		fs := flag.NewFlagSet("create", flag.ContinueOnError)
 		name := fs.String("name", "", "workspace name")

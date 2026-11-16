@@ -58,6 +58,8 @@ func run() error {
 	diskImages := flag.Bool("disk-images", true, "enforce workspace disk sizes with an ext4 image per workspace (needs root, mkfs.ext4 and loop devices)")
 	var imports templateImports
 	flag.Var(&imports, "import-template", "NAME=ROOTFS.tar to import at startup if missing or changed (repeatable)")
+	var pulls templateImports
+	flag.Var(&pulls, "pull-template", "NAME=IMAGE to pull from a registry in the background if the engine has no template NAME yet (repeatable; later starts never touch the network)")
 	flag.Parse()
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -198,6 +200,11 @@ func run() error {
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
+	// pulled after the API is up: a first pull can take a while, and clients
+	// (cairn up) watch for the template to appear
+	for _, p := range pulls {
+		go pullTemplate(ctx, eng, log, p.name, p.path)
+	}
 	log.Info("cairnd listening", "addr", *listen, "runtime", r.Name(), "data", *data)
 
 	select {
@@ -230,7 +237,7 @@ func (t *templateImports) String() string { return fmt.Sprint(*t) }
 func (t *templateImports) Set(v string) error {
 	name, path, ok := strings.Cut(v, "=")
 	if !ok || name == "" || path == "" {
-		return errors.New("want NAME=ROOTFS.tar")
+		return errors.New("want NAME=VALUE")
 	}
 	*t = append(*t, templateImport{name, path})
 	return nil
@@ -256,6 +263,22 @@ func importTemplate(ctx context.Context, eng *engine.Engine, name, path string) 
 	}
 	_, err = eng.ImportTemplate(ctx, name, f)
 	return err
+}
+
+// pullTemplate pulls image as template name unless the engine already has a
+// template by that name. A failure (offline laptop, registry down) is logged,
+// not fatal: the engine still serves every other template.
+func pullTemplate(ctx context.Context, eng *engine.Engine, log *slog.Logger, name, image string) {
+	if _, err := eng.GetTemplate(ctx, name); err == nil {
+		return
+	}
+	log.Info("pulling template", "template", name, "image", image)
+	start := time.Now()
+	if _, err := eng.PullTemplate(ctx, name, engine.PullTemplate{Image: image}); err != nil {
+		log.Error("template pull failed", "template", name, "image", image, "err", err)
+		return
+	}
+	log.Info("template ready", "template", name, "image", image, "took_ms", time.Since(start).Milliseconds())
 }
 
 // findInit locates cairn-init: the flag, then next to this binary, then PATH.

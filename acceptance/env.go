@@ -269,6 +269,12 @@ func (e *Env) has(n spec.Need) (bool, string) {
 	case spec.NeedAgentTools:
 		_, err := os.Stat(os.Getenv("CAIRN_TEST_AGENT_TOOLS"))
 		return os.Getenv("CAIRN_TEST_AGENT_TOOLS") != "" && err == nil, "set CAIRN_TEST_AGENT_TOOLS to a template built from acceptance/testdata/agent-tools (devenv/accept-runsc.sh builds it)"
+	case spec.NeedDocker:
+		if os.Getenv("CAIRN_TEST_DOCKER_IMAGE") == "" {
+			return false, "set CAIRN_TEST_DOCKER_IMAGE to an engine image (docker build -f deploy/docker/Dockerfile .)"
+		}
+		_, err := exec.LookPath("docker")
+		return err == nil, "docker is not installed"
 	case spec.NeedLinuxBench, spec.NeedObjectStorage, spec.NeedMultiServer, spec.NeedRealAgent:
 		return os.Getenv("CAIRN_ENV_"+envName(n)) == "1", "set CAIRN_ENV_" + envName(n) + "=1 on an environment that provides it"
 	}
