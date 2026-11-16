@@ -53,6 +53,9 @@ type Options struct {
 	// dropped (DefaultPerWorkspace if 0).
 	PerWorkspace int
 	Logger       *slog.Logger
+	// WriteDelay holds each batch back before it is written (tests only: it
+	// makes "a read sees what finished before it" observable).
+	WriteDelay time.Duration
 }
 
 // Log is a workspace activity log. Record never blocks; everything else is
@@ -208,6 +211,9 @@ func (l *Log) writer() {
 }
 
 func (l *Log) write(batch []Event) error {
+	if l.opts.WriteDelay > 0 {
+		time.Sleep(l.opts.WriteDelay)
+	}
 	tx, err := l.db.Begin()
 	if err != nil {
 		return err

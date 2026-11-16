@@ -94,6 +94,7 @@ type Config struct {
 	// EventsPerWorkspace bounds each workspace's activity log
 	// (eventlog.DefaultPerWorkspace if 0); older events are dropped.
 	EventsPerWorkspace int
+	EventsWriteDelay   time.Duration // tests only: hold activity log writes back
 }
 
 type Engine struct {

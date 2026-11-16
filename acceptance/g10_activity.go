@@ -274,6 +274,18 @@ func init() {
 			e.T.Fatal("IDs after a restart must keep increasing")
 		}
 
+		// a read shows every operation that finished before it, even while
+		// the log's writer is behind
+		e.RestartWith(func(c *engine.Config) { c.EventsWriteDelay = 200 * time.Millisecond })
+		for i := 0; i < 3; i++ {
+			e.Sh(ws.ID, fmt.Sprintf("echo now-%d", i))
+			last, err := e.C.Events(e.Ctx, ws.ID, client.EventQuery{Last: 1})
+			e.Must(err)
+			if len(last) != 1 || dataString(last[0], "stdout_tail") != fmt.Sprintf("now-%d\n", i) {
+				e.T.Fatalf("the log read right after command %d does not show it: %+v", i, last)
+			}
+		}
+
 		// bounded: only the newest events are kept
 		e.RestartWith(func(c *engine.Config) { c.EventsPerWorkspace = 50 })
 		for i := 0; i < 200; i++ {

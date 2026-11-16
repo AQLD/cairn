@@ -76,7 +76,7 @@ func (e *Engine) EventsChanged(after int64) <-chan struct{} { return e.events.Ch
 func (e *Engine) FlushEvents(ctx context.Context) { e.events.Flush(ctx) }
 
 func (e *Engine) openEvents() error {
-	l, err := eventlog.Open(filepath.Join(e.cfg.DataDir, "events.db"), eventlog.Options{PerWorkspace: e.cfg.EventsPerWorkspace, Logger: e.log})
+	l, err := eventlog.Open(filepath.Join(e.cfg.DataDir, "events.db"), eventlog.Options{PerWorkspace: e.cfg.EventsPerWorkspace, Logger: e.log, WriteDelay: e.cfg.EventsWriteDelay})
 	if err != nil {
 		return fmt.Errorf("activity log: %w", err)
 	}
