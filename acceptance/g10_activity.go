@@ -199,6 +199,24 @@ func init() {
 		case <-time.After(5 * time.Second):
 			e.T.Fatal("follow did not end when its caller stopped")
 		}
+
+		// a follower that starts behind a backlog longer than one page gets
+		// all of it without waiting for anything new to happen
+		quiet := e.Workspace("backlog")
+		for i := 0; i < 250; i++ {
+			e.Write(quiet.ID, "b", "x")
+		}
+		bctx, bstop := context.WithTimeout(e.Ctx, 10*time.Second)
+		defer bstop()
+		n := 0
+		err := e.C.FollowEvents(bctx, quiet.ID, client.EventQuery{}, func(client.Event) error {
+			if n++; n == 251 {
+				bstop()
+			}
+			return nil
+		})
+		e.Must(err)
+		Equal(e, "the whole backlog arrived", n, 251)
 	})
 
 	register("G10.13.3", func(e *Env) {
