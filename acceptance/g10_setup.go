@@ -238,6 +238,18 @@ func init() {
 			e.T.Fatalf("doctor with Codex's skill missing: %v\n%s", err, out)
 		}
 
+		// a skill from an older cairn: out of date, and setup updates it
+		e.Must(os.MkdirAll(filepath.Join(m.home, ".agents/skills/cairn"), 0o755))
+		e.Must(os.WriteFile(filepath.Join(m.home, ".agents/skills/cairn/SKILL.md"),
+			[]byte("---\nname: cairn\n---\nold\n<!-- written by `cairn setup`; version 000000000000 -->\n"), 0o644))
+		out, _ = m.cairn(repo, "doctor")
+		if !strings.Contains(out, "Codex: skill out of date") {
+			e.T.Fatalf("doctor with an old skill:\n%s", out)
+		}
+		if out := m.mustCairn(repo, "setup", "--agents", "codex"); !strings.Contains(out, "skill updated") {
+			e.T.Fatalf("setup over an old skill:\n%s", out)
+		}
+
 		ws := strings.TrimSpace(m.readAbs(filepath.Join(repo, ".cairn", "workspace")))
 		e.Must(e.C.DeleteWorkspace(e.Ctx, ws))
 		out, _ = m.cairn(repo, "doctor")
