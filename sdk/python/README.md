@@ -57,6 +57,7 @@ An exception's traceback goes to `stderr` with `exit_code` 1 and the session car
 | --- | --- |
 | `ws.save()` | Quick save: the workspace's files |
 | `ws.save("full")` | Full save: memory and running processes too; the workspace stops until resumed (needs the gVisor runtime) |
+| `ws.save("full", keep_running=True)` | Full save, and the workspace carries on with its processes still running: save before a risky step, keep working, resume the save if the step goes wrong |
 | `save.resume()` | Puts the save's own workspace back to exactly the saved state |
 | `save.copy(n)` | `n` new workspaces, each starting from the save |
 | `ws.pause()` | Frees memory now; the next command wakes the workspace with its processes |

@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 52 | 11 | 2 |
+| E3 | 55 | 11 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -324,6 +324,10 @@ An agent's computer keeps a tree of its past states, cheap enough to checkpoint 
 - ⏳ **G18.4** The files changed between two saves can be listed · E3
 - ⏳ **G18.5** Old steps are pruned by policy while pinned steps are kept · E3
 - ✅ **G18.6** A copy can start from any earlier step · E3
+- 📂 **G18.7** A full save can keep the workspace running · E3
+  - ✅ **G18.7.1** Processes keep running through a full save that keeps the workspace running · E3 · needs full_save, persistent_processes
+  - ✅ **G18.7.2** A crash while a full save keeps its workspace running loses nothing · E3 · needs full_save, persistent_processes, in_process
+  - ✅ **G18.7.3** Keeping running is honest on every runtime · E3
 
 ## G19 Agents and people share the computer
 

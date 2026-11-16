@@ -369,6 +369,12 @@ var Catalog = []Scenario{
 			{ID: "G18.4", Title: "The files changed between two saves can be listed", Milestone: E3},
 			{ID: "G18.5", Title: "Old steps are pruned by policy while pinned steps are kept", Milestone: E3},
 			{ID: "G18.6", Title: "A copy can start from any earlier step", Proves: "Copies of each earlier save start at that step, whatever the workspace has done since, and the workspace is untouched.", Milestone: E3},
+			{ID: "G18.7", Title: "A full save can keep the workspace running", Proves: "An agent saves memory and processes before a risky step and carries on at once, without a resume; the save is a real one to rewind to.", Milestone: E3,
+				Children: []Scenario{
+					{ID: "G18.7.1", Title: "Processes keep running through a full save that keeps the workspace running", Proves: "The workspace is frozen, not stopped, for the save: the same processes carry on (same pid, still counting), commands run at once, a session keeps its variables, the workspace's base is the new save, and resuming the save later rewinds to the saved moment.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}},
+					{ID: "G18.7.2", Title: "A crash while a full save keeps its workspace running loses nothing", Proves: "Killed while the workspace is frozen for the save or just after it carries on, the engine comes back with the save ready and the same processes still running (never restarted from files), and the save resumes.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent, NeedInProcess}},
+					{ID: "G18.7.3", Title: "Keeping running is honest on every runtime", Proves: "A quick save asked to keep running behaves as any quick save; a runtime without full saves refuses with unsupported_by_runtime.", Milestone: E3},
+				}},
 		},
 	},
 	{

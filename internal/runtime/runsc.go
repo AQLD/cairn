@@ -326,6 +326,13 @@ func (r *Runsc) status(ctx context.Context, spec Spec) string {
 // engine calls it again after its own restart, when sandboxes may still be up.
 func (r *Runsc) Start(ctx context.Context, spec Spec) error {
 	switch r.status(ctx, spec) {
+	case "paused":
+		// frozen for a full save that keeps running when the engine died: its
+		// processes are intact, so let them carry on and adopt it
+		if err := r.Thaw(ctx, spec); err != nil {
+			return err
+		}
+		return r.firewall(spec)
 	case "running":
 		// adopted after an engine restart: bring its firewall up to what this
 		// engine enforces (only the host side: the sandbox owns its interface)
@@ -396,6 +403,35 @@ func (r *Runsc) Checkpoint(ctx context.Context, spec Spec, dir string) error {
 		return err
 	}
 	_ = r.run(ctx, spec, "delete", "--force", containerID(spec))
+	return r.checkpointExtras(spec, dir)
+}
+
+// CheckpointFrozen pauses the sandbox, then checkpoints it with
+// --leave-running, which leaves a paused sandbox paused (release 20261005:
+// files untouched until resume), so the engine can archive the filesystem
+// at the same moment. The image restores like any other checkpoint.
+func (r *Runsc) CheckpointFrozen(ctx context.Context, spec Spec, dir string) error {
+	if err := r.run(ctx, spec, "pause", containerID(spec)); err != nil {
+		return err
+	}
+	if err := r.run(ctx, spec, "checkpoint", "--leave-running", "--image-path", dir, containerID(spec)); err != nil {
+		_ = r.Thaw(ctx, spec)
+		return err
+	}
+	if err := r.checkpointExtras(spec, dir); err != nil {
+		_ = r.Thaw(ctx, spec)
+		return err
+	}
+	return nil
+}
+
+// Thaw resumes a paused sandbox.
+func (r *Runsc) Thaw(ctx context.Context, spec Spec) error {
+	return r.run(ctx, spec, "resume", containerID(spec))
+}
+
+// checkpointExtras records what a restore of the checkpoint in dir needs.
+func (r *Runsc) checkpointExtras(spec Spec, dir string) error {
 	if err := os.WriteFile(filepath.Join(dir, versionFile), []byte(r.versionOf(r.binaryFor(spec))+"\n"), 0o644); err != nil {
 		return err
 	}

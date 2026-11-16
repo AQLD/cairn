@@ -245,6 +245,8 @@ func (s *Server) pullArchive(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createSave(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Kind save.Kind `json:"kind"`
+		// a full save brings the workspace straight back, processes included
+		KeepRunning bool `json:"keep_running"`
 	}
 	if r.ContentLength != 0 && !s.decode(w, r, &req) {
 		return
@@ -253,7 +255,7 @@ func (s *Server) createSave(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	sv, err := s.eng.Save(r.Context(), r.PathValue("id"), req.Kind, key)
+	sv, err := s.eng.SaveWith(r.Context(), r.PathValue("id"), engine.SaveOptions{Kind: req.Kind, RequestKey: key, KeepRunning: req.KeepRunning})
 	if err != nil {
 		s.fail(w, err)
 		return

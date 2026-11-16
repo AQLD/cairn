@@ -8,7 +8,7 @@
 //	cairn exec WORKSPACE -- COMMAND [ARGS...]
 //	cairn put WORKSPACE LOCAL_FILE REMOTE_PATH
 //	cairn get WORKSPACE REMOTE_PATH [LOCAL_FILE]
-//	cairn save WORKSPACE [--full]
+//	cairn save WORKSPACE [--full [--stop]]
 //	cairn saves WORKSPACE
 //	cairn resume SAVE
 //	cairn copy SAVE [--count N]
@@ -64,7 +64,8 @@ commands:
   push WORKSPACE LOCAL_DIR [REMOTE_DIR] [--exclude PATTERN]...
                                           copy a folder in (default /root/<its name>), merging
   pull WORKSPACE REMOTE_DIR [LOCAL_DIR]   copy a folder out (default ./<its name>), merging
-  save WORKSPACE [--full]                 save (quick by default)
+  save WORKSPACE [--full [--stop]]        save files (quick); --full adds memory and running processes
+                                          and keeps the workspace running (--stop: leave it stopped)
   saves WORKSPACE                         list a workspace's saves
   resume SAVE                             restore a workspace to a save
   copy SAVE [--count N]                   make workspaces from a save
@@ -232,16 +233,20 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 
 	case "save":
 		fs := flag.NewFlagSet("save", flag.ContinueOnError)
-		full := fs.Bool("full", false, "also save memory and processes, then stop the workspace")
+		full := fs.Bool("full", false, "also save memory and running processes; the workspace keeps running")
+		stop := fs.Bool("stop", false, "with --full: leave the workspace stopped (its memory freed) until the save is resumed")
 		ws, rest := splitID(args)
 		if err := fs.Parse(rest); err != nil || ws == "" {
-			return 2, errors.New("usage: cairn save WORKSPACE [--full]")
+			return 2, errors.New("usage: cairn save WORKSPACE [--full [--stop]]")
 		}
-		kind := client.QuickSave
+		if *stop && !*full {
+			return 2, errors.New("--stop needs --full (a quick save never stops the workspace)")
+		}
+		opts := client.SaveOptions{Kind: client.QuickSave}
 		if *full {
-			kind = client.FullSave
+			opts = client.SaveOptions{Kind: client.FullSave, KeepRunning: !*stop}
 		}
-		sv, err := c.Save(ctx, ws, kind)
+		sv, err := c.SaveWith(ctx, ws, opts)
 		if err != nil {
 			return 1, err
 		}

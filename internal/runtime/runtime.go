@@ -93,3 +93,15 @@ type Runtime interface {
 	// Restore starts a workspace from state written by Checkpoint.
 	Restore(ctx context.Context, spec Spec, dir string) error
 }
+
+// Freezer is a FullSave runtime that can save a workspace's memory without
+// stopping it, for full saves that keep the workspace running.
+type Freezer interface {
+	// CheckpointFrozen freezes every process where it is and writes memory
+	// and process state into dir, as Checkpoint does, but leaves the
+	// workspace frozen in place: nothing runs or touches its files until
+	// Thaw. If it fails, the workspace is left running.
+	CheckpointFrozen(ctx context.Context, spec Spec, dir string) error
+	// Thaw lets a frozen workspace's processes carry on.
+	Thaw(ctx context.Context, spec Spec) error
+}
