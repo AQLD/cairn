@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 60 | 11 | 2 |
+| E3 | 63 | 11 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -319,6 +319,10 @@ An operator can install, observe and upgrade Cairn without surprises. Gate: **E4
   - ✅ **G10.13.3** Copies start their own log naming their source; a rewind is recorded, not erased · E3
   - ✅ **G10.13.4** The log survives restarts, is bounded, and outlives its workspace for the retention window · E3 · needs in_process
   - ✅ **G10.13.5** Session cells, full saves, pauses and wakes are logged · E3 · needs full_save, persistent_processes
+- 📂 **G10.14** A developer connects their coding agents with one command · E3
+  - ✅ **G10.14.1** `cairn setup` installs the Cairn skill and registers MCP for each agent it finds · E3
+  - ✅ **G10.14.2** `cairn setup --project` gives a repository its workspace and tells its agents to use it · E3
+  - ✅ **G10.14.3** `cairn doctor` names each problem with its fix · E3
 
 ## G18 Every step can be rewound
 

@@ -47,6 +47,11 @@ commands:
                                           full saves) and write the client config
   down [--purge]                          stop it (workspaces kept); --purge deletes everything
   status                                  show the engine and its workspaces
+  setup [--project] [--agents LIST]       connect coding agents (Claude Code, Codex, pi, Cursor):
+                                          engine, skill and MCP; --project gives this repository
+                                          a workspace and tells its agents to use it
+  doctor                                  check the engine, agents and project; say how to fix
+  run [--no-push] -- COMMAND [ARGS...]    push this project's edits into its workspace, run there
   create [--name NAME] [--template T] [--network] [--memory MB] [--disk MB] [--cpus N]
                                           create a workspace (from a template)
   template import NAME ROOTFS.tar         import a root filesystem tar as a template
@@ -82,6 +87,8 @@ commands:
   mcp [--workspace ID]                    serve the Model Context Protocol on stdio, for coding agents
   mcp install CLIENT [--project] [--write]
                                           register Cairn with claude, cursor, codex, vscode, windsurf or goose
+
+In a project set up with "cairn setup --project", "." names its workspace: cairn exec . -- make
 
 environment:
   CAIRN_ENDPOINT  engine URL (default: from the config cairn up writes, else http://127.0.0.1:7420)
@@ -121,8 +128,37 @@ func main() {
 	os.Exit(code)
 }
 
+// execStream runs a command, passing its output through as it comes, and
+// returns its exit code.
+func execStream(ctx context.Context, c *client.Client, ws string, req client.Exec) (int, error) {
+	res, err := c.ExecStream(ctx, ws, req, func(ev client.ExecEvent) {
+		if ev.Stream == "stderr" {
+			os.Stderr.Write(ev.Data)
+		} else {
+			os.Stdout.Write(ev.Data)
+		}
+	})
+	if err != nil {
+		return 1, err
+	}
+	if res.TimedOut {
+		return 124, errors.New("command timed out")
+	}
+	return res.ExitCode, nil
+}
+
 func run(ctx context.Context, c *client.Client, cmd string, args []string) (int, error) {
+	args, err := resolveDot(cmd, args)
+	if err != nil {
+		return 2, err
+	}
 	switch cmd {
+	case "run":
+		return cmdRun(ctx, c, args)
+	case "setup":
+		return cmdSetup(ctx, c, args)
+	case "doctor":
+		return cmdDoctor(ctx, c, args)
 	case "status":
 		return cmdStatus(ctx, c, args)
 	case "mcp":
@@ -162,20 +198,7 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 		if len(args) < 3 || args[1] != "--" {
 			return 2, errors.New("usage: cairn exec WORKSPACE -- COMMAND [ARGS...]")
 		}
-		res, err := c.ExecStream(ctx, args[0], client.Exec{Command: args[2:]}, func(ev client.ExecEvent) {
-			if ev.Stream == "stderr" {
-				os.Stderr.Write(ev.Data)
-			} else {
-				os.Stdout.Write(ev.Data)
-			}
-		})
-		if err != nil {
-			return 1, err
-		}
-		if res.TimedOut {
-			return 124, errors.New("command timed out")
-		}
-		return res.ExitCode, nil
+		return execStream(ctx, c, args[0], client.Exec{Command: args[2:]})
 
 	case "put":
 		if len(args) != 3 {

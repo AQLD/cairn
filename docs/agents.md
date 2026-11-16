@@ -4,7 +4,30 @@
 
 ## Connect your agent
 
-You need the `cairn` CLI and a running engine. `cairn up` starts one locally in Docker. The MCP server finds the engine through `CAIRN_ENDPOINT` and `CAIRN_TOKEN`, or the config file `cairn up` writes.
+```sh
+cairn up                    # an engine (skip if you have one)
+cd ~/code/my-project
+cairn setup --project       # connect every agent found, and give this project a workspace
+```
+
+| Agent | What `cairn setup` does |
+| --- | --- |
+| Claude Code | skill in `~/.claude/skills/cairn/`; `claude mcp add --scope user cairn -- cairn mcp`; with `--project`, `CLAUDE.md` imports `AGENTS.md` |
+| Codex | skill in `~/.agents/skills/cairn/`; `[mcp_servers.cairn]` in `~/.codex/config.toml` |
+| pi | skill in `~/.agents/skills/cairn/` (pi has no MCP by design: it uses the skill and the `cairn` CLI) |
+| Cursor | `cairn` in `~/.cursor/mcp.json` |
+
+`--agents claude,pi` connects only those. Every step is safe to repeat, and a skill named `cairn` that setup did not write is never replaced. `cairn doctor` checks the engine, each agent and the project, and prints the command that fixes each problem.
+
+With `--project`, the repository (the git root around the current folder) gets a workspace named after it, with the code at `/root/NAME`. The pin lives in `.cairn/` (which ignores itself, so it never reaches the repository). From anywhere in the project:
+
+- `.` names the workspace: `cairn exec . -- make`, `cairn save . --full`, `cairn log . -f`.
+- `cairn run -- COMMAND` copies local edits in (leaving out `node_modules`, `.venv` and other rebuildable folders), then runs in the matching folder of the workspace. Files deleted locally are not deleted there.
+- `cairn mcp`, started by the agent in the project, uses the workspace by default.
+
+A managed section between `<!-- cairn:start -->` and `<!-- cairn:end -->` in `AGENTS.md` tells agents to work in the workspace; edit outside the markers, and rerun setup to refresh it.
+
+### Other MCP clients
 
 `cairn mcp install CLIENT` prints the entry that registers Cairn with CLIENT. Add `--write` to add it for you (existing entries are kept), and `--project` for the project's own config file instead of the user-wide one:
 

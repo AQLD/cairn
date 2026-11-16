@@ -34,6 +34,13 @@ func runMCP(ctx context.Context, c *client.Client, args []string) (int, error) {
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
+	if *ws == "" {
+		// agents start the server in the project folder: its pinned workspace
+		// is the default (`cairn setup --project`)
+		if p, err := findProject("."); err == nil && p != nil {
+			*ws = p.Workspace
+		}
+	}
 	// stdout carries the protocol and nothing else
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	slog.SetDefault(log)

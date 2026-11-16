@@ -266,6 +266,13 @@ var Catalog = []Scenario{
 					{ID: "G10.13.4", Title: "The log survives restarts, is bounded, and outlives its workspace for the retention window", Proves: "Events written before an engine restart are still listed after it; each workspace keeps only its newest events; a deleted workspace's log stays readable until the retention window ends, then is purged.", Milestone: E3, Needs: []Need{NeedInProcess}},
 					{ID: "G10.13.5", Title: "Session cells, full saves, pauses and wakes are logged", Proves: "A session cell shows its code and result; a full save, a pause and the wake that follows show with the save they used and whether processes came back.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}},
 				}},
+			// G10.14: connecting a developer's coding agents
+			{ID: "G10.14", Title: "A developer connects their coding agents with one command", Proves: "`cairn setup` takes a developer from an engine to Claude Code, Codex, pi or Cursor working in a workspace, and every step is safe to repeat.", Milestone: E3,
+				Children: []Scenario{
+					{ID: "G10.14.1", Title: "`cairn setup` installs the Cairn skill and registers MCP for each agent it finds", Proves: "Agents that load Agent Skills (Claude Code, Codex, pi) get the skill; agents that speak MCP get `cairn mcp`; a second run changes nothing; a skill named cairn that setup did not write is left alone.", Milestone: E3},
+					{ID: "G10.14.2", Title: "`cairn setup --project` gives a repository its workspace and tells its agents to use it", Proves: "The project is pushed into a new workspace, pinned so `.` names it, and AGENTS.md (and CLAUDE.md for Claude Code) gain one Cairn section that reruns update instead of repeat; `cairn run` then runs local edits in the workspace, in the matching folder.", Milestone: E3},
+					{ID: "G10.14.3", Title: "`cairn doctor` names each problem with its fix", Proves: "An unreachable engine, a missing skill or MCP registration, and a project pinned to a workspace that is gone are each reported with the command that fixes them, and a healthy setup reports none.", Milestone: E3},
+				}},
 		},
 	},
 	// Agent journeys: what each kind of agent gets done end to end. A step is

@@ -167,12 +167,11 @@ func cmdUp(ctx context.Context, args []string) (int, error) {
 	}
 	fmt.Printf("Cairn is running at %s (%s, gVisor %s)\n", endpoint, o.name, info.RuntimeVersion)
 	fmt.Printf("config: %s\n\n", client.ConfigPath())
-	fmt.Println("try:")
+	fmt.Println("connect your coding agent (Claude Code, Codex, pi, Cursor), in your project:")
+	fmt.Println("  cairn setup --project")
+	fmt.Println("or try it by hand:")
 	fmt.Println("  ws=$(cairn create)")
 	fmt.Println("  cairn exec $ws -- python3 -c 'print(\"hello from a sandbox\")'")
-	fmt.Println("  cairn save $ws --full     # memory and running processes too")
-	fmt.Println("use it from your coding agent:")
-	fmt.Println("  cairn mcp install claude --write   # or cursor, codex, vscode (see docs/agents.md)")
 	fmt.Println("stop with `cairn down` (workspaces and their processes are kept)")
 	return 0, nil
 }
