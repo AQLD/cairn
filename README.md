@@ -37,10 +37,10 @@ Cairn is an open-source engine that gives each AI agent a private Linux workspac
 
 ## Run it on your laptop
 
-Needs Docker (Docker Desktop, OrbStack or colima on macOS; Docker Engine on Linux) and Go 1.25 or newer for the CLI until there are releases.
+Needs Docker (Docker Desktop, OrbStack or colima on macOS; Docker Engine on Linux).
 
 ```sh
-go install github.com/AQLD/cairn/cmd/cairn@latest
+curl -fsSL https://raw.githubusercontent.com/AQLD/cairn/main/install.sh | sh   # or: go install github.com/AQLD/cairn/cmd/cairn@latest
 cairn up                      # engine in Docker with real gVisor workspaces (under a minute the first time)
 ```
 
