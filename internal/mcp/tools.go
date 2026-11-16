@@ -280,8 +280,10 @@ func init() {
 				return toolResult{}, err
 			}
 			if a.Full {
-				// a full save stops the workspace; carry on from it at once, so
-				// saving feels like a checkpoint, not a shutdown
+				// A full save stops the workspace; carry on from it at once, so
+				// saving is a checkpoint, not a shutdown (the save itself is
+				// unaffected). Swap for the engine's keep_running save option
+				// once it exists.
 				if _, err := s.c.Resume(ctx, sv.ID); err != nil {
 					return toolResult{}, fmt.Errorf("saved %s, but could not carry on from it: %w", sv.ID, err)
 				}

@@ -235,6 +235,9 @@ func failure(err error) toolResult {
 	var ce *client.Error
 	if errors.As(err, &ce) {
 		msg = fmt.Sprintf("Cairn error %s: %s", ce.Code, ce.Message)
+		if ce.Code == "conflict" {
+			msg += " (a workspace stopped by a full save carries on with rewind save=<that save>; list_saves shows it)"
+		}
 		if ce.Code == "unsupported_by_runtime" {
 			msg += " (this engine's runtime cannot do that; full saves and lasting processes need gVisor)"
 		}
