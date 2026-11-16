@@ -52,8 +52,7 @@ From a checkout of this repository, `go run ./cmd/cairn up --build` builds the e
 ws=$(cairn create)                                   # python:3.12-slim by default
 cairn exec $ws -- sh -c 'nohup python3 -m http.server 8000 >/dev/null 2>&1 &'
 cairn exec $ws -- sh -c 'echo hello > note.txt'
-save=$(cairn save $ws --full)                        # files, memory and the running server (the workspace pauses)
-cairn resume $save                                   # carry on from the save
+save=$(cairn save $ws --full)                        # files, memory and the running server; it keeps running
 cairn exec $ws -- sh -c 'echo broken > note.txt'
 cairn resume $save                                   # rewind: note.txt says hello, the same server still runs
 cairn copy $save --count 3                           # three independent copies to try three ideas
