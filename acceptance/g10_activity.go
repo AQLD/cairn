@@ -72,9 +72,15 @@ func init() {
 			e.T.Fatalf("reading a missing file: %v", missErr)
 		}
 		e.Sh(ws.ID, "true")
+		// one write larger than a tail keeps its end, too
+		e.Write(ws.ID, "big", strings.Repeat("a", 12000)+"THE-END\n")
+		e.Sh(ws.ID, "dd if=big bs=20000 count=1 2>/dev/null")
 
 		evs := eventsOf(e, ws.ID, "")
-		mustKinds(e, "log", evs, "create", "exec", "file_write", "file_read", "file_read", "exec")
+		mustKinds(e, "log", evs, "create", "exec", "file_write", "file_read", "file_read", "exec", "file_write", "exec")
+		if big := dataString(evs[7], "stdout_tail"); len(big) != 4096 || !strings.HasSuffix(big, "aaaTHE-END\n") {
+			e.T.Fatalf("a large write's tail: %d bytes, ending %q", len(big), big[max(0, len(big)-20):])
+		}
 		ex := evs[1]
 		Equal(e, "exec exit code", dataNumber(ex, "exit_code"), 3)
 		Equal(e, "stdout bytes", int(dataNumber(ex, "stdout_bytes")), len(r.Stdout))
@@ -121,12 +127,12 @@ func init() {
 			}
 		}
 		// filters and paging
-		Equal(e, "only commands", len(eventsOf(e, ws.ID, "exec")), 2)
-		Equal(e, "a kind prefix", len(eventsOf(e, ws.ID, "file_*")), 3)
+		Equal(e, "only commands", len(eventsOf(e, ws.ID, "exec")), 3)
+		Equal(e, "a kind prefix", len(eventsOf(e, ws.ID, "file_*")), 4)
 		last, err := e.C.Events(e.Ctx, ws.ID, client.EventQuery{Last: 2})
 		e.Must(err)
-		mustKinds(e, "the last two", last, "file_read", "exec")
-		after, err := e.C.Events(e.Ctx, ws.ID, client.EventQuery{After: evs[3].ID})
+		mustKinds(e, "the last two", last, "file_write", "exec")
+		after, err := e.C.Events(e.Ctx, ws.ID, client.EventQuery{After: evs[3].ID, Limit: 2})
 		e.Must(err)
 		mustKinds(e, "after a cursor", after, "file_read", "exec")
 		// a workspace that never existed has no log
