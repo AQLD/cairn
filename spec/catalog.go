@@ -276,6 +276,7 @@ var Catalog = []Scenario{
 					{ID: "G10.14.2", Title: "`cairn setup --project` gives a repository its workspace and tells its agents to use it", Proves: "The project is pushed into a new workspace, pinned so `.` names it, and AGENTS.md (and CLAUDE.md for Claude Code) gain one Cairn section that reruns update instead of repeat; `cairn run` then runs local edits in the workspace, in the matching folder.", Milestone: E3},
 					{ID: "G10.14.3", Title: "`cairn doctor` names each problem with its fix", Proves: "An unreachable engine, a missing skill or MCP registration, and a project pinned to a workspace that is gone are each reported with the command that fixes them, and a healthy setup reports none.", Milestone: E3},
 				}},
+			{ID: "G10.15", Title: "The CLI installs with one command, checked against the release's checksums", Proves: "`curl … install.sh | sh` puts the right build of cairn for the machine on PATH, refuses a download whose SHA-256 does not match the release's SHA256SUMS, and leaves an existing cairn untouched when it refuses.", Milestone: E3},
 		},
 	},
 	// Agent journeys: what each kind of agent gets done end to end. A step is

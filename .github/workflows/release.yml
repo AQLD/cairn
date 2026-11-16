@@ -30,7 +30,7 @@ jobs:
             mkdir -p "$dir"
             cmds=./cmd/cairn
             [[ $os == linux ]] && cmds="./cmd/cairn ./cmd/cairnd ./cmd/cairn-init"
-            GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$dir/" $cmds
+            GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=$ver" -o "$dir/" $cmds
             cp LICENSE README.md "$dir/"
             tar -czf "dist/$dir.tar.gz" "$dir"
           done
