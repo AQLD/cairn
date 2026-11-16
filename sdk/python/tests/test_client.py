@@ -378,6 +378,42 @@ class TestSessions(EngineTest):
         self.assertEqual(py.run("seen").text, "['before', 'after']\n")
 
 
+class TestEvents(EngineTest):
+    def test_the_log_shows_what_was_done(self):
+        ws = self.workspace("logged")
+        ws.exec("echo out; echo err >&2; exit 4", env={"SECRET": "hunter2"})
+        ws.write_file("a.txt", "abc")
+        save = ws.save()
+        evs = ws.events()
+        self.assertEqual([e.kind for e in evs], ["create", "exec", "file_write", "save"])
+        ex = evs[1]
+        self.assertIsInstance(ex, cairn.Event)
+        self.assertEqual(ex.data["exit_code"], 4)
+        self.assertEqual(ex.data["stdout_tail"], "out\n")
+        self.assertEqual(ex.data["stderr_tail"], "err\n")
+        self.assertEqual(ex.data["env"], ["SECRET"])
+        self.assertNotIn("hunter2", repr(evs))
+        self.assertIn("exit 4", ex.summary)
+        self.assertTrue(ex.request_id)
+        self.assertIsNotNone(ex.time)
+        self.assertEqual(evs[3].data["save"], save.id)
+        self.assertEqual([e.kind for e in ws.events(kind="exec")], ["exec"])
+        self.assertEqual([e.kind for e in ws.events(last=1)], ["save"])
+        self.assertEqual([e.kind for e in ws.events(after=evs[1].id)], ["file_write", "save"])
+        with self.assertRaises(cairn.NotFound):
+            self.c.events("ws_0000000000000000")
+
+    def test_follow_sees_new_events_live(self):
+        ws = self.workspace("followed")
+        stream = ws.follow_events()
+        self.assertEqual(next(stream).kind, "create")
+        for i in range(3):
+            ws.run("echo", f"n{i}")
+            ev = next(stream)
+            self.assertEqual((ev.kind, ev.data["stdout_tail"]), ("exec", f"n{i}\n"))
+        stream.close()
+
+
 class TestTemplates(EngineTest):
     def test_import_use_and_delete(self):
         buf = io.BytesIO()

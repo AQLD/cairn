@@ -9,7 +9,7 @@ from __future__ import annotations
 import dataclasses
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Optional
 
 if TYPE_CHECKING:
     from ._client import Client
@@ -205,11 +205,38 @@ class Workspace:
     def sessions(self) -> list[Session]:
         return self._client.sessions(self.id)
 
+    def events(self, **kw) -> list["Event"]:
+        """The activity log: what was run, written, saved... in this workspace."""
+        return self._client.events(self.id, **kw)
+
+    def follow_events(self, **kw) -> Iterator["Event"]:
+        """Yields the log's events, then each new one as it happens."""
+        return self._client.follow_events(self.id, **kw)
+
     def refresh(self) -> "Workspace":
         return self._client.workspace(self.id)
 
     def delete(self) -> None:
         self._client.delete_workspace(self.id)
+
+
+@dataclass
+class Event:
+    """One entry of a workspace's activity log."""
+    id: int  # increasing: pass the last one seen as after=
+    workspace_id: str
+    time: Optional[datetime]
+    kind: str  # exec, file_write, file_read, save, resume, copy, create, delete, pause, wake, session_*
+    summary: str  # one readable line
+    request_id: str = ""
+    error: str = ""  # set when the operation failed
+    data: dict = field(default_factory=dict)  # exit_code, stdout_tail, save, ... by kind
+
+    @classmethod
+    def _from(cls, d: dict) -> "Event":
+        return cls(id=d.get("id", 0), workspace_id=d.get("workspace_id", ""), time=_time(d.get("time")),
+                   kind=d.get("kind", ""), summary=d.get("summary", ""), request_id=d.get("request_id", ""),
+                   error=d.get("error", ""), data=d.get("data") or {})
 
 
 @dataclass

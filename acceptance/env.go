@@ -50,6 +50,7 @@ type Env struct {
 	token      string
 	rt         runtime.Runtime
 	srv        *httptest.Server
+	api        *api.Server
 	configure  func(*engine.Config)
 }
 
@@ -204,13 +205,15 @@ func (e *Env) start() {
 		}
 	}
 	e.Engine = eng
-	e.srv = httptest.NewServer(api.New(eng, slog.New(slog.NewJSONHandler(e.Logs, nil)), e.token))
+	e.api = api.New(eng, slog.New(slog.NewJSONHandler(e.Logs, nil)), e.token)
+	e.srv = httptest.NewServer(e.api)
 	e.C = client.New(e.srv.URL, e.token)
 	e.loadInfo()
 }
 
 func (e *Env) stop() {
 	if e.srv != nil {
+		e.api.StopStreams() // Close waits for every request, followed logs included
 		e.srv.Close()
 		e.srv = nil
 	}

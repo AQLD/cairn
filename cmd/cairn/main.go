@@ -14,6 +14,7 @@
 //	cairn copy SAVE [--count N]
 //	cairn rm-save SAVE
 //	cairn undelete SAVE
+//	cairn log WORKSPACE [-f] [-n N] [--kind K] [-v] [--json]
 //	cairn rm WORKSPACE
 //	cairn info
 //
@@ -73,6 +74,9 @@ commands:
   rm-save SAVE                            delete a save (recoverable for the retention window)
   undelete SAVE                           bring back a deleted save
   pause WORKSPACE                         free its memory now; the next command wakes it
+  log WORKSPACE [-f] [-n N] [--kind K] [-v] [--json]
+                                          what was done in it: commands, files, saves, sessions
+                                          (-f: watch live; -v: with output tails)
   rm WORKSPACE                            delete a workspace (saves are kept)
   info                                    show the engine's runtime and capabilities
   mcp [--workspace ID]                    serve the Model Context Protocol on stdio, for coding agents
@@ -415,6 +419,9 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 			return 1, err
 		}
 		fmt.Println(sv.ID, sv.State)
+
+	case "log":
+		return runLog(ctx, c, args)
 
 	case "pause":
 		if len(args) != 1 {

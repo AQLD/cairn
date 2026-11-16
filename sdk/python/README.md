@@ -51,6 +51,21 @@ r.ok, r.exit_code, r.timed_out, r.ended, r.stderr
 
 An exception's traceback goes to `stderr` with `exit_code` 1 and the session carries on. `ended` means the session's process died during the cell (it exited, or was stopped for memory). One cell runs at a time per session. Full saves and pauses keep sessions like any other process; a quick save keeps files only. Sessions need a runtime that keeps processes between commands (gVisor).
 
+## Activity log
+
+Every workspace keeps a log of what was done in it: commands with their exit code, duration and the end of their output, files written and read, saves, resumes, copies, pauses and session cells. It is how a person sees what an agent did:
+
+```python
+for ev in ws.events(last=20):                  # or kind="exec", after=<id>
+    print(ev.time, ev.kind, ev.summary)        # "exec: pytest -q → exit 1 in 2.3s"
+    ev.data.get("exit_code"), ev.data.get("stderr_tail")
+
+for ev in ws.follow_events():                  # what is there, then each new event live
+    print(ev.summary)
+```
+
+From a terminal: `cairn log WORKSPACE -f -v`. Environment variable values are never logged, only their names; command lines and output tails are, so keep secrets out of arguments. Each workspace keeps its newest 10,000 events; a deleted workspace's log is kept for the save retention window (7 days by default).
+
 ## Saves
 
 | Call | What it does |

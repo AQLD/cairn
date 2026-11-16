@@ -16,11 +16,11 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from typing import IO, Any, Iterable, Optional, Sequence, Union
+from typing import IO, Any, Iterable, Iterator, Optional, Sequence, Union
 
 from . import __version__
 from ._errors import CairnError, CommandFailed, ConnectionFailed, TooManyRequests, from_response
-from ._types import ExecResult, Info, Limits, OutputCallback, RunResult, Save, Session, Template, Workspace
+from ._types import Event, ExecResult, Info, Limits, OutputCallback, RunResult, Save, Session, Template, Workspace
 
 Content = Union[bytes, str, IO[bytes], "os.PathLike[str]"]
 
@@ -331,6 +331,45 @@ class Client:
     def saves(self, workspace_id: str) -> list[Save]:
         d = self._json("GET", f"/v1/workspaces/{_q(workspace_id)}/saves")
         return [Save._from(s, self) for s in d.get("saves") or []]
+
+    # --- activity log ---
+
+    def events(self, workspace_id: str, *, after: int = 0, limit: int = 0, last: int = 0,
+               kind: str = "") -> list[Event]:
+        """A workspace's activity log, oldest first: commands with their exit
+        code and output tail, files written and read, saves, resumes, copies,
+        pauses, session cells. after= pages past an event ID, last= gives the
+        newest events, kind= filters ("exec"; "session_*" for a prefix)."""
+        d = self._json("GET", self._events_path(workspace_id, after, limit, last, kind))
+        return [Event._from(e) for e in d.get("events") or []]
+
+    def follow_events(self, workspace_id: str, *, after: int = 0, last: int = 0,
+                      kind: str = "") -> Iterator[Event]:
+        """Yields the events selected (as events() would), then each new one as
+        it happens, until the caller stops iterating or the engine shuts down
+        (ConnectionFailed)."""
+        path = self._events_path(workspace_id, after, 0, last, kind, follow=True)
+        with self._open("GET", path, timeout=None) as resp:
+            for line in resp:
+                if line.strip():
+                    yield Event._from(json.loads(line))
+        raise ConnectionFailed("the engine ended the event stream")
+
+    def _events_path(self, workspace_id: str, after: int, limit: int, last: int, kind: str,
+                     follow: bool = False) -> str:
+        q: dict[str, Any] = {}
+        if after:
+            q["after"] = after
+        if last:
+            q["last"] = last
+        elif limit:
+            q["limit"] = limit
+        if kind:
+            q["kind"] = kind
+        if follow:
+            q["follow"] = 1
+        path = f"/v1/workspaces/{_q(workspace_id)}/events"
+        return path + ("?" + urllib.parse.urlencode(q) if q else "")
 
     def get_save(self, save_id: str) -> Save:
         return Save._from(self._json("GET", f"/v1/saves/{_q(save_id)}"), self)

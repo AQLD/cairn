@@ -147,7 +147,7 @@ func (e *Engine) sessionScript(ctx context.Context, id, script string, stdin io.
 	}
 	status := &statusLine{rest: stdout}
 	var errOut bytes.Buffer
-	res, err := e.Exec(ctx, id, ExecRequest{
+	res, err := e.exec(ctx, id, ExecRequest{ // unrecorded: session plumbing is logged as its cell
 		Argv:   append([]string{"sh", "-c", script, "cairn-session"}, args...),
 		Stdin:  stdin,
 		Stdout: status,
@@ -168,9 +168,9 @@ func (e *Engine) sessionScript(ctx context.Context, id, script string, stdin io.
 	return words[1:], rest.Bytes(), nil
 }
 
-// CreateSession starts a session in a running workspace. language is
+// createSession starts a session in a running workspace. language is
 // "python" (needs python3 in the workspace) or "shell" (bash, else sh).
-func (e *Engine) CreateSession(ctx context.Context, id, language string) (*Session, error) {
+func (e *Engine) createSession(ctx context.Context, id, language string) (*Session, error) {
 	driver := map[string]string{"python": pythonDriver, "shell": shellDriver}[language]
 	if driver == "" {
 		return nil, fmt.Errorf("%w: language must be python or shell", ErrInvalid)
@@ -211,9 +211,9 @@ func (e *Engine) ListSessions(ctx context.Context, id string) ([]Session, error)
 	return out2, nil
 }
 
-// RunInSession runs one cell. One cell runs at a time per session: a second
+// runInSession runs one cell. One cell runs at a time per session: a second
 // call while one runs is a conflict.
-func (e *Engine) RunInSession(ctx context.Context, id, sid string, run SessionRun) (SessionResult, error) {
+func (e *Engine) runInSession(ctx context.Context, id, sid string, run SessionRun) (SessionResult, error) {
 	if !sessionIDPattern.MatchString(sid) {
 		return SessionResult{}, fmt.Errorf("%w: session %s", ErrNotFound, sid)
 	}
@@ -248,8 +248,8 @@ func (e *Engine) RunInSession(ctx context.Context, id, sid string, run SessionRu
 	return SessionResult{ExitCode: code, TimedOut: words[2] == "1"}, nil
 }
 
-// DeleteSession stops a session and everything it started.
-func (e *Engine) DeleteSession(ctx context.Context, id, sid string) error {
+// deleteSession stops a session and everything it started.
+func (e *Engine) deleteSession(ctx context.Context, id, sid string) error {
 	if !sessionIDPattern.MatchString(sid) {
 		return fmt.Errorf("%w: session %s", ErrNotFound, sid)
 	}
