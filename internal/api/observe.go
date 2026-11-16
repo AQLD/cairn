@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/AQLD/cairn/internal/engine"
 	"github.com/AQLD/cairn/internal/metrics"
 )
 
@@ -40,7 +41,7 @@ func (s *Server) observe(next http.Handler) http.Handler {
 			id = hex.EncodeToString(b[:])
 		}
 		w.Header().Set(RequestIDHeader, id)
-		r = r.WithContext(context.WithValue(r.Context(), ctxKey{}, id))
+		r = r.WithContext(engine.WithRequestID(context.WithValue(r.Context(), ctxKey{}, id), id))
 		rec := &recorder{ResponseWriter: w, status: http.StatusOK}
 
 		next.ServeHTTP(rec, r)

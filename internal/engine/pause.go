@@ -35,13 +35,15 @@ func (e *Engine) Pause(ctx context.Context, id string) (*Workspace, error) {
 		return nil, err
 	}
 	defer l.Unlock()
-	if err := e.pauseLocked(ctx, id); err != nil {
+	if err := e.pauseLocked(ctx, id, "requested"); err != nil {
+		e.note(ctx, id, "pause", "pause", err, nil)
 		return nil, err
 	}
 	return e.GetWorkspace(ctx, id)
 }
 
-func (e *Engine) pauseLocked(ctx context.Context, id string) error {
+// pauseLocked pauses a running workspace; why goes in its activity log.
+func (e *Engine) pauseLocked(ctx context.Context, id, why string) error {
 	w, err := e.liveWorkspace(ctx, id)
 	if err != nil {
 		return err
@@ -88,6 +90,8 @@ func (e *Engine) pauseLocked(ctx context.Context, id string) error {
 		return err
 	}
 	e.log.Info("paused workspace", "workspace", id, "save", saveID, "bytes", m.Size())
+	e.note(ctx, id, "pause", fmt.Sprintf("paused (%s): memory saved in %s, %s", why, saveID, size(m.Size())), nil,
+		map[string]any{"reason": why, "save": saveID, "bytes": m.Size()})
 	return nil
 }
 
@@ -145,6 +149,12 @@ func (e *Engine) wakeLocked(ctx context.Context, id string) error {
 	e.dropAutoSave(ctx, w.PausedSave)
 	e.touch(id)
 	e.log.Info("woke workspace", "workspace", id)
+	if verr != nil {
+		e.note(ctx, id, "wake", "woke from its files: its processes could not be restored ("+clip(verr.Error(), 200)+")", nil,
+			map[string]any{"processes": false, "reason": verr.Error()})
+	} else {
+		e.note(ctx, id, "wake", "woke with its processes", nil, map[string]any{"processes": true})
+	}
 	return nil
 }
 
@@ -242,7 +252,7 @@ func (e *Engine) PauseIdle(ctx context.Context, idle time.Duration) (int, error)
 			l.Unlock()
 			continue
 		}
-		err := e.pauseLocked(ctx, w.ID)
+		err := e.pauseLocked(ctx, w.ID, "idle")
 		l.Unlock()
 		switch {
 		case err == nil:
@@ -289,7 +299,7 @@ func (e *Engine) PauseAll(ctx context.Context) (paused, failed int) {
 			l := e.lock(id)
 			l.cancelCommands()
 			l.Lock()
-			err := e.pauseLocked(ctx, id)
+			err := e.pauseLocked(ctx, id, "shutdown")
 			l.Unlock()
 			mu.Lock()
 			defer mu.Unlock()

@@ -190,14 +190,16 @@ func run() error {
 		}()
 	}
 
+	handler := api.New(eng, log, *token)
 	srv := &http.Server{
 		Addr:              *listen,
-		Handler:           api.New(eng, log, *token),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		// close idle keep-alive connections; no read or write timeout: uploads
 		// and streamed command output legitimately take long
 		IdleTimeout: 2 * time.Minute,
 	}
+	srv.RegisterOnShutdown(handler.StopStreams) // followed activity logs end with the server
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
 	// pulled after the API is up: a first pull can take a while, and clients

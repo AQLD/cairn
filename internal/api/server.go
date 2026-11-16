@@ -43,6 +43,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/AQLD/cairn/internal/engine"
 	"github.com/AQLD/cairn/internal/metrics"
@@ -64,6 +65,8 @@ type Server struct {
 	mux     *http.ServeMux
 	metrics *metrics.Registry
 	handler http.Handler
+	stop    chan struct{} // closed by StopStreams
+	stopO   sync.Once
 }
 
 // New returns the API handler. If token is set, every request except /healthz
@@ -72,7 +75,7 @@ func New(eng *engine.Engine, log *slog.Logger, token string) *Server {
 	if log == nil {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	s := &Server{eng: eng, log: log, token: token, mux: http.NewServeMux(), metrics: metrics.New()}
+	s := &Server{eng: eng, log: log, token: token, mux: http.NewServeMux(), metrics: metrics.New(), stop: make(chan struct{})}
 	s.routes()
 	s.registerGauges()
 	s.handler = s.observe(http.HandlerFunc(s.authorize))
@@ -108,6 +111,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/workspaces/{id}", s.getWorkspace)
 	s.mux.HandleFunc("DELETE /v1/workspaces/{id}", s.deleteWorkspace)
 	s.mux.HandleFunc("POST /v1/workspaces/{id}/pause", s.pauseWorkspace)
+	s.mux.HandleFunc("GET /v1/workspaces/{id}/events", s.listEvents)
 	s.mux.HandleFunc("POST /v1/workspaces/{id}/exec", s.exec)
 	s.mux.HandleFunc("PUT /v1/workspaces/{id}/files", s.writeFile)
 	s.mux.HandleFunc("GET /v1/workspaces/{id}/files", s.readFile)

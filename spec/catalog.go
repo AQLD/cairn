@@ -257,6 +257,15 @@ var Catalog = []Scenario{
 					{ID: "G10.12.1", Title: "An agent creates, runs, saves, rewinds and copies through MCP tools", Proves: "The handshake, tool list and every core tool work against a real engine, failures come back as tool errors with Cairn's code, and stdout carries only protocol messages.", Milestone: E3},
 					{ID: "G10.12.2", Title: "A background server and a session survive an MCP full save and rewind", Proves: "exec background=true leaves a server running between calls, save full=true carries on at once, and rewinding to it brings back the same server process and the session's variables.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}},
 				}},
+			// G10.13: the activity log (what an agent did in its workspace)
+			{ID: "G10.13", Title: "Every operation on a workspace shows up in its activity log", Proves: "A person can see what an agent did in its workspace, and watch it live, without the agent's help.", Milestone: E3,
+				Children: []Scenario{
+					{ID: "G10.13.1", Title: "Commands are logged with their exit code, duration and output tail; files with their path and size", Proves: "Each command shows its command line, exit code, duration, byte counts and the end of its output; failures and file reads and writes show too, each naming its API request; environment values are never logged.", Milestone: E3},
+					{ID: "G10.13.2", Title: "The log can be followed live", Proves: "A follower sees the events already there, then each new one as it happens, in order, until it stops following.", Milestone: E3},
+					{ID: "G10.13.3", Title: "Copies start their own log naming their source; a rewind is recorded, not erased", Proves: "A copy's log begins with the save and workspace it came from, the original's log lists the copies, and resuming an earlier save adds an event while the history before it stays.", Milestone: E3},
+					{ID: "G10.13.4", Title: "The log survives restarts, is bounded, and outlives its workspace for the retention window", Proves: "Events written before an engine restart are still listed after it; each workspace keeps only its newest events; a deleted workspace's log stays readable until the retention window ends, then is purged.", Milestone: E3, Needs: []Need{NeedInProcess}},
+					{ID: "G10.13.5", Title: "Session cells, full saves, pauses and wakes are logged", Proves: "A session cell shows its code and result; a full save, a pause and the wake that follows show with the save they used and whether processes came back.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}},
+				}},
 		},
 	},
 	// Agent journeys: what each kind of agent gets done end to end. A step is

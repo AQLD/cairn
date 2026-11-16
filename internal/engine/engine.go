@@ -18,12 +18,14 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/AQLD/cairn/internal/disk"
+	"github.com/AQLD/cairn/internal/eventlog"
 	"github.com/AQLD/cairn/internal/failpoint"
 	"github.com/AQLD/cairn/internal/objstore"
 	"github.com/AQLD/cairn/internal/runtime"
@@ -89,12 +91,17 @@ type Config struct {
 	// data folder (see state.go) if it is missing or damaged; a healthy one is
 	// left alone, so the setting is safe to leave on.
 	RestoreState bool
+	// EventsPerWorkspace bounds each workspace's activity log
+	// (eventlog.DefaultPerWorkspace if 0); older events are dropped.
+	EventsPerWorkspace int
+	EventsWriteDelay   time.Duration // tests only: hold activity log writes back
 }
 
 type Engine struct {
-	cfg   Config
-	log   *slog.Logger
-	store *store.Store
+	cfg    Config
+	log    *slog.Logger
+	store  *store.Store
+	events *eventlog.Log // activity log (activity.go)
 
 	mu       sync.Mutex
 	diskErr  error                // why new workspaces get no disk image; nil if they do
@@ -215,6 +222,10 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 		return nil, err
 	}
 	e = &Engine{cfg: cfg, log: cfg.Logger, store: st, locks: map[string]*wsLock{}, activity: map[string]time.Time{}, ops: make(chan struct{}, cfg.MaxOps)}
+	if err := e.openEvents(); err != nil {
+		st.Close()
+		return nil, err
+	}
 	if cfg.NoDiskImages {
 		e.diskErr = errors.New("disk images switched off")
 	} else {
@@ -226,16 +237,19 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if restore {
 		if err := e.reconcile(ctx); err != nil {
 			st.Close()
+			e.events.Close()
 			return nil, fmt.Errorf("restore state: %w", err)
 		}
 		e.log.Info("state database rebuilt from its backup and the data folder")
 	}
 	if err := e.recover(ctx); err != nil {
 		st.Close()
+		e.events.Close()
 		return nil, fmt.Errorf("recover: %w", err)
 	}
 	if _, err := e.PurgeExpired(ctx); err != nil {
 		st.Close()
+		e.events.Close()
 		return nil, fmt.Errorf("purge: %w", err)
 	}
 	if e.remoteOn() {
@@ -256,6 +270,9 @@ func (e *Engine) Close() error {
 	if e.stopUploads != nil {
 		e.stopUploads()
 		<-e.uploaderDone
+	}
+	if err := e.events.Close(); err != nil {
+		e.log.Error("close activity log", "err", err)
 	}
 	return e.store.Close()
 }
@@ -306,7 +323,7 @@ type CreateRequest struct {
 	RequestKey string `json:"-"`
 }
 
-func (e *Engine) CreateWorkspace(ctx context.Context, req CreateRequest) (*Workspace, error) {
+func (e *Engine) createWorkspace(ctx context.Context, req CreateRequest) (*Workspace, error) {
 	if req.Limits.CPUs < 0 || req.Limits.MemoryMB < 0 || req.Limits.DiskMB < 0 {
 		return nil, fmt.Errorf("%w: limits cannot be negative", ErrInvalid)
 	}
@@ -450,9 +467,9 @@ func (e *Engine) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 	return out, nil
 }
 
-// DeleteWorkspace stops a workspace and removes its filesystem. Its saves are
+// deleteWorkspace stops a workspace and removes its filesystem. Its saves are
 // kept, so it can still be copied from.
-func (e *Engine) DeleteWorkspace(ctx context.Context, id string) error {
+func (e *Engine) deleteWorkspace(ctx context.Context, id string) error {
 	l := e.lock(id)
 	l.cancelCommands() // deleting ends whatever runs; it does not wait for it
 	l.Lock()
@@ -485,7 +502,46 @@ func (e *Engine) DeleteWorkspace(ctx context.Context, id string) error {
 type ExecRequest = runtime.ExecRequest
 type ExecResult = runtime.ExecResult
 
+// Exec runs a command and records it in the workspace's activity log.
 func (e *Engine) Exec(ctx context.Context, id string, req ExecRequest) (ExecResult, error) {
+	var stdout, stderr tail
+	orig := req
+	req.Stdout, req.Stderr = teeTo(req.Stdout, &stdout), teeTo(req.Stderr, &stderr)
+	start := time.Now()
+	res, err := e.exec(ctx, id, req)
+	took := time.Since(start)
+	data := map[string]any{"command": boundedArgs(orig.Argv), "duration_ms": took.Milliseconds(),
+		"stdout_bytes": stdout.n, "stderr_bytes": stderr.n}
+	if orig.Dir != "" {
+		data["dir"] = orig.Dir
+	}
+	if len(orig.Env) > 0 {
+		keys := make([]string, 0, len(orig.Env))
+		for k := range orig.Env {
+			keys = append(keys, k) // names only: values are often secrets
+		}
+		sort.Strings(keys)
+		data["env"] = keys
+	}
+	summary := "exec: " + oneLine(commandLine(orig.Argv))
+	if err == nil {
+		data["exit_code"], data["timed_out"] = res.ExitCode, res.TimedOut
+		data["stdout_tail"], data["stderr_tail"] = stdout.String(), stderr.String()
+		summary += " → " + ended(res.ExitCode, res.TimedOut) + " in " + seconds(took)
+	}
+	e.note(ctx, id, "exec", summary, err, data)
+	return res, err
+}
+
+// teeTo also writes a command's output to t (w may be nil: output discarded).
+func teeTo(w io.Writer, t *tail) io.Writer {
+	if w == nil {
+		return t
+	}
+	return io.MultiWriter(w, t)
+}
+
+func (e *Engine) exec(ctx context.Context, id string, req ExecRequest) (ExecResult, error) {
 	if len(req.Argv) == 0 {
 		return ExecResult{}, fmt.Errorf("%w: command is empty", ErrInvalid)
 	}
@@ -512,8 +568,8 @@ func (e *Engine) Exec(ctx context.Context, id string, req ExecRequest) (ExecResu
 	return e.cfg.Runtime.Exec(ctx, spec, req)
 }
 
-// WriteFile writes a file inside the workspace, creating parent folders.
-func (e *Engine) WriteFile(ctx context.Context, id, name string, r io.Reader, mode os.FileMode) error {
+// writeFile writes a file inside the workspace, creating parent folders.
+func (e *Engine) writeFile(ctx context.Context, id, name string, r io.Reader, mode os.FileMode) error {
 	rel, err := workspacePath(name)
 	if err != nil {
 		return err
@@ -609,8 +665,8 @@ func syncDirsIn(root *os.Root, dir string) error {
 	}
 }
 
-// OpenFile opens a file inside the workspace for reading. The caller closes it.
-func (e *Engine) OpenFile(ctx context.Context, id, name string) (*os.File, os.FileInfo, error) {
+// openFile opens a file inside the workspace for reading. The caller closes it.
+func (e *Engine) openFile(ctx context.Context, id, name string) (*os.File, os.FileInfo, error) {
 	rel, err := workspacePath(name)
 	if err != nil {
 		return nil, nil, err
@@ -681,7 +737,7 @@ type SaveOptions struct {
 	KeepRunning bool
 }
 
-// SaveWith is Save with options.
+// saveWith is SaveWith without the activity log (activity_ops.go).
 //
 // With KeepRunning, the sandbox is frozen instead of stopped: its memory is
 // written while every process is held where it is, the filesystem is archived
@@ -692,7 +748,7 @@ type SaveOptions struct {
 // treats it like any interrupted save (the save is published if it was
 // committed) and the runtime thaws the frozen sandbox when it adopts it, so
 // the processes are never lost.
-func (e *Engine) SaveWith(ctx context.Context, id string, opts SaveOptions) (*Save, error) {
+func (e *Engine) saveWith(ctx context.Context, id string, opts SaveOptions) (*Save, error) {
 	kind, requestKey := opts.Kind, opts.RequestKey
 	if kind == "" {
 		kind = save.Quick
@@ -1094,6 +1150,10 @@ func (e *Engine) PurgeExpired(ctx context.Context) (int, error) {
 		n++
 		e.log.Info("purged deleted save", "save", sv.ID, "deleted_at", sv.DeletedAt)
 	}
+	// deleted workspaces' activity logs go with the same window
+	if _, err := e.events.Purge(ctx, e.cfg.Now().Add(-e.cfg.Retention)); err != nil {
+		e.log.Error("activity log: purge", "err", err)
+	}
 	return n, nil
 }
 
@@ -1181,9 +1241,9 @@ func (e *Engine) readySave(ctx context.Context, saveID string) (*store.Save, *sa
 	return sv, m, nil
 }
 
-// Resume restores a workspace to one of its saves: the filesystem, and for a
+// resume restores a workspace to one of its saves: the filesystem, and for a
 // full save its memory and processes. Anything written since the save is lost.
-func (e *Engine) Resume(ctx context.Context, saveID string) (*Workspace, error) {
+func (e *Engine) resume(ctx context.Context, saveID string) (*Workspace, error) {
 	sv, m, err := e.readySave(ctx, saveID)
 	if err != nil {
 		return nil, err
@@ -1316,13 +1376,13 @@ func (e *Engine) extractSave(saveID string, v volume, ws Spec) error {
 	return err
 }
 
-// Copy makes count new workspaces from one save. Each copy has its own ID and
+// copy makes count new workspaces from one save. Each copy has its own ID and
 // identity; the original workspace is untouched.
 //
 // requestKey, if set, makes the request idempotent: copy i is created with key
 // "<requestKey>#i", so a retry returns the copies already made and creates only
 // the ones a crash prevented.
-func (e *Engine) Copy(ctx context.Context, saveID string, count int, requestKey string) ([]Workspace, error) {
+func (e *Engine) copy(ctx context.Context, saveID string, count int, requestKey string) ([]Workspace, error) {
 	if count < 1 || count > MaxCopies {
 		return nil, fmt.Errorf("%w: count must be between 1 and %d", ErrInvalid, MaxCopies)
 	}
