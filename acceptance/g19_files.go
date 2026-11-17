@@ -4,8 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"io/fs"
 	"math/rand/v2"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -54,6 +56,25 @@ func freeBytes(dir string) (uint64, error) {
 	return uint64(st.Bavail) * uint64(st.Bsize), nil
 }
 
+// dataBytes is the space the files under dir take on disk (allocated blocks).
+// Unlike free space on the volume, it does not move when something else on
+// a shared machine writes (Docker, VMs, other test runs): free space did,
+// by 149 MB, and failed G19.5.2 on a busy laptop.
+func dataBytes(dir string) int64 {
+	var n int64
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		var st sysunix.Stat_t
+		if sysunix.Lstat(path, &st) == nil {
+			n += int64(st.Blocks) * 512 //nolint:unconvert
+		}
+		return nil
+	})
+	return n
+}
+
 func init() {
 	register("G19.5.1", func(e *Env) {
 		ws := e.Workspace("big-file")
@@ -89,14 +110,13 @@ func init() {
 			c.NoDiskImages = true
 			c.MinFreeBytes = int64(free) - 150<<20
 		})
+		held := dataBytes(e.DataDir)
 		err = e.C.WriteFileFrom(e.Ctx, ws.ID, "fill.bin", io.LimitReader(rand.NewChaCha8([32]byte{1}), 400<<20))
 		e.ErrCode(err, "insufficient_storage")
 		_, err = e.C.ReadFile(e.Ctx, ws.ID, "fill.bin")
 		e.ErrCode(err, "not_found")
-		after, err := freeBytes(e.DataDir)
-		e.Must(err)
-		if int64(after) < int64(free)-100<<20 {
-			e.T.Fatalf("the refused upload kept its space: %d MB free before, %d MB after", free>>20, after>>20)
+		if grew := dataBytes(e.DataDir) - held; grew > 100<<20 {
+			e.T.Fatalf("the refused upload left %d MB behind in the engine's data", grew>>20)
 		}
 		// the workspace still works
 		e.Write(ws.ID, "small.txt", "fine\n")
