@@ -10,6 +10,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	_ "embed"
@@ -89,6 +90,8 @@ func cmdSetup(ctx context.Context, c *client.Client, args []string) (int, error)
 	noEngine := fs.Bool("no-engine", false, "do not start an engine if none answers")
 	noNetwork := fs.Bool("no-network", false, "with --project: the workspace gets no network access")
 	noInstructions := fs.Bool("no-instructions", false, "with --project: leave AGENTS.md and CLAUDE.md alone")
+	template := fs.String("template", "", "with --project: the workspace's template, NAME or NAME=IMAGE (default: from the project: package.json → node, go.mod → go, Cargo.toml → rust, Python files → python)")
+	noInstall := fs.Bool("no-install", false, "with --project: do not install the project's dependencies in the workspace")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
@@ -174,7 +177,9 @@ func cmdSetup(ctx context.Context, c *client.Client, args []string) (int, error)
 	// 3. the project
 	if *proj {
 		step("project")
-		if err := setupProject(ctx, c, chosen, !*noNetwork, !*noInstructions); err != nil {
+		opts := projectOptions{network: !*noNetwork, instructions: !*noInstructions, template: *template,
+			install: !*noInstall, isolated: info.Capabilities.Isolation, fullSave: info.Capabilities.FullSave}
+		if err := setupProject(ctx, c, chosen, opts); err != nil {
 			return 1, err
 		}
 	}
@@ -268,7 +273,13 @@ func withStdout(w *bytes.Buffer, fn func() (int, error)) (int, error) {
 // setupProject gives the project (the repository around the current folder,
 // else the folder) a workspace with the project in it, pins it, and adds the
 // instructions agents read.
-func setupProject(ctx context.Context, c *client.Client, agents []codingAgent, network, instructions bool) error {
+type projectOptions struct {
+	network, instructions, install bool
+	isolated, fullSave             bool // the engine's runtime
+	template                       string
+}
+
+func setupProject(ctx context.Context, c *client.Client, agents []codingAgent, o projectOptions) error {
 	dir := mustCwd()
 	if out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
 		dir = strings.TrimSpace(string(out))
@@ -289,13 +300,15 @@ func setupProject(ctx context.Context, c *client.Client, agents []codingAgent, n
 			warn("pinned workspace %s is gone (%v); making a new one", p.Workspace, err)
 		}
 	}
+	kind := detectStack(dir)
 	if ws == "" {
-		w, err := c.CreateWorkspace(ctx, client.CreateWorkspace{Name: name, Network: network})
+		tmpl := chooseTemplate(ctx, c, o.template, kind)
+		w, err := c.CreateWorkspace(ctx, client.CreateWorkspace{Name: name, Network: o.network, Template: tmpl})
 		if err != nil {
 			return fmt.Errorf("creating the project's workspace: %w", err)
 		}
 		ws = w.ID
-		ok("workspace %s (%s, network %v)", ws, w.Name, network)
+		ok("workspace %s (%s, template %s, network %v)", ws, w.Name, cmp.Or(w.Template, "default"), o.network)
 	}
 	st, err := c.PushDir(ctx, ws, dir, remote, client.PushOptions{Exclude: defaultExcludes})
 	if err != nil {
@@ -307,10 +320,20 @@ func setupProject(ctx context.Context, c *client.Client, agents []codingAgent, n
 	}
 	ok("pinned in %s: `.` names this workspace (`cairn exec . -- ...`, `cairn run -- ...`)", filepath.Join(dir, pinDir))
 
-	if !instructions {
+	installCmd, ready := "", true
+	if o.install {
+		installCmd, ready = bootstrap(ctx, c, ws, remote, dir, kind, o.isolated)
+	} else if kind != nil {
+		installCmd = kind.install(dir)
+	}
+	if ready {
+		baseline(ctx, c, ws, dir, o.fullSave)
+	}
+
+	if !o.instructions {
 		return nil
 	}
-	block := instructionsBlock(remote)
+	block := instructionsBlock(remote, installCmd, ready && o.install && installCmd != "")
 	msg, err := upsertBlock(filepath.Join(dir, "AGENTS.md"), block, true)
 	if err != nil {
 		return err
@@ -349,14 +372,21 @@ const (
 	blockEnd   = "<!-- cairn:end -->"
 )
 
-func instructionsBlock(remote string) string {
+func instructionsBlock(remote, installCmd string, installed bool) string {
+	deps := ""
+	switch {
+	case installCmd != "" && installed:
+		deps = "- Dependencies are already installed there. After changing them: `cairn run -- " + installCmd + "`.\n"
+	case installCmd != "":
+		deps = "- Install dependencies first: `cairn run -- " + installCmd + "`.\n"
+	}
 	return blockStart + `
 ## Run code in the Cairn workspace
 
 This project has a Cairn workspace: a Linux sandbox that can be saved, rewound and copied. Run builds, tests, installs and servers there, not on this machine.
 
 - ` + "`cairn run -- COMMAND`" + ` copies local edits in and runs in ` + remote + ` (e.g. ` + "`cairn run -- pytest -q`" + `).
-- ` + "`cairn save . --full`" + ` before risky steps and after each working milestone; ` + "`cairn saves .`" + ` then ` + "`cairn resume SAVE`" + ` to rewind instead of repairing by hand.
+` + deps + `- ` + "`cairn save . --full`" + ` before risky steps and after each working milestone; ` + "`cairn saves .`" + ` then ` + "`cairn resume SAVE`" + ` to rewind instead of repairing by hand; ` + "`cairn resume .`" + ` returns to the clean baseline.
 - ` + "`cairn copy SAVE --count N`" + ` to try several approaches at once.
 - ` + "`cairn log .`" + ` shows what has run. The cairn skill and MCP tools have the details.
 ` + blockEnd + "\n"

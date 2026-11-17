@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AQLD/cairn/client"
 )
@@ -96,6 +97,12 @@ func resolveDot(cmd string, args []string) ([]string, error) {
 		}
 	case cmd == "session" && len(args) > 1:
 		pos = 1
+	case cmd == "resume" && len(args) == 1 && args[0] == ".":
+		sv, err := projectBaseline()
+		if err != nil {
+			return nil, err
+		}
+		return []string{sv}, nil
 	}
 	if pos < 0 || args[pos] != "." {
 		return args, nil
@@ -131,6 +138,7 @@ var defaultExcludes = []string{"node_modules", ".venv", "venv", "__pycache__", "
 func cmdRun(ctx context.Context, c *client.Client, args []string) (int, error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	noPush := fs.Bool("no-push", false, "run without copying local changes in first")
+	noPull := fs.Bool("no-pull", false, "leave files the command wrote in the workspace instead of copying them back")
 	var exclude stringList
 	fs.Var(&exclude, "exclude", "also leave out names or paths matching this pattern when pushing (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -164,8 +172,109 @@ func cmdRun(ctx context.Context, c *client.Client, args []string) (int, error) {
 	if rel != "." {
 		dir = p.Remote + "/" + filepath.ToSlash(rel)
 	}
-	return execStream(ctx, c, p.Workspace, client.Exec{Command: cmd, Dir: dir})
+	// mark the moment before the command, so what it writes can be found
+	mark := fmt.Sprintf("/tmp/.cairn-run-%d", time.Now().UnixNano())
+	if !*noPull {
+		if _, err := c.Exec(ctx, p.Workspace, client.Exec{Command: []string{"touch", mark}}); err != nil {
+			return 1, err
+		}
+	}
+	code, err := execStream(ctx, c, p.Workspace, client.Exec{Command: cmd, Dir: dir})
+	if err != nil || *noPull {
+		return code, err
+	}
+	if perr := pullChanged(ctx, c, p, mark, append(append([]string{}, defaultExcludes...), exclude...)); perr != nil {
+		fmt.Fprintln(os.Stderr, "cairn: copying results back:", perr)
+	}
+	return code, nil
 }
+
+// Limits on what `cairn run` copies back after a command: results such as a
+// report or a build artefact, not a whole generated tree.
+const (
+	pullMaxFiles = 500
+	pullMaxBytes = 200 << 20
+)
+
+// pullChanged copies files the command created or changed under the
+// project's folder in the workspace back into the local project, so the agent
+// (which reads local files) sees its results. Agents otherwise wrote
+// report.md in the workspace and could not find it.
+func pullChanged(ctx context.Context, c *client.Client, p *project, mark string, exclude []string) error {
+	var prune []string
+	for _, x := range exclude {
+		prune = append(prune, "-name '"+strings.ReplaceAll(x, "'", "")+"'")
+	}
+	// relative to the project folder, so it means the same on every runtime
+	script := fmt.Sprintf(`find . \( %s \) -prune -o -type f -newer %s -print 2>/dev/null | head -n %d; rm -f %s`,
+		strings.Join(prune, " -o "), mark, pullMaxFiles+1, mark)
+	res, err := c.Exec(ctx, p.Workspace, client.Exec{Command: []string{"sh", "-c", script}, Dir: p.Remote})
+	if err != nil {
+		return err
+	}
+	var files []string
+	for _, f := range strings.Split(strings.TrimSpace(string(res.Stdout)), "\n") {
+		if rel, ok := strings.CutPrefix(f, "./"); ok && rel != "" {
+			files = append(files, rel)
+		}
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	if len(files) > pullMaxFiles {
+		fmt.Fprintf(os.Stderr, "cairn: the command changed more than %d files; copy what you need with `cairn pull . %s DIR`\n", pullMaxFiles, p.Remote)
+		return nil
+	}
+	var total int64
+	var copied []string
+	for _, rel := range files {
+		local := filepath.Join(p.Dir, filepath.FromSlash(rel))
+		if !strings.HasPrefix(local, p.Dir+string(filepath.Separator)) {
+			continue // a name with ".." in it: never outside the project
+		}
+		if err := os.MkdirAll(filepath.Dir(local), 0o755); err != nil {
+			return err
+		}
+		tmp := local + ".cairn-tmp"
+		f, err := os.Create(tmp)
+		if err != nil {
+			return err
+		}
+		cw := &countingWriter{w: f}
+		err = c.ReadFileTo(ctx, p.Workspace, p.Remote+"/"+rel, cw)
+		f.Close()
+		if err != nil {
+			os.Remove(tmp)
+			return fmt.Errorf("%s: %w", rel, err)
+		}
+		if err := os.Rename(tmp, local); err != nil {
+			return err
+		}
+		copied = append(copied, rel)
+		if total += cw.n; total > pullMaxBytes {
+			fmt.Fprintf(os.Stderr, "cairn: stopped copying back after %s; copy the rest with `cairn pull`\n", humanBytes(total))
+			break
+		}
+	}
+	shown := copied
+	if len(shown) > 5 {
+		shown = append(append([]string{}, shown[:5]...), fmt.Sprintf("and %d more", len(copied)-5))
+	}
+	fmt.Fprintf(os.Stderr, "cairn: copied back %d changed file(s): %s\n", len(copied), strings.Join(shown, ", "))
+	return nil
+}
+
+type countingWriter struct {
+	w interface{ Write([]byte) (int, error) }
+	n int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
+}
+
 
 func mustCwd() string {
 	d, _ := os.Getwd()
