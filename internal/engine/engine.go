@@ -993,7 +993,10 @@ func (e *Engine) buildSave(ctx context.Context, spec runtime.Spec, saveID string
 		}
 		asRoot := os.Geteuid() == 0 // ownership is restored (and so compared) only as root
 		name, write = save.DeltaFile, func(w io.Writer) error {
-			_, err := save.WriteDelta(spec.RootDir, idx, since, asRoot, w)
+			start := time.Now()
+			st, err := save.WriteDelta(spec.RootDir, idx, since, asRoot, w)
+			e.log.Info("filesystem delta", "save", saveID, "base", base.SHA256[:12], "changed", st.Changed,
+				"removed", st.Removed, "hashed", st.Hashed, "bytes", st.Bytes, "took_ms", time.Since(start).Milliseconds())
 			return err
 		}
 	}
