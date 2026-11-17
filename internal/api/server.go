@@ -4,6 +4,7 @@
 //	GET    /healthz
 //	GET    /metrics                         Prometheus metrics
 //	GET    /v1/info
+//	GET    /v1/storage                      disk used by workspaces, saves and templates; space left
 //	POST   /v1/workspaces                   create
 //	GET    /v1/workspaces                   list
 //	GET    /v1/workspaces/{id}              get
@@ -101,6 +102,14 @@ func (s *Server) routes() {
 	})
 	s.mux.HandleFunc("GET /v1/info", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.eng.Info())
+	})
+	s.mux.HandleFunc("GET /v1/storage", func(w http.ResponseWriter, r *http.Request) {
+		st, err := s.eng.Storage(r.Context())
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, st)
 	})
 	s.mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")

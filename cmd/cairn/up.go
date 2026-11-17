@@ -294,6 +294,16 @@ func cmdStatus(ctx context.Context, c *client.Client, args []string) (int, error
 	fmt.Printf("engine %s: runtime %s %s, isolation %v, full saves %v\n", cfg.Endpoint, info.Runtime, info.RuntimeVersion,
 		info.Capabilities.Isolation, info.Capabilities.FullSave)
 	fmt.Printf("workspaces: %d %v\n", len(ws), counts)
+	if st, err := c.Storage(ctx); err == nil {
+		fmt.Printf("disk: workspaces %s, saves %s, templates %s; %s free of %s\n", humanBytes(st.Workspaces), humanBytes(st.Saves),
+			humanBytes(st.Templates), humanBytes(st.VolumeFree), humanBytes(st.VolumeTotal))
+		for i, w := range st.PerWorkspace {
+			if i == 5 {
+				break
+			}
+			fmt.Printf("  %-20s %-24s %-8s %s\n", w.ID, w.Name, w.State, humanBytes(w.Bytes))
+		}
+	}
 	return 0, nil
 }
 

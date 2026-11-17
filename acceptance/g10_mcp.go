@@ -216,7 +216,11 @@ func init() {
 		m.ok("rewind", map[string]any{"save": sv})
 		Equal(e, "rewound", m.ok("read_file", map[string]any{"path": "app/state.txt"}), "one")
 
-		copies := wsIDPattern.FindAllString(m.ok("copy", map[string]any{"save": sv, "count": 2}), -1)
+		copyText := m.ok("copy", map[string]any{"save": sv, "count": 2})
+		if !strings.Contains(copyText, "workspace_delete") {
+			e.T.Fatalf("copy does not tell the agent to delete the copies it does not keep: %s", copyText)
+		}
+		copies := wsIDPattern.FindAllString(copyText, -1)
 		Equal(e, "copies made", len(copies), 2)
 		for _, c := range copies {
 			if c == ws {
