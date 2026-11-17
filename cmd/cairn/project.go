@@ -205,8 +205,11 @@ func pullChanged(ctx context.Context, c *client.Client, p *project, mark string,
 	for _, x := range exclude {
 		prune = append(prune, "-name '"+strings.ReplaceAll(x, "'", "")+"'")
 	}
-	// relative to the project folder, so it means the same on every runtime
-	script := fmt.Sprintf(`find . \( %s \) -prune -o -type f -newer %s -print 2>/dev/null | head -n %d; rm -f %s`,
+	// Change time, not modification time: pushed files keep the local
+	// machine's mtimes, which can be ahead of the workspace's clock, but their
+	// ctime is when the push wrote them, before the mark. Relative to the
+	// project folder, so it means the same on every runtime.
+	script := fmt.Sprintf(`find . \( %s \) -prune -o -type f -cnewer %s -print 2>/dev/null | head -n %d; rm -f %s`,
 		strings.Join(prune, " -o "), mark, pullMaxFiles+1, mark)
 	res, err := c.Exec(ctx, p.Workspace, client.Exec{Command: []string{"sh", "-c", script}, Dir: p.Remote})
 	if err != nil {

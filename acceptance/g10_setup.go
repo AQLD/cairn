@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // devMachine is a developer's machine as `cairn setup` sees it: its own home
@@ -177,6 +178,7 @@ func init() {
 	})
 
 	register("G10.14.2", func(e *Env) {
+		projectTemplate(e, "dev-python")
 		m := newDevMachine(e, "claude")
 		repo := m.repo("shop")
 		e.Must(os.WriteFile(filepath.Join(repo, "AGENTS.md"), []byte("# Rules\nkeep this\n"), 0o644))
@@ -226,6 +228,7 @@ func init() {
 	})
 
 	register("G10.14.3", func(e *Env) {
+		projectTemplate(e, "dev-python")
 		m := newDevMachine(e, "claude", "codex")
 		repo := m.repo("app")
 		m.mustCairn(repo, "setup", "--project")
@@ -424,10 +427,15 @@ func init() {
 	})
 
 	register("G10.14.6", func(e *Env) {
+		projectTemplate(e, "dev-python")
 		m := newDevMachine(e)
 		repo := m.repo("report")
 		m.mustCairn(repo, "setup", "--project", "--no-install")
+		// written "in the future", as when this machine's clock runs ahead of
+		// the workspace's: still not a result of the command
 		e.Must(os.WriteFile(filepath.Join(repo, "keep.txt"), []byte("mine\n"), 0o644))
+		future := time.Now().Add(time.Hour)
+		e.Must(os.Chtimes(filepath.Join(repo, "keep.txt"), future, future))
 		before, err := os.Stat(filepath.Join(repo, "hello.txt"))
 		e.Must(err)
 
