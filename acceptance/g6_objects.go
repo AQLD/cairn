@@ -73,7 +73,8 @@ func init() {
 		e.Write(ws.ID, "work.txt", "the real content")
 		sv := e.Save(ws.ID)
 		e.Must(e.Engine.SyncRemote(e.Ctx))
-		key := "saves/cluster/saves/" + sv.ID + "/rootfs.tar"
+		fsName := fsFile(e, sv.ID)
+		key := "saves/cluster/saves/" + sv.ID + "/" + fsName
 		good, ok := srv.Object(key)
 		if !ok {
 			e.T.Fatalf("no %s in the store: %v", key, srv.Keys())
@@ -98,7 +99,7 @@ func init() {
 		Equal(e, "content after resume", e.Read(ws.ID, "work.txt"), "the real content")
 
 		// damaged here, intact in the store: fetched again
-		damageFile(e, filepath.Join(e.Engine.SaveDir(sv.ID), "rootfs.tar"))
+		damageFile(e, filepath.Join(e.Engine.SaveDir(sv.ID), fsName))
 		e.Write(ws.ID, "work.txt", "changed again")
 		e.Resume(sv.ID)
 		Equal(e, "content after self-repair", e.Read(ws.ID, "work.txt"), "the real content")
