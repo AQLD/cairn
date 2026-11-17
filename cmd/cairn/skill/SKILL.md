@@ -17,14 +17,15 @@ cairn run -- npm install            # installs stay in the workspace, never on t
 cairn exec . -- sh -c 'cd /root/PROJECT && make'   # run without pushing
 ```
 
-Edit files locally as usual; `cairn run` copies them in before each command. `cairn pull . /root/PROJECT/dist ./dist` copies results back.
+Edit files locally as usual: `cairn run` copies your edits in before each command, and copies back any file the command creates or changes (a report, a lockfile, generated code), so read results locally. Rebuildable folders such as `node_modules` stay in the workspace. The project's dependencies are already installed there (see AGENTS.md).
 
 ## Save before anything risky, rewind instead of repairing
 
 ```sh
-cairn save . --full                 # ~1 s; files, memory and running servers; the workspace keeps running
+cairn save . --full                 # a few seconds; files, memory and running servers; the workspace keeps running
 cairn saves .                       # list saves (newest last), with the save each came from
 cairn resume SAVE_ID                # rewind: files, memory and processes exactly as saved
+cairn resume .                      # back to the clean baseline: dependencies installed, nothing else
 ```
 
 - Save **before** dependency upgrades, migrations, deleting files, large refactors, or anything slow to redo.

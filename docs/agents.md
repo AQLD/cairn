@@ -19,10 +19,10 @@ cairn setup --project       # connect every agent found, and give this project a
 
 `--agents claude,pi` connects only those. Every step is safe to repeat, and a skill named `cairn` that setup did not write is never replaced. `cairn doctor` checks the engine, each agent and the project, and prints the command that fixes each problem.
 
-With `--project`, the repository (the git root around the current folder) gets a workspace named after it, with the code at `/root/NAME`. The pin lives in `.cairn/` (which ignores itself, so it never reaches the repository). From anywhere in the project:
+With `--project`, the repository (the git root around the current folder) gets a workspace named after it, with the code at `/root/NAME`. Its template fits the project: `package.json` → `dev-node` (`node:22`), `go.mod` → `dev-go`, `Cargo.toml` → `dev-rust`, anything else → `dev-python` (`python:3.12`); full images, so git, curl and compilers are there. A template the engine lacks is pulled the first time; `--template NAME[=IMAGE]` picks another. Setup then installs the dependencies (`pip install -r requirements.txt`, `npm ci`/`npm install`, `go mod download`, `cargo fetch`; again only when those files change, `--no-install` to skip) and makes a full **baseline** save, which `cairn resume .` returns to. The pin lives in `.cairn/` (which ignores itself, so it never reaches the repository). From anywhere in the project:
 
 - `.` names the workspace: `cairn exec . -- make`, `cairn save . --full`, `cairn log . -f`.
-- `cairn run -- COMMAND` copies local edits in (leaving out `node_modules`, `.venv` and other rebuildable folders), then runs in the matching folder of the workspace. Files deleted locally are not deleted there.
+- `cairn run -- COMMAND` copies local edits in (leaving out `node_modules`, `.venv` and other rebuildable folders), runs in the matching folder of the workspace, then copies back the files the command created or changed (up to 500 files / 200 MB; `--no-pull` leaves them there). Files deleted on one side are not deleted on the other.
 - `cairn mcp`, started by the agent in the project, uses the workspace by default.
 
 A managed section between `<!-- cairn:start -->` and `<!-- cairn:end -->` in `AGENTS.md` tells agents to work in the workspace; edit outside the markers, and rerun setup to refresh it.

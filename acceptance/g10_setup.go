@@ -1,10 +1,18 @@
 package acceptance
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // devMachine is a developer's machine as `cairn setup` sees it: its own home
@@ -170,6 +178,7 @@ func init() {
 	})
 
 	register("G10.14.2", func(e *Env) {
+		projectTemplate(e, "dev-python")
 		m := newDevMachine(e, "claude")
 		repo := m.repo("shop")
 		e.Must(os.WriteFile(filepath.Join(repo, "AGENTS.md"), []byte("# Rules\nkeep this\n"), 0o644))
@@ -219,6 +228,7 @@ func init() {
 	})
 
 	register("G10.14.3", func(e *Env) {
+		projectTemplate(e, "dev-python")
 		m := newDevMachine(e, "claude", "codex")
 		repo := m.repo("app")
 		m.mustCairn(repo, "setup", "--project")
@@ -279,4 +289,177 @@ func exitCode(_ string, err error) int {
 		return x.ExitCode()
 	}
 	return -1
+}
+
+// projectTemplate imports a template under name: the suite's own template
+// where it has one (a real Linux with python3 on gVisor), else a tiny rootfs.
+func projectTemplate(e *Env, name string) {
+	e.T.Helper()
+	var r io.Reader
+	if path := os.Getenv("CAIRN_TEST_TEMPLATE"); path != "" {
+		f, err := os.Open(path)
+		e.Must(err)
+		defer f.Close()
+		r = f
+	} else {
+		var buf bytes.Buffer
+		tw := tar.NewWriter(&buf)
+		for _, d := range []string{"etc/", "tmp/", "root/"} {
+			e.Must(tw.WriteHeader(&tar.Header{Name: d, Typeflag: tar.TypeDir, Mode: 0o755}))
+		}
+		e.Must(tw.Close())
+		r = &buf
+	}
+	_, err := e.C.ImportTemplate(e.Ctx, name, r)
+	e.Must(err)
+}
+
+// wheel builds a minimal pure-Python wheel, so a dependency installs with no
+// network.
+func localWheel(e *Env, dir, pkg, version string) string {
+	e.T.Helper()
+	name := fmt.Sprintf("%s-%s-py3-none-any.whl", pkg, version)
+	f, err := os.Create(filepath.Join(dir, name))
+	e.Must(err)
+	zw := zip.NewWriter(f)
+	info := fmt.Sprintf("%s-%s.dist-info/", pkg, version)
+	files := map[string]string{
+		pkg + "/__init__.py":   "VERSION = '" + version + "'\n",
+		info + "METADATA":      "Metadata-Version: 2.1\nName: " + pkg + "\nVersion: " + version + "\n",
+		info + "WHEEL":         "Wheel-Version: 1.0\nGenerator: cairn-test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+		info + "top_level.txt": pkg + "\n",
+	}
+	var record strings.Builder
+	for path, content := range files {
+		w, err := zw.Create(path)
+		e.Must(err)
+		_, err = w.Write([]byte(content))
+		e.Must(err)
+		h := sha256.Sum256([]byte(content))
+		fmt.Fprintf(&record, "%s,sha256=%s,%d\n", path, base64.RawURLEncoding.EncodeToString(h[:]), len(content))
+	}
+	record.WriteString(info + "RECORD,,\n")
+	w, err := zw.Create(info + "RECORD")
+	e.Must(err)
+	_, err = w.Write([]byte(record.String()))
+	e.Must(err)
+	e.Must(zw.Close())
+	e.Must(f.Close())
+	return name
+}
+
+func workspaceTemplate(e *Env, repo string) string {
+	e.T.Helper()
+	data, err := os.ReadFile(filepath.Join(repo, ".cairn", "workspace"))
+	e.Must(err)
+	w, err := e.C.GetWorkspace(e.Ctx, strings.TrimSpace(string(data)))
+	e.Must(err)
+	return w.Template
+}
+
+func init() {
+	register("G10.14.4", func(e *Env) {
+		projectTemplate(e, "dev-node")
+		projectTemplate(e, "dev-python")
+		projectTemplate(e, "mine")
+		m := newDevMachine(e)
+
+		node := m.repo("web")
+		e.Must(os.WriteFile(filepath.Join(node, "package.json"), []byte(`{"name":"web"}`), 0o644))
+		m.mustCairn(node, "setup", "--project", "--no-install")
+		Equal(e, "template for package.json", workspaceTemplate(e, node), "dev-node")
+
+		py := m.repo("api")
+		e.Must(os.WriteFile(filepath.Join(py, "pyproject.toml"), []byte("[project]\nname='api'\n"), 0o644))
+		m.mustCairn(py, "setup", "--project", "--no-install")
+		Equal(e, "template for pyproject.toml", workspaceTemplate(e, py), "dev-python")
+
+		plain := m.repo("notes")
+		m.mustCairn(plain, "setup", "--project", "--no-install")
+		Equal(e, "template with no marker", workspaceTemplate(e, plain), "dev-python")
+
+		own := m.repo("own")
+		e.Must(os.WriteFile(filepath.Join(own, "package.json"), []byte(`{}`), 0o644))
+		m.mustCairn(own, "setup", "--project", "--no-install", "--template", "mine")
+		Equal(e, "--template", workspaceTemplate(e, own), "mine")
+
+		// what to install is still named for the agent
+		if agents := m.readAbs(filepath.Join(node, "AGENTS.md")); !strings.Contains(agents, "cairn run -- npm install") {
+			e.T.Fatalf("AGENTS.md for a node project with --no-install:\n%s", agents)
+		}
+	})
+
+	register("G10.14.5", func(e *Env) {
+		projectTemplate(e, "dev-python")
+		m := newDevMachine(e)
+		repo := m.repo("svc")
+		whl := localWheel(e, repo, "tinydep", "1.0")
+		e.Must(os.WriteFile(filepath.Join(repo, "requirements.txt"), []byte("./"+whl+"\n"), 0o644))
+
+		out := m.mustCairn(repo, "setup", "--project")
+		if !strings.Contains(out, "dependencies installed") {
+			e.T.Fatalf("setup --project did not install the dependencies:\n%s", out)
+		}
+		Equal(e, "first run finds the dependency", m.mustCairn(repo, "run", "--", "python3", "-c", "import tinydep; print(tinydep.VERSION)"), "1.0\n")
+		if agents := m.readAbs(filepath.Join(repo, "AGENTS.md")); !strings.Contains(agents, "already installed") {
+			e.T.Fatalf("AGENTS.md does not say the dependencies are installed:\n%s", agents)
+		}
+
+		// unchanged dependency files: no second install
+		out = m.mustCairn(repo, "setup", "--project")
+		if !strings.Contains(out, "dependencies up to date") {
+			e.T.Fatalf("rerun with the same dependencies:\n%s", out)
+		}
+		// changed: installed again
+		whl2 := localWheel(e, repo, "tinydep", "2.0")
+		e.Must(os.WriteFile(filepath.Join(repo, "requirements.txt"), []byte("./"+whl2+"\n"), 0o644))
+		out = m.mustCairn(repo, "setup", "--project")
+		if !strings.Contains(out, "dependencies installed") {
+			e.T.Fatalf("rerun with changed dependencies:\n%s", out)
+		}
+		Equal(e, "new dependency", m.mustCairn(repo, "run", "--", "python3", "-c", "import tinydep; print(tinydep.VERSION)"), "2.0\n")
+
+		// the baseline: dependencies in, later mess gone
+		m.mustCairn(repo, "exec", ".", "--", "sh", "-c", "echo mess > root/svc/mess.txt; python3 -m pip uninstall -y -q tinydep")
+		m.mustCairn(repo, "resume", ".")
+		Equal(e, "after resume .", m.mustCairn(repo, "exec", ".", "--", "sh", "-c",
+			"test -e root/svc/mess.txt && echo mess; python3 -c 'import tinydep; print(tinydep.VERSION)'"), "2.0\n")
+	})
+
+	register("G10.14.6", func(e *Env) {
+		projectTemplate(e, "dev-python")
+		m := newDevMachine(e)
+		repo := m.repo("report")
+		m.mustCairn(repo, "setup", "--project", "--no-install")
+		// written "in the future", as when this machine's clock runs ahead of
+		// the workspace's: still not a result of the command
+		e.Must(os.WriteFile(filepath.Join(repo, "keep.txt"), []byte("mine\n"), 0o644))
+		future := time.Now().Add(time.Hour)
+		e.Must(os.Chtimes(filepath.Join(repo, "keep.txt"), future, future))
+		before, err := os.Stat(filepath.Join(repo, "hello.txt"))
+		e.Must(err)
+
+		out := m.mustCairn(repo, "run", "--", "sh", "-c",
+			"mkdir -p out node_modules/x && echo result > out/report.md && echo junk > node_modules/x/j.js && echo printed")
+		if !strings.HasPrefix(out, "printed\n") || !strings.Contains(out, "copied back 1 changed file(s): out/report.md") {
+			e.T.Fatalf("cairn run output:\n%s", out)
+		}
+		Equal(e, "report copied back", m.readAbs(filepath.Join(repo, "out", "report.md")), "result\n")
+		if _, err := os.Stat(filepath.Join(repo, "node_modules", "x", "j.js")); err == nil {
+			e.T.Fatal("node_modules was copied back")
+		}
+		after, err := os.Stat(filepath.Join(repo, "hello.txt"))
+		e.Must(err)
+		Equal(e, "untouched file not rewritten", after.ModTime(), before.ModTime())
+
+		// a command that changes a file the agent also has locally
+		m.mustCairn(repo, "run", "--", "sh", "-c", "echo edited-there > keep.txt")
+		Equal(e, "changed file copied back", m.readAbs(filepath.Join(repo, "keep.txt")), "edited-there\n")
+
+		// --no-pull leaves results in the workspace
+		m.mustCairn(repo, "run", "--no-pull", "--", "sh", "-c", "echo x > out/second.md")
+		if _, err := os.Stat(filepath.Join(repo, "out", "second.md")); err == nil {
+			e.T.Fatal("--no-pull copied a file back")
+		}
+	})
 }
