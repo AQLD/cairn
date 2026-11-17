@@ -265,7 +265,8 @@ func (e *Engine) recordTemplateBase(id, template string, f *os.File, size int64,
 		e.log.Warn("no base for workspace: its saves hold their whole filesystem", "workspace", id, "err", err)
 		return
 	}
-	if err := e.writeBaseRecord(id, save.BaseRef{SHA256: t.SHA256, Size: t.Size}, extracted); err != nil {
+	margin := save.ChangeTimeMargin(e.volume(id, "rootfs", Spec{}).path)
+	if err := e.writeBaseRecord(id, save.BaseRef{SHA256: t.SHA256, Size: t.Size}, extracted, margin); err != nil {
 		e.log.Warn("could not record workspace base", "workspace", id, "err", err)
 	}
 }

@@ -1041,7 +1041,7 @@ func (e *Engine) saveBase(id string) (save.BaseRef, *save.Index, time.Time) {
 		e.log.Error("workspace base has no index; saving its whole filesystem", "workspace", id, "err", err)
 		return save.BaseRef{}, nil, time.Time{}
 	}
-	return r.Base, idx, r.Extracted.Add(-extractMargin)
+	return r.Base, idx, r.trustBefore(time.Now())
 }
 
 func (e *Engine) GetSave(ctx context.Context, id string) (*Save, error) {
@@ -1408,7 +1408,7 @@ func (e *Engine) restoreInto(ctx context.Context, spec runtime.Spec, ws Spec, sa
 		return err
 	}
 	if m.Base != nil {
-		err = e.writeBaseRecord(spec.ID, *m.Base, extracted)
+		err = e.writeBaseRecord(spec.ID, *m.Base, extracted, save.ChangeTimeMargin(root.path))
 	} else {
 		err = e.removeBaseRecord(spec.ID)
 	}

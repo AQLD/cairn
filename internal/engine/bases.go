@@ -32,12 +32,6 @@ import (
 	"github.com/AQLD/cairn/internal/save"
 )
 
-// extractMargin is subtracted from a filesystem's extraction time before files
-// are compared by ctime: filesystems keep ctime coarsely (to the second on
-// small ext4 inodes, to the clock tick elsewhere), so a write just after
-// extraction must still count as "maybe changed". It only costs hashing.
-const extractMargin = 2 * time.Second
-
 // baseGrace keeps a base nothing refers to for a while: a workspace may be
 // being created from it this very moment.
 const baseGrace = time.Hour
@@ -194,11 +188,28 @@ func (e *Engine) checkBase(ctx context.Context, m *save.Manifest, full bool) err
 	return err
 }
 
-// baseRecord is which base a workspace's filesystem was extracted from, and
-// when extraction finished.
+// baseRecord is which base a workspace's filesystem was extracted from, when
+// extraction finished, and the margin before that time a file's change time
+// must be to be trusted (save.ChangeTimeMargin: the filesystem's timestamp
+// coarseness). A wider margin only costs hashing.
 type baseRecord struct {
-	Base      save.BaseRef `json:"base"`
-	Extracted time.Time    `json:"extracted"`
+	Base      save.BaseRef  `json:"base"`
+	Extracted time.Time     `json:"extracted"`
+	Margin    time.Duration `json:"margin"`
+}
+
+// trustBefore is the change time before which a file of this filesystem is
+// untouched since extraction; zero (trust nothing) if the clock has gone back
+// past the extraction since, which could make later writes look older.
+func (r *baseRecord) trustBefore(now time.Time) time.Time {
+	if now.Before(r.Extracted) {
+		return time.Time{}
+	}
+	m := r.Margin
+	if m <= 0 {
+		m = 2 * time.Second
+	}
+	return r.Extracted.Add(-m)
 }
 
 func (e *Engine) readBaseRecord(id string) (*baseRecord, error) {
@@ -217,8 +228,8 @@ func (e *Engine) readBaseRecord(id string) (*baseRecord, error) {
 // extracted by then. Written only once that filesystem is in place: a crash
 // before leaves an older record, whose earlier time makes the next save hash
 // every file of the new filesystem instead of trusting it (slower, correct).
-func (e *Engine) writeBaseRecord(id string, base save.BaseRef, extracted time.Time) error {
-	data, err := json.Marshal(baseRecord{Base: base, Extracted: extracted.UTC()})
+func (e *Engine) writeBaseRecord(id string, base save.BaseRef, extracted time.Time, margin time.Duration) error {
+	data, err := json.Marshal(baseRecord{Base: base, Extracted: extracted.UTC(), Margin: margin})
 	if err != nil {
 		return err
 	}

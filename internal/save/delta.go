@@ -345,3 +345,21 @@ func hashPath(p string) (string, error) {
 	sum, _, err := hashFile(p)
 	return sum, err
 }
+
+// ChangeTimeMargin is how far before a filesystem's extraction time its
+// files' change times must be for WriteDelta to trust them: the clock's
+// coarseness on filesystems that keep nanoseconds (writes are stamped from a
+// coarse clock, a tick or so behind), a whole second plus on those that keep
+// only seconds. It looks at what dir's own entries record.
+func ChangeTimeMargin(dir string) time.Duration {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 2 * time.Second
+	}
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil && changeTime(info).Nanosecond() != 0 {
+			return 100 * time.Millisecond
+		}
+	}
+	return 2 * time.Second
+}
