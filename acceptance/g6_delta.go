@@ -71,7 +71,7 @@ func deltaTemplate(e *Env, name string) *client.Template {
 	for i := range big {
 		big[i] = byte(i*7 + i/4096)
 	}
-	for _, d := range []string{"opt", deltaDir, deltaDir + "/lib", deltaDir + "/gone", deltaDir + "/gone/x"} {
+	for _, d := range []string{"opt", deltaDir, deltaDir + "/lib", deltaDir + "/gone", deltaDir + "/gone/x", deltaDir + "/keep"} {
 		dir(d)
 	}
 	file(deltaDir+"/big.bin", big, 0o644)
@@ -82,6 +82,7 @@ func deltaTemplate(e *Env, name string) *client.Template {
 		file(deltaDir+"/lib/"+n+".txt", []byte("lib "+n+"\n"), 0o644)
 	}
 	file(deltaDir+"/gone/x/y.txt", []byte("to be deleted"), 0o644)
+	file(deltaDir+"/keep/edit.txt", []byte("edited in place\n"), 0o644)
 	e.Must(tw.WriteHeader(&tar.Header{Name: deltaDir + "/link", Typeflag: tar.TypeSymlink, Linkname: "lib/a.txt", ModTime: when}))
 	e.Must(tw.WriteHeader(&tar.Header{Name: deltaDir + "/hard", Typeflag: tar.TypeLink, Linkname: deltaDir + "/lib/a.txt", ModTime: when}))
 	e.Must(tw.Close())
@@ -96,7 +97,12 @@ const agentEdits = `cd ` + deltaDir + ` &&
 printf BBBB > same.txt && touch -r ref.txt same.txt &&
 rm -rf gone && echo new > lib/new.txt && chmod 755 run.sh &&
 ln -sfn lib/b.txt link && echo more >> lib/c.txt &&
-mkdir -p added/deep && echo n > added/deep/n.txt && rm lib/a.txt`
+mkdir -p added/deep && echo n > added/deep/n.txt && rm lib/a.txt &&
+echo more >> keep/edit.txt`
+
+// keep/ is the case for parent folders' metadata: its only change is a file
+// edited in place, which leaves the folder's time alone, while restoring the
+// file (removed and written again) would not.
 
 // fsListing is everything a restore must reproduce about a workspace's
 // files, read from its filesystem on the host: per path its type, mode,
@@ -379,6 +385,10 @@ func init() {
 			sv := e.Save(ws.ID)
 			// changes only a hash shows: same size, the template's modification time
 			e.Sh(ws.ID, agentEdits)
+			// long enough that a filesystem extracted after this would be
+			// trusted past these edits (the engine's margin is 2 s): a record
+			// written before the swap must not survive a crash
+			time.Sleep(3 * time.Second)
 			e.Failpoints.Enable(point, failpoint.ErrCrash)
 			if _, err := e.C.Resume(e.Ctx, sv.ID); err == nil {
 				e.T.Fatalf("%s: resume reported success despite the crash", point)
