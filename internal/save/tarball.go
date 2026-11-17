@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -129,6 +130,14 @@ func (zeroReader) Read(p []byte) (int, error) {
 // never writes sparse files, so real content can never exceed the archive's own
 // size, and a crafted archive must not be able to fill the disk.
 func UntarDir(r io.Reader, dir string, maxBytes int64) error {
+	return extract(r, dir, maxBytes, false)
+}
+
+// extract writes a tar stream into dir. With overlay, dir already holds a
+// base filesystem and the stream is a delta (WriteDelta): each entry replaces
+// whatever is at its path, a folder that is already a folder only gets its
+// metadata, and whiteout entries remove paths.
+func extract(r io.Reader, dir string, maxBytes int64, overlay bool) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -185,6 +194,20 @@ func UntarDir(r io.Reader, dir string, maxBytes int64) error {
 			return fmt.Errorf("%w: unsafe path %q in filesystem image", ErrCorrupt, hdr.Name)
 		}
 		mode := hdr.FileInfo().Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
+		if overlay {
+			if hdr.PAXRecords[whiteoutKey] != "" {
+				if err := root.RemoveAll(name); err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+					return err
+				}
+				continue
+			}
+			// replace what the base has here, unless both are folders
+			if fi, err := root.Lstat(name); err == nil && !(fi.IsDir() && hdr.Typeflag == tar.TypeDir) {
+				if err := root.RemoveAll(name); err != nil {
+					return err
+				}
+			}
+		}
 		if dirName := path.Dir(name); dirName != "." {
 			if err := root.MkdirAll(dirName, 0o755); err != nil {
 				return err

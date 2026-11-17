@@ -129,6 +129,12 @@ func (e *Engine) importTemplate(ctx context.Context, name string, r io.Reader, s
 		return nil, err
 	}
 	_ = os.RemoveAll(old)
+	// keep it as a base too, indexed now rather than at the first save
+	if err := e.ensureBase(t.SHA256, filepath.Join(final, "rootfs.tar")); err != nil {
+		e.log.Warn("template kept without a base: its workspaces' saves hold their whole filesystem", "template", name, "err", err)
+	} else if _, err := e.baseIndex(t.SHA256); err != nil {
+		e.log.Warn("could not index base", "template", name, "err", err)
+	}
 	return &t, nil
 }
 
@@ -220,6 +226,7 @@ func (e *Engine) createRootfs(id string, spec Spec) error {
 			err = fmt.Errorf("%w: template %q does not fit in a %d MB disk", ErrInvalid, spec.Template, spec.Limits.DiskMB)
 		}
 	}
+	extracted := time.Now()
 	if err == nil {
 		err = tmp.release()
 	}
@@ -230,7 +237,37 @@ func (e *Engine) createRootfs(id string, spec Spec) error {
 	if err := tmp.renameTo(root); err != nil {
 		return err
 	}
-	return root.attach()
+	if err := root.attach(); err != nil {
+		return err
+	}
+	if f != nil {
+		e.recordTemplateBase(id, spec.Template, f, size, extracted)
+	}
+	return nil
+}
+
+// recordTemplateBase records that a new workspace's filesystem is the
+// template's tar f, so its saves can be deltas. Without the record its saves
+// hold the whole filesystem, so failures here cost space, never correctness.
+func (e *Engine) recordTemplateBase(id, template string, f *os.File, size int64, extracted time.Time) {
+	t, err := e.GetTemplate(context.Background(), template)
+	if err != nil {
+		return
+	}
+	// the tar extracted is the template's only if the template was not
+	// replaced meanwhile: same file now as the one opened
+	opened, err1 := f.Stat()
+	current, err2 := os.Stat(filepath.Join(e.templateDir(template), "rootfs.tar"))
+	if err1 != nil || err2 != nil || !os.SameFile(opened, current) || t.Size != size {
+		return
+	}
+	if err := e.ensureBase(t.SHA256, filepath.Join(e.templateDir(template), "rootfs.tar")); err != nil {
+		e.log.Warn("no base for workspace: its saves hold their whole filesystem", "workspace", id, "err", err)
+		return
+	}
+	if err := e.writeBaseRecord(id, save.BaseRef{SHA256: t.SHA256, Size: t.Size}, extracted); err != nil {
+		e.log.Warn("could not record workspace base", "workspace", id, "err", err)
+	}
 }
 
 // PullTemplate is a request to build a template from a container image.

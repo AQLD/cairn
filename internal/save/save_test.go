@@ -27,7 +27,7 @@ func TestBuildVerifyRoundTrip(t *testing.T) {
 	must(t, b.WriteFile(RootfsFile, bytes.NewReader(tarball.Bytes())))
 	m, err := b.Commit()
 	must(t, err)
-	if m.FormatVersion != FormatVersion || len(m.Files) != 1 {
+	if m.FormatVersion != 1 || len(m.Files) != 1 { // no base: still format 1, readable by older engines
 		t.Fatalf("manifest: %+v", m)
 	}
 
