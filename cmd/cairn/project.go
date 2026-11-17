@@ -275,7 +275,6 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-
 func mustCwd() string {
 	d, _ := os.Getwd()
 	return d
