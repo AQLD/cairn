@@ -333,7 +333,10 @@ func init() {
 			for i, w := range wss {
 				ids[i] = w.ID
 			}
-			return text("Made %d workspace(s) from %s: %s. Pass workspace=<id> to work in each.", len(ids), a.Save, strings.Join(ids, ", ")), nil
+			// agents left their copies running when done (found by dogfooding)
+			return text("Made %d workspace(s) from %s: %s. Pass workspace=<id> to work in each. "+
+				"When you have picked a winner, bring its changes back and delete the other copies with workspace_delete: "+
+				"each copy is a whole workspace and keeps using disk until deleted.", len(ids), a.Save, strings.Join(ids, ", ")), nil
 		},
 	})
 

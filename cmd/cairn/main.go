@@ -321,6 +321,7 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 		for _, w := range ws {
 			fmt.Println(w.ID)
 		}
+		fmt.Fprintln(os.Stderr, "cairn: each copy is a whole workspace; `cairn rm ID` the ones you don't keep")
 
 	case "template":
 		switch {

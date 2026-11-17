@@ -17,6 +17,12 @@ import (
 	"github.com/AQLD/cairn/client"
 )
 
+// lowDiskBytes: below this much free space (or 10% of the volume) doctor warns.
+const lowDiskBytes = 5 << 30
+
+// lowDisk: too little room left for workspaces and saves to grow.
+func lowDisk(free, total int64) bool { return free < lowDiskBytes || free*10 < total }
+
 func cmdDoctor(ctx context.Context, c *client.Client, args []string) (int, error) {
 	if len(args) > 0 {
 		return 2, errors.New("usage: cairn doctor")
@@ -70,6 +76,36 @@ func cmdDoctor(ctx context.Context, c *client.Client, args []string) (int, error
 					names[i] = t.Name
 				}
 				ok("templates: %s", strings.Join(names, ", "))
+			}
+		}
+	}
+
+	if info != nil {
+		step("disk")
+		if st, err := c.Storage(ctx); err != nil {
+			bad("could not measure disk use: %v", err)
+		} else {
+			ok("workspaces %s, saves %s, templates %s; %s free of %s", humanBytes(st.Workspaces), humanBytes(st.Saves),
+				humanBytes(st.Templates), humanBytes(st.VolumeFree), humanBytes(st.VolumeTotal))
+			if lowDisk(st.VolumeFree, st.VolumeTotal) {
+				var big []string
+				for i, w := range st.PerWorkspace {
+					if i == 3 {
+						break
+					}
+					big = append(big, fmt.Sprintf("%s %s (%s)", w.ID, w.Name, humanBytes(w.Bytes)))
+				}
+				bad("only %s free: workspaces stop when the disk fills (fix: `cairn rm` workspaces you no longer need; largest: %s)",
+					humanBytes(st.VolumeFree), strings.Join(big, ", "))
+			}
+			var copies []string
+			for _, w := range st.PerWorkspace {
+				if strings.Contains(w.Name, "-copy-") {
+					copies = append(copies, w.ID)
+				}
+			}
+			if len(copies) > 0 {
+				fmt.Printf("  · %d copies still exist (%s): `cairn rm` the ones nobody kept\n", len(copies), strings.Join(copies, ", "))
 			}
 		}
 	}

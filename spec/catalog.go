@@ -280,6 +280,7 @@ var Catalog = []Scenario{
 					{ID: "G10.14.6", Title: "`cairn run` copies the files a command wrote back into the project", Proves: "Results such as a report appear in the local project, where the agent looks for them (agents used to write report.md in the workspace and not find it), while rebuildable folders like node_modules stay in the workspace.", Milestone: E3},
 				}},
 			{ID: "G10.15", Title: "The CLI installs with one command, checked against the release's checksums", Proves: "`curl … install.sh | sh` puts the right build of cairn for the machine on PATH, refuses a download whose SHA-256 does not match the release's SHA256SUMS, and leaves an existing cairn untouched when it refuses.", Milestone: E3},
+			{ID: "G10.16", Title: "The engine reports what its data really uses on disk, per workspace", Proves: "Allocated bytes, not apparent sizes (a sparse 10 GB workspace that stores 30 MB counts as 30 MB), per workspace largest first, plus saves, templates and the space left, so `cairn status` and `cairn doctor` can warn before the disk fills and name leftover copies (dogfooding used 31 GB in an evening).", Milestone: E3},
 		},
 	},
 	// Agent journeys: what each kind of agent gets done end to end. A step is

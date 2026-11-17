@@ -84,6 +84,25 @@ type Info struct {
 	SaveFormat     int          `json:"save_format"`
 }
 
+// Storage is what the engine's data uses on disk (allocated bytes) and the
+// space left on its volume.
+type Storage struct {
+	VolumeFree   int64            `json:"volume_free_bytes"`
+	VolumeTotal  int64            `json:"volume_total_bytes"`
+	Workspaces   int64            `json:"workspaces_bytes"`
+	Saves        int64            `json:"saves_bytes"`
+	Templates    int64            `json:"templates_bytes"`
+	PerWorkspace []WorkspaceUsage `json:"per_workspace"`
+}
+
+// WorkspaceUsage is one workspace's disk use; Storage lists the largest first.
+type WorkspaceUsage struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	State string `json:"state"`
+	Bytes int64  `json:"bytes"`
+}
+
 type Limits struct {
 	CPUs     float64 `json:"cpus,omitempty"`
 	MemoryMB int64   `json:"memory_mb,omitempty"`
@@ -183,6 +202,13 @@ func (c *Client) Metrics(ctx context.Context) (string, error) {
 	var buf bytes.Buffer
 	err := c.doRaw(ctx, http.MethodGet, "/metrics", nil, &buf)
 	return buf.String(), err
+}
+
+// Storage measures the engine's disk use. It walks every workspace: call it
+// when a person asks, not per request.
+func (c *Client) Storage(ctx context.Context) (*Storage, error) {
+	var out Storage
+	return &out, c.do(ctx, http.MethodGet, "/v1/storage", nil, &out)
 }
 
 func (c *Client) Info(ctx context.Context) (*Info, error) {
