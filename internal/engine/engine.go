@@ -1594,6 +1594,7 @@ func (e *Engine) copy(ctx context.Context, saveID string, count int, requestKey 
 // half-written saves are discarded, interrupted resumes are finished or rolled
 // back, and every live workspace is started.
 func (e *Engine) recover(ctx context.Context) error {
+	e.cleanupBases()
 	if n, err := save.CleanupTemp(e.savesDir()); err != nil {
 		return err
 	} else if n > 0 {

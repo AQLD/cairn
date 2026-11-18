@@ -173,6 +173,7 @@ var Catalog = []Scenario{
 					{ID: "G6.12.6", Title: "Bases travel with saves in object storage", Proves: "A base is uploaded once before the saves that need it, and a server without the save or the base restores it from object storage, verified.", Milestone: E3, Needs: []Need{NeedInProcess}},
 					{ID: "G6.12.7", Title: "A file a restore wrote is never mistaken for base content by the next save", Proves: "A same-size rewrite keeping the template's time, restored early in a long restore, is still in a save made right after: only the base's own files are trusted by change time.", Milestone: E3},
 					{ID: "G6.12.8", Title: "A base that cannot be fetched now is not mistaken for a damaged save", Proves: "With the base gone here and object storage down, a restore is refused with conflict and the save stays ready; a save committed before a crash is kept (missing) rather than discarded; both restore once the store is back.", Milestone: E3, Needs: []Need{NeedInProcess}},
+					{ID: "G6.12.9", Title: "A base's index is never trusted unchecked", Proves: "An index that no longer matches its checksum is rebuilt from the verified base, so a damaged index cannot make a save skip a change.", Milestone: E3, Needs: []Need{NeedInProcess}},
 				}},
 		},
 	},

@@ -16,6 +16,7 @@ package engine
 // uploaded once, before the first save that needs it.
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -85,8 +86,10 @@ func (e *Engine) ensureBase(sha, src string) error {
 	return syncDir(e.basesDir())
 }
 
-// baseIndex returns the index of base sha, building it from the tar if
-// needed.
+// baseIndex returns the index of base sha. The stored index is used only if
+// it matches its own checksum (bases/<sha>.index.sha256); otherwise it is
+// rebuilt from the base, whose bytes must match sha as they are read. A wrong
+// index could make a save skip a change, so it is never trusted unchecked.
 func (e *Engine) baseIndex(sha string) (*save.Index, error) {
 	e.bases.mu.Lock()
 	e.bases.init()
@@ -95,12 +98,16 @@ func (e *Engine) baseIndex(sha string) (*save.Index, error) {
 	if idx != nil {
 		return idx, nil
 	}
-	if f, err := os.Open(e.indexPath(sha)); err == nil {
-		idx, err = save.ReadIndex(f)
-		f.Close()
-		if err != nil {
-			e.log.Warn("base index unreadable; rebuilding it", "base", sha, "err", err)
-			idx = nil
+	if data, err := os.ReadFile(e.indexPath(sha)); err == nil {
+		want, _ := os.ReadFile(e.indexPath(sha) + ".sha256")
+		sum := sha256.Sum256(data)
+		if strings.TrimSpace(string(want)) == hex.EncodeToString(sum[:]) {
+			if idx, err = save.ReadIndex(bytes.NewReader(data)); err != nil {
+				idx = nil
+			}
+		}
+		if idx == nil {
+			e.log.Warn("base index does not match its checksum; rebuilding it", "base", sha)
 		}
 	}
 	if idx == nil {
@@ -108,31 +115,67 @@ func (e *Engine) baseIndex(sha string) (*save.Index, error) {
 		if err != nil {
 			return nil, err
 		}
-		idx, err = save.BuildIndex(f)
+		h := sha256.New()
+		tee := io.TeeReader(f, h)
+		idx, err = save.BuildIndex(tee)
+		if err == nil {
+			_, err = io.Copy(io.Discard, tee) // the rest (tar padding), so the hash covers the file
+		}
 		f.Close()
 		if err != nil {
 			return nil, err
 		}
-		tmp := e.indexPath(sha) + fmt.Sprintf(".tmp-%d", time.Now().UnixNano())
-		if out, err := os.Create(tmp); err == nil {
-			werr := save.WriteIndex(out, idx)
-			if werr == nil {
-				werr = fsync(out)
+		if got := hex.EncodeToString(h.Sum(nil)); got != sha {
+			return nil, fmt.Errorf("%w: base %s does not match its checksum", save.ErrCorrupt, sha)
+		}
+		var buf bytes.Buffer
+		if err := save.WriteIndex(&buf, idx); err != nil {
+			return nil, err
+		}
+		sum := sha256.Sum256(buf.Bytes())
+		if err := writeAtomic(e.indexPath(sha), buf.Bytes()); err == nil {
+			err = writeAtomic(e.indexPath(sha)+".sha256", []byte(hex.EncodeToString(sum[:])+"\n"))
+			if err != nil {
+				e.log.Warn("could not store base index checksum", "base", sha, "err", err)
 			}
-			out.Close()
-			if werr == nil {
-				werr = os.Rename(tmp, e.indexPath(sha))
-			}
-			if werr != nil {
-				os.Remove(tmp)
-				e.log.Warn("could not store base index", "base", sha, "err", werr)
-			}
+		} else {
+			e.log.Warn("could not store base index", "base", sha, "err", err)
 		}
 	}
 	e.bases.mu.Lock()
 	e.bases.indexes[sha] = idx
 	e.bases.mu.Unlock()
 	return idx, nil
+}
+
+// writeAtomic writes data to path through a synced temporary file.
+func writeAtomic(path string, data []byte) error {
+	tmp := path + fmt.Sprintf(".tmp-%d", time.Now().UnixNano())
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := syncFile(tmp); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+// cleanupBases removes temporary files a crash left in bases/.
+func (e *Engine) cleanupBases() {
+	entries, err := os.ReadDir(e.basesDir())
+	if err != nil {
+		return
+	}
+	for _, d := range entries {
+		if strings.Contains(d.Name(), ".tmp-") {
+			_ = os.Remove(filepath.Join(e.basesDir(), d.Name()))
+		}
+	}
 }
 
 // errBaseMissing: a base is not here (and could not be fetched). It says
@@ -335,11 +378,10 @@ func (e *Engine) gcBases(ctx context.Context) (int, error) {
 	}
 	for _, d := range saves {
 		// temporary save folders too: a save being written refers to its base
+		// a save still being written has no manifest yet; the grace period
+		// keeps any base it may use, and recovery removes it if abandoned
 		data, err := os.ReadFile(filepath.Join(e.savesDir(), d.Name(), save.ManifestFile))
 		if err != nil {
-			if strings.HasPrefix(d.Name(), ".") {
-				return 0, nil // a save in progress may not have its manifest yet: try later
-			}
 			continue
 		}
 		var m save.Manifest
@@ -362,6 +404,7 @@ func (e *Engine) gcBases(ctx context.Context) (int, error) {
 			return n, err
 		}
 		_ = os.Remove(e.indexPath(sha))
+		_ = os.Remove(e.indexPath(sha) + ".sha256")
 		e.bases.mu.Lock()
 		e.bases.init()
 		delete(e.bases.indexes, sha)

@@ -496,3 +496,32 @@ func init() {
 		Equal(e, "copy of the recovered save", e.Sh(copies[0].ID, "cat "+deltaDir+"/same.txt"), "BBBB")
 	})
 }
+
+func init() {
+	// G6.12.9: a base's index is never trusted unchecked.
+	register("G6.12.9", func(e *Env) {
+		t := deltaTemplate(e, "delta")
+		// the index claims the template's same.txt holds what the agent will
+		// write; trusted, a save would skip the change
+		indexPath := filepath.Join(e.DataDir, "bases", t.SHA256+".index.json")
+		data, err := os.ReadFile(indexPath)
+		e.Must(err)
+		var idx save.Index
+		e.Must(json.Unmarshal(data, &idx))
+		entry := idx.Entries[deltaDir+"/same.txt"]
+		sum := sha256.Sum256([]byte("BBBB"))
+		entry.SHA256 = hex.EncodeToString(sum[:])
+		idx.Entries[deltaDir+"/same.txt"] = entry
+		data, err = json.Marshal(&idx)
+		e.Must(err)
+		e.Must(os.WriteFile(indexPath, data, 0o600))
+		e.Restart() // read from disk again
+
+		ws := templatedWorkspace(e, "delta", "tampered")
+		e.Sh(ws.ID, `cd `+deltaDir+` && printf BBBB > same.txt && touch -r ref.txt same.txt`)
+		sv := e.Save(ws.ID)
+		copies, err := e.C.Copy(e.Ctx, sv.ID, 1)
+		e.Must(err)
+		Equal(e, "same.txt in a copy", e.Sh(copies[0].ID, "cat "+deltaDir+"/same.txt"), "BBBB")
+	})
+}
