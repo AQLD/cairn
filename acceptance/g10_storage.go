@@ -11,8 +11,10 @@ func init() {
 		big, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "big", Limits: client.Limits{DiskMB: 10240}})
 		e.Must(err)
 		small := e.Workspace("small")
-		// 30 MB of data that does not compress or dedupe away
-		e.Sh(big.ID, "head -c 31457280 /dev/urandom > data.bin")
+		// 30 MB of data that does not compress or dedupe away, flushed: a
+		// workspace's filesystem allocates blocks in its disk image only when
+		// it writes back, so an unflushed write is not yet space on disk
+		e.Sh(big.ID, "head -c 31457280 /dev/urandom > data.bin && sync")
 
 		st, err := e.C.Storage(e.Ctx)
 		e.Must(err)

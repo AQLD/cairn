@@ -91,6 +91,13 @@ func (e *Engine) upload(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	// its base first (once per base), so a save in the bucket is never
+	// complete without what it needs to restore
+	if m.Base != nil {
+		if err := e.uploadBase(ctx, m.Base); err != nil {
+			return fmt.Errorf("upload base %s: %w", m.Base.SHA256, err)
+		}
+	}
 	for _, f := range m.Files {
 		if err := e.putFile(ctx, id, dir, f.Name); err != nil {
 			return err

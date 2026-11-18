@@ -96,6 +96,9 @@ type Config struct {
 	// (eventlog.DefaultPerWorkspace if 0); older events are dropped.
 	EventsPerWorkspace int
 	EventsWriteDelay   time.Duration // tests only: hold activity log writes back
+	// NoDeltaSaves writes every save's whole filesystem (format 1), as engines
+	// before saves had bases did; tests use it to make saves of that format.
+	NoDeltaSaves bool
 }
 
 type Engine struct {
@@ -103,6 +106,7 @@ type Engine struct {
 	log    *slog.Logger
 	store  *store.Store
 	events *eventlog.Log // activity log (activity.go)
+	bases  baseState     // bases.go
 
 	mu       sync.Mutex
 	diskErr  error                // why new workspaces get no disk image; nil if they do
@@ -981,13 +985,28 @@ func (e *Engine) buildSave(ctx context.Context, spec runtime.Spec, saveID string
 		}
 	}
 
+	// the filesystem: a delta against the base it was extracted from, else whole
+	name, write := save.RootfsFile, func(w io.Writer) error { return save.TarDir(spec.RootDir, w) }
+	if base, idx, since := e.saveBase(spec.ID); idx != nil {
+		if err := b.SetBase(base); err != nil {
+			return nil, err
+		}
+		asRoot := os.Geteuid() == 0 // ownership is restored (and so compared) only as root
+		name, write = save.DeltaFile, func(w io.Writer) error {
+			start := time.Now()
+			st, err := save.WriteDelta(spec.RootDir, idx, since, asRoot, w)
+			e.log.Info("filesystem delta", "save", saveID, "base", base.SHA256[:12], "changed", st.Changed,
+				"removed", st.Removed, "hashed", st.Hashed, "bytes", st.Bytes, "took_ms", time.Since(start).Milliseconds())
+			return err
+		}
+	}
 	pr, pw := io.Pipe()
-	go func() { pw.CloseWithError(save.TarDir(spec.RootDir, pw)) }()
+	go func() { pw.CloseWithError(write(pw)) }()
 	var src io.Reader = pr
 	if err := e.cfg.Failpoints.Check(failpoint.SaveWrite); err != nil {
 		src = &failingReader{r: pr, err: err}
 	}
-	if err := b.WriteFile(save.RootfsFile, src); err != nil {
+	if err := b.WriteFile(name, src); err != nil {
 		pr.CloseWithError(err)
 		if errors.Is(err, syscall.ENOSPC) {
 			err = fmt.Errorf("%w: %v", ErrInsufficientStorage, err)
@@ -999,6 +1018,30 @@ func (e *Engine) buildSave(ctx context.Context, spec runtime.Spec, saveID string
 		return nil, err
 	}
 	return b.Commit()
+}
+
+// saveBase returns the base a workspace's save can be a delta against, the
+// base's index, and the time before which its files are untouched; a nil
+// index means the save holds the whole filesystem.
+func (e *Engine) saveBase(id string) (save.BaseRef, *save.Index, time.Time) {
+	if e.cfg.NoDeltaSaves {
+		return save.BaseRef{}, nil, time.Time{}
+	}
+	r, err := e.readBaseRecord(id)
+	if err != nil {
+		return save.BaseRef{}, nil, time.Time{}
+	}
+	// present at its size is enough to refer to it; every restore verifies it
+	if info, err := os.Stat(e.basePath(r.Base.SHA256)); err != nil || info.Size() != r.Base.Size {
+		e.log.Error("workspace base missing; saving its whole filesystem", "workspace", id, "base", r.Base.SHA256, "err", err)
+		return save.BaseRef{}, nil, time.Time{}
+	}
+	idx, err := e.baseIndex(r.Base.SHA256)
+	if err != nil {
+		e.log.Error("workspace base has no index; saving its whole filesystem", "workspace", id, "err", err)
+		return save.BaseRef{}, nil, time.Time{}
+	}
+	return r.Base, idx, r.trustBefore(time.Now())
 }
 
 func (e *Engine) GetSave(ctx context.Context, id string) (*Save, error) {
@@ -1066,6 +1109,12 @@ func (e *Engine) UndeleteSave(ctx context.Context, id string) (*Save, error) {
 // result: ready saves that fail become corrupt; a corrupt save that passes again
 // (for example after its files were restored from a backup) becomes ready.
 func (e *Engine) VerifySave(ctx context.Context, id string) (*Save, error) {
+	return e.verifySave(ctx, id, map[string]bool{})
+}
+
+// verifySave is VerifySave; seen carries the bases already verified in this
+// run, so a scrub hashes a base shared by many saves once.
+func (e *Engine) verifySave(ctx context.Context, id string, seen map[string]bool) (*Save, error) {
 	sv, err := e.store.GetSave(ctx, id)
 	if err != nil {
 		return nil, err
@@ -1087,7 +1136,10 @@ func (e *Engine) VerifySave(ctx context.Context, id string) (*Save, error) {
 		state := store.SaveReady
 		if _, err := os.Stat(filepath.Join(e.saveDir(id), save.ManifestFile)); err != nil {
 			state = store.SaveMissing
-		} else if _, err := save.Verify(e.saveDir(id)); err != nil {
+		} else if err := e.verifyWithBase(ctx, id, seen); errors.Is(err, errBaseMissing) {
+			e.log.Error("scrub: save's base is missing", "save", id, "err", err)
+			state = store.SaveMissing
+		} else if err != nil {
 			if !errors.Is(err, save.ErrCorrupt) {
 				return nil, err
 			}
@@ -1103,6 +1155,15 @@ func (e *Engine) VerifySave(ctx context.Context, id string) (*Save, error) {
 	return e.GetSave(ctx, id)
 }
 
+// verifyWithBase checks a save's files and every byte of its base.
+func (e *Engine) verifyWithBase(ctx context.Context, id string, seen map[string]bool) error {
+	m, err := save.Verify(e.saveDir(id))
+	if err != nil {
+		return err
+	}
+	return e.checkBase(ctx, m, seen)
+}
+
 // Scrub verifies every save that could be restored, so damage is found by the
 // engine instead of by the next resume. It returns how many saves it checked
 // and how many are not ready afterwards.
@@ -1111,6 +1172,7 @@ func (e *Engine) Scrub(ctx context.Context) (checked, bad int, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
+	seen := map[string]bool{} // each base hashed once per scrub, however many saves share it
 	for _, sv := range all {
 		if ctx.Err() != nil {
 			return checked, bad, ctx.Err()
@@ -1118,7 +1180,7 @@ func (e *Engine) Scrub(ctx context.Context) (checked, bad int, err error) {
 		if sv.State != store.SaveReady && sv.State != store.SaveCorrupt && sv.State != store.SaveMissing {
 			continue
 		}
-		got, err := e.VerifySave(ctx, sv.ID)
+		got, err := e.verifySave(ctx, sv.ID, seen)
 		if err != nil {
 			return checked, bad, err
 		}
@@ -1154,6 +1216,9 @@ func (e *Engine) PurgeExpired(ctx context.Context) (int, error) {
 		}
 		n++
 		e.log.Info("purged deleted save", "save", sv.ID, "deleted_at", sv.DeletedAt)
+	}
+	if _, err := e.gcBases(ctx); err != nil {
+		e.log.Error("removing unused bases", "err", err)
 	}
 	// deleted workspaces' activity logs go with the same window
 	if _, err := e.events.Purge(ctx, e.cfg.Now().Add(-e.cfg.Retention)); err != nil {
@@ -1231,6 +1296,12 @@ func (e *Engine) readySave(ctx context.Context, saveID string) (*store.Save, *sa
 		e.log.Error("save failed verification; fetching it again from object storage", "save", saveID, "err", err)
 		if ferr := e.fetch(ctx, saveID); ferr == nil {
 			m, err = save.Verify(e.saveDir(saveID))
+		}
+	}
+	if err == nil {
+		err = e.checkBase(ctx, m, nil) // the base its filesystem is a delta against
+		if errors.Is(err, errBaseMissing) {
+			return nil, nil, fmt.Errorf("%w: save %s needs its base, which is not here and could not be fetched now (%v); try again later", ErrConflict, saveID, err)
 		}
 	}
 	if err != nil {
@@ -1313,12 +1384,10 @@ func (e *Engine) resume(ctx context.Context, saveID string) (*Workspace, error) 
 // recovery finishes the swap or rolls it back.
 func (e *Engine) restoreInto(ctx context.Context, spec runtime.Spec, ws Spec, saveID string, m *save.Manifest, beforeSwap string) error {
 	root, next, prev := e.volume(spec.ID, "rootfs", ws), e.volume(spec.ID, "rootfs.next", ws), e.volume(spec.ID, "rootfs.prev", ws)
-	if info, err := os.Stat(filepath.Join(e.saveDir(saveID), save.RootfsFile)); err == nil {
-		if err := e.needSpace("restoring the save", info.Size()); err != nil {
-			return err
-		}
+	if err := e.needSpace("restoring the save", restoreSize(m)); err != nil {
+		return err
 	}
-	err := e.extractSave(saveID, next, ws)
+	extracted, err := e.extractSave(saveID, m, next, ws)
 	if errors.Is(err, ErrInsufficientStorage) && next.image {
 		// A save of a full disk can need a few more blocks than it had once
 		// extracted into a fresh filesystem, which allocates differently. Give
@@ -1326,7 +1395,7 @@ func (e *Engine) restoreInto(ctx context.Context, spec runtime.Spec, ws Spec, sa
 		// exactly as full as it was.
 		next.sizeMB += max(64, next.sizeMB/16)
 		e.log.Info("save needs more room than its disk once extracted; growing the disk", "save", saveID, "disk_mb", next.sizeMB)
-		err = e.extractSave(saveID, next, ws)
+		extracted, err = e.extractSave(saveID, m, next, ws)
 	}
 	if err != nil {
 		return noSpace(err)
@@ -1346,6 +1415,19 @@ func (e *Engine) restoreInto(ctx context.Context, spec runtime.Spec, ws Spec, sa
 		return err
 	}
 	_ = prev.remove()
+	// which base the filesystem now in place came from: only now, so a crash
+	// before leaves the older record, which only makes the next save slower
+	if err := e.cfg.Failpoints.Check(failpoint.RestoreBeforeBaseRecord); err != nil {
+		return err
+	}
+	if m.Base != nil {
+		err = e.writeBaseRecord(spec.ID, *m.Base, extracted, save.ChangeTimeMargin(root.path))
+	} else {
+		err = e.removeBaseRecord(spec.ID)
+	}
+	if err != nil {
+		e.log.Warn("could not record workspace base", "workspace", spec.ID, "err", err)
+	}
 
 	if m.Kind == save.Full {
 		return e.cfg.Runtime.Restore(ctx, spec, filepath.Join(e.saveDir(saveID), save.MemoryDir))
@@ -1353,32 +1435,76 @@ func (e *Engine) restoreInto(ctx context.Context, spec runtime.Spec, ws Spec, sa
 	return e.cfg.Runtime.Start(ctx, spec)
 }
 
-// extractSave builds the save's filesystem in v, unmounted when done. On
-// failure nothing of v is left.
-func (e *Engine) extractSave(saveID string, v volume, ws Spec) error {
+// restoreSize is how much a save's filesystem takes to restore, about.
+func restoreSize(m *save.Manifest) int64 {
+	var n int64
+	for _, f := range m.Files {
+		if f.Name == save.RootfsFile || f.Name == save.DeltaFile {
+			n += f.Size
+		}
+	}
+	if m.Base != nil {
+		n += m.Base.Size
+	}
+	return n
+}
+
+// extractSave builds the save's filesystem in v, unmounted when done, and
+// returns when extraction finished. A save with a base is its base, then its
+// delta (the caller verified both). On failure nothing of v is left.
+func (e *Engine) extractSave(saveID string, m *save.Manifest, v volume, ws Spec) (time.Time, error) {
 	if err := v.remove(); err != nil {
-		return err
+		return time.Time{}, err
 	}
-	f, err := os.Open(filepath.Join(e.saveDir(saveID), save.RootfsFile))
-	if err != nil {
-		return err
+	var extracted time.Time
+	err := v.prepare()
+	if err == nil && m.Base != nil {
+		extracted, err = e.extractWithBase(saveID, m, v.path)
+	} else if err == nil {
+		err = untarFile(filepath.Join(e.saveDir(saveID), save.RootfsFile), v.path, save.UntarDir)
 	}
-	defer f.Close()
-	var limit int64
-	if info, statErr := f.Stat(); statErr == nil {
-		limit = info.Size()
-	}
-	err = v.prepare()
-	if err == nil {
-		err = diskFull(save.UntarDir(f, v.path, limit), ws)
-	}
+	err = diskFull(err, ws)
 	if err == nil {
 		err = v.release()
 	}
 	if err != nil {
 		_ = v.remove()
 	}
-	return err
+	return extracted, err
+}
+
+// extractWithBase is the base, then the delta; it returns when the base was
+// in place (see save.ExtractWithBase).
+func (e *Engine) extractWithBase(saveID string, m *save.Manifest, dir string) (time.Time, error) {
+	base, err := os.Open(e.basePath(m.Base.SHA256))
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer base.Close()
+	delta, err := os.Open(filepath.Join(e.saveDir(saveID), save.DeltaFile))
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer delta.Close()
+	di, err := delta.Stat()
+	if err != nil {
+		return time.Time{}, err
+	}
+	return save.ExtractWithBase(base, m.Base.Size, delta, di.Size(), dir)
+}
+
+// untarFile extracts the tar at path into dir, its content bounded by its size.
+func untarFile(path, dir string, extract func(io.Reader, string, int64) error) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	return extract(f, dir, info.Size())
 }
 
 // copy makes count new workspaces from one save. Each copy has its own ID and
@@ -1468,6 +1594,7 @@ func (e *Engine) copy(ctx context.Context, saveID string, count int, requestKey 
 // half-written saves are discarded, interrupted resumes are finished or rolled
 // back, and every live workspace is started.
 func (e *Engine) recover(ctx context.Context) error {
+	e.cleanupBases()
 	if n, err := save.CleanupTemp(e.savesDir()); err != nil {
 		return err
 	} else if n > 0 {
@@ -1483,10 +1610,30 @@ func (e *Engine) recover(ctx context.Context) error {
 		_, statErr := os.Stat(filepath.Join(e.saveDir(sv.ID), save.ManifestFile))
 		switch {
 		case sv.State == store.SavePending && statErr == nil:
-			// committed to disk, crashed before it was marked ready: publish it if it verifies
-			if m, err := save.Verify(e.saveDir(sv.ID)); err == nil {
+			// committed to disk, crashed before it was marked ready: publish it if
+			// its own files verify. Only damage to those discards it: a base that
+			// is missing or unreachable now, or damaged, is a reason to mark it
+			// so, not to delete a save that may still be restored later.
+			m, err := save.Verify(e.saveDir(sv.ID))
+			if err != nil && !errors.Is(err, save.ErrCorrupt) {
+				e.log.Error("could not check a save committed before a crash; it stays pending", "save", sv.ID, "err", err)
+				continue
+			}
+			if err == nil {
 				if err := e.store.MarkSaveReady(ctx, sv.ID, m.Size()); err != nil {
 					return err
+				}
+				state := store.SaveReady
+				if berr := e.checkBase(ctx, m, nil); errors.Is(berr, save.ErrCorrupt) {
+					state = store.SaveCorrupt
+				} else if berr != nil {
+					state = store.SaveMissing
+				}
+				if state != store.SaveReady {
+					e.log.Error("save committed before a crash cannot be restored until its base is back", "save", sv.ID, "state", state)
+					if err := e.store.SetSaveState(ctx, sv.ID, state); err != nil {
+						return err
+					}
 				}
 				e.log.Info("published save committed before a crash", "save", sv.ID)
 				continue

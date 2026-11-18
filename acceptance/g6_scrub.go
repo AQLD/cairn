@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-
-	"github.com/AQLD/cairn/internal/save"
 )
 
 // G6.10: damaged saves are found by scrubbing before anyone restores them.
@@ -17,7 +15,7 @@ func init() {
 		e.Write(ws.ID, "f", "x")
 		good := e.Save(ws.ID)
 		bad := e.Save(ws.ID)
-		path := filepath.Join(e.Engine.SaveDir(bad.ID), save.RootfsFile)
+		path := filepath.Join(e.Engine.SaveDir(bad.ID), fsFile(e, bad.ID))
 		data, err := os.ReadFile(path)
 		e.Must(err)
 		data[len(data)/3] ^= 0x55
@@ -52,7 +50,7 @@ func init() {
 		Equal(e, "fresh save", got.State, "ready")
 
 		// damage it: verify says so
-		path := filepath.Join(e.Engine.SaveDir(sv.ID), save.RootfsFile)
+		path := filepath.Join(e.Engine.SaveDir(sv.ID), fsFile(e, sv.ID))
 		orig, err := os.ReadFile(path)
 		e.Must(err)
 		e.Must(os.WriteFile(path, append([]byte("x"), orig...), 0o600))

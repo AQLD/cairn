@@ -27,6 +27,8 @@ const (
 
 	SaveBeforeThaw = "save/before-thaw" // a full save that keeps running is ready; the sandbox is still frozen
 	SaveAfterThaw  = "save/after-thaw"  // thawed, the workspace still recorded as saving
+
+	RestoreBeforeBaseRecord = "restore/before-base-record" // a save's filesystem is in place; which base it came from is not yet recorded
 )
 
 type Set struct {

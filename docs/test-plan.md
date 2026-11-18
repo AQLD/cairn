@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 71 | 11 | 2 |
+| E3 | 81 | 11 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -237,6 +237,16 @@ Every save either restores exactly or is refused with a clear error. Gate: **E2*
   - ✅ **G6.10.2** Verify on demand reports a save's real state · E2 · needs in_process
 - ✅ **G6.11** A damaged state database is detected and rebuilt from its backup and the data folder · E2 · needs in_process
 - ✅ **G6.9** Saves outlive their workspace · E1
+- 📂 **G6.12** A save holds only what changed since the workspace's template · E3
+  - ✅ **G6.12.1** A save stores the changes since the template and restores the exact filesystem · E3 · needs in_process
+  - ✅ **G6.12.2** Saves made before bases still restore · E3 · needs in_process
+  - ✅ **G6.12.3** A save restores after its template is replaced or deleted, and the base goes when nothing needs it · E3 · needs in_process
+  - ✅ **G6.12.4** A full save of a templated workspace is its memory plus the changes · E3 · needs full_save, persistent_processes, in_process
+  - ✅ **G6.12.5** A damaged base is caught before anything is restored · E3 · needs in_process
+  - ✅ **G6.12.6** Bases travel with saves in object storage · E3 · needs in_process
+  - ✅ **G6.12.7** A file a restore wrote is never mistaken for base content by the next save · E3
+  - ✅ **G6.12.8** A base that cannot be fetched now is not mistaken for a damaged save · E3 · needs in_process
+  - ✅ **G6.12.9** A base's index is never trusted unchecked · E3 · needs in_process
 
 ## G7 The engine survives crashes and lost servers
 
@@ -261,6 +271,7 @@ However the engine stops, it comes back knowing every workspace and save, and ne
 - ✅ **G7.11** A long-running command never freezes its workspace · E3 · needs in_process
 - ✅ **G7.12** A power cut mid-operation loses nothing acknowledged · E2
 - ✅ **G7.13** A flood of requests is refused or queued, never fails or takes the engine down · E1 · needs in_process
+- ✅ **G7.14** A crash around a restore never makes a later save miss a change · E3 · needs in_process
 - ✅ **G7.7** A lost server's workspaces resume elsewhere from their last save · E5 · needs in_process
 - ⏳ **G7.8** A workspace never runs on two servers at once · E5 · needs multi_server
 

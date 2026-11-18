@@ -66,12 +66,12 @@ func init() {
 		_, err := tw.Write(evil)
 		e.Must(err)
 		e.Must(tw.Close())
-		dir := e.Engine.SaveDir(sv.ID)
-		e.Must(os.WriteFile(filepath.Join(dir, save.RootfsFile), buf.Bytes(), 0o600))
+		dir, name := e.Engine.SaveDir(sv.ID), fsFile(e, sv.ID)
+		e.Must(os.WriteFile(filepath.Join(dir, name), buf.Bytes(), 0o600))
 		sum := sha256.Sum256(buf.Bytes())
 		editManifest(e, sv.ID, func(m *save.Manifest) {
 			for i := range m.Files {
-				if m.Files[i].Name == save.RootfsFile {
+				if m.Files[i].Name == name {
 					m.Files[i].Size = int64(buf.Len())
 					m.Files[i].SHA256 = hex.EncodeToString(sum[:])
 				}
@@ -149,7 +149,17 @@ func savedWorkspace(e *Env) (*client.Workspace, *client.Save) {
 
 func damage(e *Env, saveID string, fn func(path string)) {
 	e.T.Helper()
-	fn(filepath.Join(e.Engine.SaveDir(saveID), save.RootfsFile))
+	fn(filepath.Join(e.Engine.SaveDir(saveID), fsFile(e, saveID)))
+}
+
+// fsFile names the file holding a save's filesystem: the whole filesystem
+// (rootfs.tar), or its delta against a template's base (rootfs.delta.tar).
+func fsFile(e *Env, saveID string) string {
+	e.T.Helper()
+	if _, err := os.Stat(filepath.Join(e.Engine.SaveDir(saveID), save.DeltaFile)); err == nil {
+		return save.DeltaFile
+	}
+	return save.RootfsFile
 }
 
 func editManifest(e *Env, saveID string, fn func(*save.Manifest)) {

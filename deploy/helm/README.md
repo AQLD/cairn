@@ -78,6 +78,7 @@ template never changes an existing workspace.
 |---|---|
 | A privileged pod | gVisor creates namespaces, cgroups and mounts for each sandbox. The workspaces themselves are unprivileged and run on gVisor's kernel. |
 | A ReadWriteOnce volume | Workspaces, saves and the database live on it. Local SSD-backed storage gives the fastest saves. |
+| A POSIX filesystem on that volume (ext4, xfs or btrfs) | Saves read only the files that changed since a workspace's template, which they find by change time: the filesystem must update it on every write, metadata change and rename. |
 | Linux nodes, amd64 or arm64 | The image carries gVisor for both. |
 
 Workspaces with network switched on reach the outside through the engine pod's

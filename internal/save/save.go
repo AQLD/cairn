@@ -29,8 +29,10 @@ import (
 	"time"
 )
 
-// FormatVersion is the version written into every new manifest.
-const FormatVersion = 1
+// FormatVersion is the newest version this package reads. A save is written
+// as version 2 only when it needs to be (it has a base), so saves of
+// workspaces without a template stay readable by engines that know only 1.
+const FormatVersion = 2
 
 const (
 	ManifestFile = "manifest.json"
@@ -77,6 +79,9 @@ type Manifest struct {
 	// copies of the save without this one's records (saves in object storage).
 	// Absent in saves made before it existed.
 	Workspace *WorkspaceInfo `json:"workspace,omitempty"`
+	// Base is the template tar the filesystem delta (DeltaFile) applies to
+	// (format 2). Restoring needs it, verified, as well as the save's files.
+	Base *BaseRef `json:"base,omitempty"`
 }
 
 // WorkspaceInfo is what a copy of a save needs to know about its workspace.
@@ -85,7 +90,17 @@ type WorkspaceInfo struct {
 	Spec json.RawMessage `json:"spec"`
 }
 
-// Size is the total size of the files in the save.
+func (m *Manifest) has(name string) bool {
+	for _, f := range m.Files {
+		if f.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Size is the total size of the files in the save (not its base, which is
+// shared).
 func (m *Manifest) Size() int64 {
 	var n int64
 	for _, f := range m.Files {
@@ -115,9 +130,21 @@ func NewBuilder(root string, m Manifest) (*Builder, error) {
 	if err != nil {
 		return nil, err
 	}
-	m.FormatVersion = FormatVersion
+	m.FormatVersion = 1
 	m.Files = nil
+	m.Base = nil
 	return &Builder{root: root, tmp: tmp, manifest: m}, nil
+}
+
+// SetBase records that the save's filesystem is a delta against base, which
+// makes it a format 2 save.
+func (b *Builder) SetBase(base BaseRef) error {
+	if err := base.valid(); err != nil {
+		return err
+	}
+	b.manifest.Base = &base
+	b.manifest.FormatVersion = 2
+	return nil
 }
 
 // Dir is the temporary folder, for runtimes that write files themselves
@@ -249,6 +276,12 @@ func ReadManifest(dir string) (*Manifest, error) {
 	}
 	if m.FormatVersion < 1 || m.FormatVersion > FormatVersion {
 		return nil, fmt.Errorf("unsupported save format version %d (this engine reads up to %d)", m.FormatVersion, FormatVersion)
+	}
+	if err := m.Base.valid(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
+	}
+	if m.Base != nil && (m.FormatVersion < 2 || !m.has(DeltaFile)) {
+		return nil, fmt.Errorf("%w: a base without a filesystem delta", ErrCorrupt)
 	}
 	return &m, nil
 }
