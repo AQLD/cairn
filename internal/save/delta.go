@@ -363,3 +363,17 @@ func ChangeTimeMargin(dir string) time.Duration {
 	}
 	return 2 * time.Second
 }
+
+// ExtractWithBase builds a save's filesystem in dir: its base, then its
+// delta. It returns when the base was in place: the only files a later
+// WriteDelta may trust by change time are the base's. Files the delta wrote
+// are not base content (a same-size rewrite, a copy keeping its time, a wheel
+// with fixed times can match the base's size and time), so their change times
+// must count as after extraction, however long the rest of the delta took.
+func ExtractWithBase(base io.Reader, baseMax int64, delta io.Reader, deltaMax int64, dir string) (time.Time, error) {
+	if err := UntarDir(base, dir, baseMax); err != nil {
+		return time.Time{}, err
+	}
+	extracted := time.Now()
+	return extracted, ApplyDelta(delta, dir, deltaMax)
+}

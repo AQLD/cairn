@@ -406,3 +406,27 @@ func init() {
 		}
 	})
 }
+
+func init() {
+	// G6.12.7: a file a restore wrote is never trusted as base content by the
+	// next save, however long the rest of the restore took.
+	register("G6.12.7", func(e *Env) {
+		deltaTemplate(e, "delta")
+		ws := templatedWorkspace(e, "delta", "long-restore")
+		// same.txt: a same-size rewrite keeping the base's time; then a big
+		// tail after it in walk order, so restoring takes far longer than the
+		// engine's change-time margin after same.txt is written
+		e.Sh(ws.ID, `cd `+deltaDir+` && printf BBBB > same.txt && touch -r ref.txt same.txt &&
+mkdir -p zz-bulk && for i in $(seq 1 64); do head -c 4194304 /dev/zero > zz-bulk/$i.bin; done`)
+		sv := e.Save(ws.ID)
+		copies, err := e.C.Copy(e.Ctx, sv.ID, 1)
+		e.Must(err)
+		Equal(e, "same.txt in the restored copy", e.Sh(copies[0].ID, "cat "+deltaDir+"/same.txt"), "BBBB")
+
+		// the copy, unchanged, saved again and restored again
+		again := e.Save(copies[0].ID)
+		copies2, err := e.C.Copy(e.Ctx, again.ID, 1)
+		e.Must(err)
+		Equal(e, "same.txt after a save of the restore", e.Sh(copies2[0].ID, "cat "+deltaDir+"/same.txt"), "BBBB")
+	})
+}

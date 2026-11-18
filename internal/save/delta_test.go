@@ -173,3 +173,70 @@ func (t *testTar) file(name, content string) {
 }
 
 func (t *testTar) close() { _ = t.tw.Close() }
+
+// stallingReader pauses once when reading reaches offset.
+type stallingReader struct {
+	r      *bytes.Reader
+	offset int64
+	pause  time.Duration
+	done   bool
+}
+
+func (s *stallingReader) Read(p []byte) (int, error) {
+	pos := s.r.Size() - int64(s.r.Len())
+	if !s.done && pos+int64(len(p)) > s.offset {
+		if pos < s.offset {
+			p = p[:s.offset-pos]
+		} else {
+			time.Sleep(s.pause)
+			s.done = true
+		}
+	}
+	return s.r.Read(p)
+}
+
+// A file the delta wrote early in a long restore is not base content: the
+// next save must still read it, even if it matches the base's size and time.
+func TestExtractWithBaseTrustsOnlyTheBase(t *testing.T) {
+	tmpl := t.TempDir()
+	old := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	write(t, filepath.Join(tmpl, "same.txt"), "AAAA", 0o644)
+	must(t, os.Chtimes(filepath.Join(tmpl, "same.txt"), old, old))
+	var baseTar bytes.Buffer
+	must(t, TarDir(tmpl, &baseTar))
+	idx, err := BuildIndex(bytes.NewReader(baseTar.Bytes()))
+	must(t, err)
+
+	// the save: same.txt rewritten at the same size and time, then more
+	ws := t.TempDir()
+	must(t, UntarDir(bytes.NewReader(baseTar.Bytes()), ws, int64(baseTar.Len())))
+	write(t, filepath.Join(ws, "same.txt"), "BBBB", 0o644)
+	must(t, os.Chtimes(filepath.Join(ws, "same.txt"), old, old))
+	write(t, filepath.Join(ws, "zz.bin"), "tail", 0o644)
+	var delta bytes.Buffer
+	_, err = WriteDelta(ws, idx, time.Time{}, false, &delta)
+	must(t, err)
+	tail := int64(bytes.Index(delta.Bytes(), []byte("zz.bin")))
+	if tail < 0 {
+		t.Fatal("delta has no zz.bin")
+	}
+
+	// restore it, the rest of the delta arriving well after same.txt
+	got := t.TempDir()
+	slow := &stallingReader{r: bytes.NewReader(delta.Bytes()), offset: tail - 100, pause: 400 * time.Millisecond}
+	extracted, err := ExtractWithBase(bytes.NewReader(baseTar.Bytes()), int64(baseTar.Len()), slow, int64(delta.Len()), got)
+	must(t, err)
+
+	// the next save of the restored filesystem, nothing changed since
+	var next bytes.Buffer
+	_, err = WriteDelta(got, idx, extracted.Add(-100*time.Millisecond), false, &next)
+	must(t, err)
+	again := t.TempDir()
+	must(t, UntarDir(bytes.NewReader(baseTar.Bytes()), again, int64(baseTar.Len())))
+	must(t, ApplyDelta(bytes.NewReader(next.Bytes()), again, int64(next.Len())))
+	data, err := os.ReadFile(filepath.Join(again, "same.txt"))
+	must(t, err)
+	if string(data) != "BBBB" {
+		t.Fatalf("same.txt after a save of the restore: %q, want BBBB (the next save trusted a file the delta wrote)", data)
+	}
+}

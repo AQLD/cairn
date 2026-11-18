@@ -1443,17 +1443,14 @@ func (e *Engine) extractSave(saveID string, m *save.Manifest, v volume, ws Spec)
 	if err := v.remove(); err != nil {
 		return time.Time{}, err
 	}
+	var extracted time.Time
 	err := v.prepare()
 	if err == nil && m.Base != nil {
-		err = untarFile(e.basePath(m.Base.SHA256), v.path, save.UntarDir)
-		if err == nil {
-			err = untarFile(filepath.Join(e.saveDir(saveID), save.DeltaFile), v.path, save.ApplyDelta)
-		}
+		extracted, err = e.extractWithBase(saveID, m, v.path)
 	} else if err == nil {
 		err = untarFile(filepath.Join(e.saveDir(saveID), save.RootfsFile), v.path, save.UntarDir)
 	}
 	err = diskFull(err, ws)
-	extracted := time.Now()
 	if err == nil {
 		err = v.release()
 	}
@@ -1461,6 +1458,26 @@ func (e *Engine) extractSave(saveID string, m *save.Manifest, v volume, ws Spec)
 		_ = v.remove()
 	}
 	return extracted, err
+}
+
+// extractWithBase is the base, then the delta; it returns when the base was
+// in place (see save.ExtractWithBase).
+func (e *Engine) extractWithBase(saveID string, m *save.Manifest, dir string) (time.Time, error) {
+	base, err := os.Open(e.basePath(m.Base.SHA256))
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer base.Close()
+	delta, err := os.Open(filepath.Join(e.saveDir(saveID), save.DeltaFile))
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer delta.Close()
+	di, err := delta.Stat()
+	if err != nil {
+		return time.Time{}, err
+	}
+	return save.ExtractWithBase(base, m.Base.Size, delta, di.Size(), dir)
 }
 
 // untarFile extracts the tar at path into dir, its content bounded by its size.

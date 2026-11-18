@@ -171,6 +171,7 @@ var Catalog = []Scenario{
 					{ID: "G6.12.4", Title: "A full save of a templated workspace is its memory plus the changes", Proves: "A full save stores the filesystem as a delta too, quickly, and resumes with the same processes.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent, NeedInProcess}},
 					{ID: "G6.12.5", Title: "A damaged base is caught before anything is restored", Proves: "Verification covers the base a save depends on: the save is marked corrupt and the workspace is left as it was.", Milestone: E3, Needs: []Need{NeedInProcess}},
 					{ID: "G6.12.6", Title: "Bases travel with saves in object storage", Proves: "A base is uploaded once before the saves that need it, and a server without the save or the base restores it from object storage, verified.", Milestone: E3, Needs: []Need{NeedInProcess}},
+					{ID: "G6.12.7", Title: "A file a restore wrote is never mistaken for base content by the next save", Proves: "A same-size rewrite keeping the template's time, restored early in a long restore, is still in a save made right after: only the base's own files are trusted by change time.", Milestone: E3},
 				}},
 		},
 	},
