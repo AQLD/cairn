@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -335,9 +336,20 @@ func init() {
 		ws := templatedWorkspace(e, "delta", "rot")
 		e.Sh(ws.ID, agentEdits)
 		sv := e.Save(ws.ID)
-		damageFile(e, filepath.Join(e.DataDir, "bases", t.SHA256+".tar"))
+		// a restore that verifies it first, then damage that keeps its size and
+		// time (bit rot): every restore must still hash every byte
+		_, err := e.C.Copy(e.Ctx, sv.ID, 1)
+		e.Must(err)
+		basePath := filepath.Join(e.DataDir, "bases", t.SHA256+".tar")
+		info, err := os.Stat(basePath)
+		e.Must(err)
+		damageFile(e, basePath)
+		e.Must(os.Chtimes(basePath, info.ModTime(), info.ModTime()))
+		if after, _ := os.Stat(basePath); after.Size() != info.Size() {
+			e.T.Fatal("damage changed the base's size")
+		}
 
-		_, err := e.C.Resume(e.Ctx, sv.ID)
+		_, err = e.C.Resume(e.Ctx, sv.ID)
 		e.ErrCode(err, "save_corrupt")
 		got, err := e.C.GetSave(e.Ctx, sv.ID)
 		e.Must(err)
@@ -428,5 +440,59 @@ mkdir -p zz-bulk && for i in $(seq 1 64); do head -c 4194304 /dev/zero > zz-bulk
 		copies2, err := e.C.Copy(e.Ctx, again.ID, 1)
 		e.Must(err)
 		Equal(e, "same.txt after a save of the restore", e.Sh(copies2[0].ID, "cat "+deltaDir+"/same.txt"), "BBBB")
+	})
+}
+
+func init() {
+	// G6.12.8: a base that cannot be fetched now is not a damaged save.
+	register("G6.12.8", func(e *Env) {
+		srv := withObjectStore(e)
+		t := deltaTemplate(e, "delta")
+		basePath := filepath.Join(e.DataDir, "bases", t.SHA256+".tar")
+		ws := templatedWorkspace(e, "delta", "unreachable")
+		e.Sh(ws.ID, agentEdits)
+		sv := e.Save(ws.ID)
+		e.Must(e.Engine.SyncRemote(e.Ctx))
+
+		// the base is gone here and the store is down: refused, not corrupt
+		e.Must(os.Remove(basePath))
+		srv.SetFail(func(*http.Request) bool { return true })
+		_, err := e.C.Resume(e.Ctx, sv.ID)
+		e.ErrCode(err, "conflict")
+		got, err := e.C.GetSave(e.Ctx, sv.ID)
+		e.Must(err)
+		Equal(e, "save state while its base is unreachable", string(got.State), "ready")
+		srv.SetFail(nil)
+		e.Resume(sv.ID)
+		Equal(e, "restored once the store is back", e.Sh(ws.ID, "cat "+deltaDir+"/same.txt"), "BBBB")
+
+		// a save committed just before a crash, recovered while its base is
+		// unreachable: kept (missing), restorable once the store is back
+		e.Failpoints.Enable(failpoint.SaveAfterCommit, failpoint.ErrCrash)
+		if _, err := e.C.Save(e.Ctx, ws.ID, client.QuickSave); err == nil {
+			e.T.Fatal("save reported success despite the crash")
+		}
+		e.Must(os.Remove(basePath))
+		srv.SetFail(func(*http.Request) bool { return true })
+		e.Restart()
+		saves, err := e.C.ListSaves(e.Ctx, ws.ID)
+		e.Must(err)
+		var pending *client.Save
+		for i := range saves {
+			if saves[i].ID != sv.ID {
+				pending = &saves[i]
+			}
+		}
+		if pending == nil {
+			e.T.Fatalf("the save committed before the crash was discarded: %+v", saves)
+		}
+		Equal(e, "recovered save whose base is unreachable", string(pending.State), "missing")
+		srv.SetFail(nil)
+		fixed, err := e.C.VerifySave(e.Ctx, pending.ID)
+		e.Must(err)
+		Equal(e, "after the store is back", string(fixed.State), "ready")
+		copies, err := e.C.Copy(e.Ctx, pending.ID, 1)
+		e.Must(err)
+		Equal(e, "copy of the recovered save", e.Sh(copies[0].ID, "cat "+deltaDir+"/same.txt"), "BBBB")
 	})
 }

@@ -1109,6 +1109,12 @@ func (e *Engine) UndeleteSave(ctx context.Context, id string) (*Save, error) {
 // result: ready saves that fail become corrupt; a corrupt save that passes again
 // (for example after its files were restored from a backup) becomes ready.
 func (e *Engine) VerifySave(ctx context.Context, id string) (*Save, error) {
+	return e.verifySave(ctx, id, map[string]bool{})
+}
+
+// verifySave is VerifySave; seen carries the bases already verified in this
+// run, so a scrub hashes a base shared by many saves once.
+func (e *Engine) verifySave(ctx context.Context, id string, seen map[string]bool) (*Save, error) {
 	sv, err := e.store.GetSave(ctx, id)
 	if err != nil {
 		return nil, err
@@ -1130,7 +1136,10 @@ func (e *Engine) VerifySave(ctx context.Context, id string) (*Save, error) {
 		state := store.SaveReady
 		if _, err := os.Stat(filepath.Join(e.saveDir(id), save.ManifestFile)); err != nil {
 			state = store.SaveMissing
-		} else if err := e.verifyWithBase(ctx, id); err != nil {
+		} else if err := e.verifyWithBase(ctx, id, seen); errors.Is(err, errBaseMissing) {
+			e.log.Error("scrub: save's base is missing", "save", id, "err", err)
+			state = store.SaveMissing
+		} else if err != nil {
 			if !errors.Is(err, save.ErrCorrupt) {
 				return nil, err
 			}
@@ -1147,12 +1156,12 @@ func (e *Engine) VerifySave(ctx context.Context, id string) (*Save, error) {
 }
 
 // verifyWithBase checks a save's files and every byte of its base.
-func (e *Engine) verifyWithBase(ctx context.Context, id string) error {
+func (e *Engine) verifyWithBase(ctx context.Context, id string, seen map[string]bool) error {
 	m, err := save.Verify(e.saveDir(id))
 	if err != nil {
 		return err
 	}
-	return e.checkBase(ctx, m, true)
+	return e.checkBase(ctx, m, seen)
 }
 
 // Scrub verifies every save that could be restored, so damage is found by the
@@ -1163,6 +1172,7 @@ func (e *Engine) Scrub(ctx context.Context) (checked, bad int, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
+	seen := map[string]bool{} // each base hashed once per scrub, however many saves share it
 	for _, sv := range all {
 		if ctx.Err() != nil {
 			return checked, bad, ctx.Err()
@@ -1170,7 +1180,7 @@ func (e *Engine) Scrub(ctx context.Context) (checked, bad int, err error) {
 		if sv.State != store.SaveReady && sv.State != store.SaveCorrupt && sv.State != store.SaveMissing {
 			continue
 		}
-		got, err := e.VerifySave(ctx, sv.ID)
+		got, err := e.verifySave(ctx, sv.ID, seen)
 		if err != nil {
 			return checked, bad, err
 		}
@@ -1289,7 +1299,10 @@ func (e *Engine) readySave(ctx context.Context, saveID string) (*store.Save, *sa
 		}
 	}
 	if err == nil {
-		err = e.checkBase(ctx, m, false) // the base its filesystem is a delta against
+		err = e.checkBase(ctx, m, nil) // the base its filesystem is a delta against
+		if errors.Is(err, errBaseMissing) {
+			return nil, nil, fmt.Errorf("%w: save %s needs its base, which is not here and could not be fetched now (%v); try again later", ErrConflict, saveID, err)
+		}
 	}
 	if err != nil {
 		if errors.Is(err, save.ErrCorrupt) {
@@ -1596,10 +1609,30 @@ func (e *Engine) recover(ctx context.Context) error {
 		_, statErr := os.Stat(filepath.Join(e.saveDir(sv.ID), save.ManifestFile))
 		switch {
 		case sv.State == store.SavePending && statErr == nil:
-			// committed to disk, crashed before it was marked ready: publish it if it verifies
-			if m, err := save.Verify(e.saveDir(sv.ID)); err == nil && e.checkBase(ctx, m, false) == nil {
+			// committed to disk, crashed before it was marked ready: publish it if
+			// its own files verify. Only damage to those discards it: a base that
+			// is missing or unreachable now, or damaged, is a reason to mark it
+			// so, not to delete a save that may still be restored later.
+			m, err := save.Verify(e.saveDir(sv.ID))
+			if err != nil && !errors.Is(err, save.ErrCorrupt) {
+				e.log.Error("could not check a save committed before a crash; it stays pending", "save", sv.ID, "err", err)
+				continue
+			}
+			if err == nil {
 				if err := e.store.MarkSaveReady(ctx, sv.ID, m.Size()); err != nil {
 					return err
+				}
+				state := store.SaveReady
+				if berr := e.checkBase(ctx, m, nil); errors.Is(berr, save.ErrCorrupt) {
+					state = store.SaveCorrupt
+				} else if berr != nil {
+					state = store.SaveMissing
+				}
+				if state != store.SaveReady {
+					e.log.Error("save committed before a crash cannot be restored until its base is back", "save", sv.ID, "state", state)
+					if err := e.store.SetSaveState(ctx, sv.ID, state); err != nil {
+						return err
+					}
 				}
 				e.log.Info("published save committed before a crash", "save", sv.ID)
 				continue

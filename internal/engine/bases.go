@@ -46,14 +46,13 @@ func remoteBaseKey(sha string) string { return "bases/" + sha + ".tar" }
 
 // baseState caches what is expensive to redo per save or restore.
 type baseState struct {
-	mu       sync.Mutex
-	indexes  map[string]*save.Index
-	verified map[string]string // sha → fingerprint of the file when it last hashed right
+	mu      sync.Mutex
+	indexes map[string]*save.Index
 }
 
 func (b *baseState) init() {
 	if b.indexes == nil {
-		b.indexes, b.verified = map[string]*save.Index{}, map[string]string{}
+		b.indexes = map[string]*save.Index{}
 	}
 }
 
@@ -136,54 +135,56 @@ func (e *Engine) baseIndex(sha string) (*save.Index, error) {
 	return idx, nil
 }
 
-// verifyBase checks a base's size and SHA-256. A base that hashed right is
-// trusted again until its file changes (size, time or inode), unless full: a
-// scrub rehashes every byte.
-func (e *Engine) verifyBase(ref *save.BaseRef, full bool) error {
+// errBaseMissing: a base is not here (and could not be fetched). It says
+// nothing about the save's own files, so it must not mark a save corrupt: the
+// base may come back (object storage reachable again, a backup restored).
+var errBaseMissing = errors.New("base missing")
+
+// verifyBase hashes every byte of a base. Every restore does this, as for
+// the save's own files: nothing restores without passing verification.
+func (e *Engine) verifyBase(ref *save.BaseRef) error {
 	info, err := os.Stat(e.basePath(ref.SHA256))
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w: %s", errBaseMissing, ref.SHA256)
+	}
 	if err != nil {
-		return fmt.Errorf("%w: base %s: %v", save.ErrCorrupt, ref.SHA256, err)
+		return err
 	}
 	if info.Size() != ref.Size {
 		return fmt.Errorf("%w: base %s is %d bytes, want %d", save.ErrCorrupt, ref.SHA256, info.Size(), ref.Size)
-	}
-	fp := fingerprint(info)
-	e.bases.mu.Lock()
-	e.bases.init()
-	ok := !full && e.bases.verified[ref.SHA256] == fp
-	e.bases.mu.Unlock()
-	if ok {
-		return nil
 	}
 	got, _, err := hashFileSHA(e.basePath(ref.SHA256))
 	if err != nil {
 		return err
 	}
 	if got != ref.SHA256 {
-		e.bases.mu.Lock()
-		delete(e.bases.verified, ref.SHA256)
-		e.bases.mu.Unlock()
 		return fmt.Errorf("%w: base %s does not match its checksum", save.ErrCorrupt, ref.SHA256)
 	}
-	e.bases.mu.Lock()
-	e.bases.verified[ref.SHA256] = fp
-	e.bases.mu.Unlock()
 	return nil
 }
 
 // checkBase makes sure the base a save needs is here and intact, fetching it
-// from object storage when it is missing or damaged here.
-func (e *Engine) checkBase(ctx context.Context, m *save.Manifest, full bool) error {
-	if m.Base == nil {
+// from object storage when it is missing or damaged here. seen, if set,
+// holds bases already verified in this run (a scrub verifies each once).
+// Only damage it could not repair is save.ErrCorrupt; a base that is missing
+// and could not be fetched (the store unreachable) is errBaseMissing.
+func (e *Engine) checkBase(ctx context.Context, m *save.Manifest, seen map[string]bool) error {
+	if m.Base == nil || seen[m.Base.SHA256] {
 		return nil
 	}
-	err := e.verifyBase(m.Base, full)
+	err := e.verifyBase(m.Base)
 	if err != nil && e.remoteOn() {
 		if ferr := e.fetchBase(ctx, m.Base); ferr != nil {
 			e.log.Error("could not fetch base from object storage", "base", m.Base.SHA256, "err", ferr)
+			if errors.Is(ferr, save.ErrCorrupt) {
+				err = ferr // the store's copy is damaged too
+			}
 		} else {
-			err = e.verifyBase(m.Base, false)
+			err = e.verifyBase(m.Base)
 		}
+	}
+	if err == nil && seen != nil {
+		seen[m.Base.SHA256] = true
 	}
 	return err
 }
@@ -264,6 +265,9 @@ func (e *Engine) uploadBase(ctx context.Context, ref *save.BaseRef) error {
 		if k == remoteBaseKey(ref.SHA256) {
 			return nil
 		}
+	}
+	if err := e.verifyBase(ref); err != nil { // never upload a damaged base
+		return err
 	}
 	f, err := os.Open(e.basePath(ref.SHA256))
 	if err != nil {
@@ -361,16 +365,11 @@ func (e *Engine) gcBases(ctx context.Context) (int, error) {
 		e.bases.mu.Lock()
 		e.bases.init()
 		delete(e.bases.indexes, sha)
-		delete(e.bases.verified, sha)
 		e.bases.mu.Unlock()
 		n++
 		e.log.Info("removed unused base", "base", sha)
 	}
 	return n, nil
-}
-
-func fingerprint(info os.FileInfo) string {
-	return fmt.Sprintf("%d %d %v", info.Size(), info.ModTime().UnixNano(), inode(info))
 }
 
 func hashFileSHA(path string) (string, int64, error) {

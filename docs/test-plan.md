@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 79 | 11 | 2 |
+| E3 | 80 | 11 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -245,6 +245,7 @@ Every save either restores exactly or is refused with a clear error. Gate: **E2*
   - ✅ **G6.12.5** A damaged base is caught before anything is restored · E3 · needs in_process
   - ✅ **G6.12.6** Bases travel with saves in object storage · E3 · needs in_process
   - ✅ **G6.12.7** A file a restore wrote is never mistaken for base content by the next save · E3
+  - ✅ **G6.12.8** A base that cannot be fetched now is not mistaken for a damaged save · E3 · needs in_process
 
 ## G7 The engine survives crashes and lost servers
 
