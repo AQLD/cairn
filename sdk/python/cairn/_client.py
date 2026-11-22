@@ -480,6 +480,13 @@ class Client:
         path = f"/v1/saves/{_q(save_id)}/diff" + ("?" + urllib.parse.urlencode(q) if q else "")
         return SaveDiff._from(self._json("GET", path))
 
+    def pin_save(self, save_id: str) -> Save:
+        """Keeps a save from the engine's pruning; delete refuses it until unpinned."""
+        return Save._from(self._json("POST", f"/v1/saves/{_q(save_id)}/pin", safe=True), self)
+
+    def unpin_save(self, save_id: str) -> Save:
+        return Save._from(self._json("DELETE", f"/v1/saves/{_q(save_id)}/pin", safe=True), self)
+
     def verify_save(self, save_id: str) -> Save:
         """Re-checks the save's checksums: state "ready", or "corrupt"/"missing"."""
         return Save._from(self._json("POST", f"/v1/saves/{_q(save_id)}/verify", safe=True), self)

@@ -446,4 +446,28 @@ func init() {
 			e.T.Fatal("diff without a save is not an error")
 		}
 	})
+
+	register("G10.12.5", func(e *Env) {
+		m := startMCP(e)
+		m.initialize()
+		m.ok("workspace_create", map[string]any{"name": "milestone"})
+		plain := firstMatch(e, saveIDPattern, m.ok("save", map[string]any{}))
+		out := m.ok("save", map[string]any{"pin": true})
+		kept := firstMatch(e, saveIDPattern, out)
+		if !strings.Contains(out, "pinned") {
+			e.T.Fatalf("save pin=true does not say the save is pinned: %q", out)
+		}
+		sv, err := e.C.GetSave(e.Ctx, kept)
+		e.Must(err)
+		Equal(e, "pinned on the engine", sv.Pinned, true)
+		list := m.ok("list_saves", map[string]any{})
+		for _, l := range strings.Split(list, "\n") {
+			if strings.HasPrefix(l, kept) && !strings.Contains(l, "(pinned)") {
+				e.T.Fatalf("list_saves does not mark the pinned save: %q", l)
+			}
+			if strings.HasPrefix(l, plain) && strings.Contains(l, "(pinned)") {
+				e.T.Fatalf("list_saves marks an unpinned save: %q", l)
+			}
+		}
+	})
 }

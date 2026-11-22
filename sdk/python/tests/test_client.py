@@ -312,6 +312,18 @@ class TestSaves(EngineTest):
         with self.assertRaises(cairn.InvalidArgument):
             first.diff()  # the first save came from nothing
 
+    def test_pin_keeps_a_save_from_deletion_until_unpinned(self):
+        ws = self.workspace("pin")
+        save = ws.save()
+        self.assertFalse(save.pinned)
+        self.assertTrue(save.pin().pinned)
+        self.assertTrue(self.c.get_save(save.id).pinned)
+        with self.assertRaises(cairn.Conflict):
+            save.delete()
+        self.assertFalse(save.unpin().pinned)
+        save.delete()
+        self.assertEqual(self.c.get_save(save.id).state, "deleted")
+
     def test_retried_save_and_copy_return_the_first_result(self):
         ws = self.workspace("retries")
         a = ws.save(idempotency_key="sdk-save-key-1")

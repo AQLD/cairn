@@ -292,6 +292,7 @@ class Save:
     auto: bool = False  # made by the engine to pause the workspace
     uploaded: bool = False  # a copy is in object storage
     parent: str = ""  # the save the workspace's state came from when this one was made
+    pinned: bool = False  # kept by pruning; delete refuses it until unpinned
     _client: Any = field(default=None, repr=False, compare=False)
 
     @classmethod
@@ -299,13 +300,20 @@ class Save:
         return cls(id=d["id"], workspace_id=d.get("workspace_id", ""), kind=d.get("kind", ""), state=d.get("state", ""),
                    size=d.get("size", 0), created_at=_time(d.get("created_at")), deleted_at=_time(d.get("deleted_at")),
                    purge_after=_time(d.get("purge_after")), auto=d.get("auto", False), uploaded=d.get("uploaded", False),
-                   parent=d.get("parent", ""), _client=client)
+                   parent=d.get("parent", ""), pinned=d.get("pinned", False), _client=client)
 
     def resume(self) -> Workspace:
         return self._client.resume(self.id)
 
     def copy(self, count: int = 1, **kw) -> list[Workspace]:
         return self._client.copy(self.id, count, **kw)
+
+    def pin(self) -> "Save":
+        """Keeps this save from the engine's pruning (and from delete until unpinned)."""
+        return self._client.pin_save(self.id)
+
+    def unpin(self) -> "Save":
+        return self._client.unpin_save(self.id)
 
     def diff(self, from_save: Optional[str] = None, limit: int = 0) -> SaveDiff:
         """Files changed since from_save, or since the save this one came from."""
