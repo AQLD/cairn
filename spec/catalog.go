@@ -410,7 +410,13 @@ var Catalog = []Scenario{
 					{ID: "G18.4.3", Title: "Saves of templated workspaces diff the same, read from their deltas", Proves: "Two saves stored as deltas against a template base list exactly the agent's edits, including a same-size rewrite with its old time put back, and nothing of the untouched template.", Milestone: E3},
 					{ID: "G18.4.4", Title: "A long diff is cut at the limit asked for, with full counts", Proves: "Asking for at most N changes returns the first N in path order, says it was truncated, and still counts every change.", Milestone: E3},
 				}},
-			{ID: "G18.5", Title: "Old steps are pruned by policy while pinned steps are kept", Milestone: E3},
+			{ID: "G18.5", Title: "Old steps are pruned by policy while pinned steps are kept", Proves: "Saving after every step does not fill the disk, and the steps that matter are never lost to pruning.", Milestone: E3,
+				Children: []Scenario{
+					{ID: "G18.5.1", Title: "A save can be pinned and unpinned", Proves: "Pinning is shown on the save and in its workspace's list, survives an engine restart and is idempotent; delete refuses a pinned save with conflict until it is unpinned; a deleted save cannot be pinned.", Milestone: E3, Needs: []Need{NeedInProcess}},
+					{ID: "G18.5.2", Title: "Pruning keeps the newest saves and every recent one, and soft-deletes the rest", Proves: "With the default policy (the newest 20 and everything under 7 days old), older saves beyond the newest 20 are deleted on the hourly run and can be undeleted for the retention window.", Milestone: E3},
+					{ID: "G18.5.3", Title: "Pruning never takes a pinned save, a pause save or the save a workspace stands on", Proves: "Old saves that are pinned, the engine's pause saves (which cannot be pinned either) and the save a workspace was last saved or resumed from all survive a pruning run that takes their neighbours.", Milestone: E3, Needs: []Need{NeedFullSave}},
+					{ID: "G18.5.4", Title: "Either pruning limit set to zero turns that limit off", Milestone: E3},
+				}},
 			{ID: "G18.6", Title: "A copy can start from any earlier step", Proves: "Copies of each earlier save start at that step, whatever the workspace has done since, and the workspace is untouched.", Milestone: E3},
 			{ID: "G18.7", Title: "A full save can keep the workspace running", Proves: "An agent saves memory and processes before a risky step and carries on at once, without a resume; the save is a real one to rewind to.", Milestone: E3,
 				Children: []Scenario{

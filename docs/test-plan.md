@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 85 | 10 | 2 |
+| E3 | 86 | 12 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -355,7 +355,11 @@ An agent's computer keeps a tree of its past states, cheap enough to checkpoint 
   - ✅ **G18.4.2** A diff compares with the save it came from unless told otherwise · E3
   - ✅ **G18.4.3** Saves of templated workspaces diff the same, read from their deltas · E3
   - ✅ **G18.4.4** A long diff is cut at the limit asked for, with full counts · E3
-- ⏳ **G18.5** Old steps are pruned by policy while pinned steps are kept · E3
+- 📂 **G18.5** Old steps are pruned by policy while pinned steps are kept · E3
+  - ✅ **G18.5.1** A save can be pinned and unpinned · E3 · needs in_process
+  - ⏳ **G18.5.2** Pruning keeps the newest saves and every recent one, and soft-deletes the rest · E3
+  - ⏳ **G18.5.3** Pruning never takes a pinned save, a pause save or the save a workspace stands on · E3 · needs full_save
+  - ⏳ **G18.5.4** Either pruning limit set to zero turns that limit off · E3
 - ✅ **G18.6** A copy can start from any earlier step · E3
 - 📂 **G18.7** A full save can keep the workspace running · E3
   - ✅ **G18.7.1** Processes keep running through a full save that keeps the workspace running · E3 · needs full_save, persistent_processes

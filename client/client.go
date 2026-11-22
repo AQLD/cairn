@@ -170,6 +170,8 @@ type Save struct {
 	// Parent is the save the workspace's state came from when this one was
 	// made: a workspace's saves form a tree, and rewinding then saving branches.
 	Parent string `json:"parent,omitempty"`
+	// Pinned saves are kept by pruning; delete refuses them until unpinned.
+	Pinned bool `json:"pinned,omitempty"`
 }
 
 // SaveDiff is what changed in the files from one save (From) to another (To).
@@ -542,8 +544,6 @@ func (c *Client) UndeleteSave(ctx context.Context, id string) (*Save, error) {
 	return &out, c.do(ctx, http.MethodPost, "/v1/saves/"+url.PathEscape(id)+"/undelete", nil, &out)
 }
 
-// VerifySave re-checks a save's checksums on the engine and returns its state:
-// "ready", or "corrupt" / "missing" if its files are damaged or gone.
 // DiffSaves lists the files added, modified and removed from save from to
 // save to. With from empty it compares with the save to came from (its
 // parent). limit caps the changes listed (0: the engine's default, 1000).
@@ -563,6 +563,20 @@ func (c *Client) DiffSaves(ctx context.Context, to, from string, limit int) (*Sa
 	return &out, c.do(ctx, http.MethodGet, p, nil, &out)
 }
 
+// PinSave pins a save: the engine's pruning keeps it and delete refuses it.
+func (c *Client) PinSave(ctx context.Context, id string) (*Save, error) {
+	var out Save
+	return &out, c.do(ctx, http.MethodPost, "/v1/saves/"+url.PathEscape(id)+"/pin", nil, &out)
+}
+
+// UnpinSave lets pruning and delete treat a save like any other again.
+func (c *Client) UnpinSave(ctx context.Context, id string) (*Save, error) {
+	var out Save
+	return &out, c.do(ctx, http.MethodDelete, "/v1/saves/"+url.PathEscape(id)+"/pin", nil, &out)
+}
+
+// VerifySave re-checks a save's checksums on the engine and returns its state:
+// "ready", or "corrupt" / "missing" if its files are damaged or gone.
 func (c *Client) VerifySave(ctx context.Context, id string) (*Save, error) {
 	var out Save
 	return &out, c.do(ctx, http.MethodPost, "/v1/saves/"+url.PathEscape(id)+"/verify", nil, &out)

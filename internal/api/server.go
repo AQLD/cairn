@@ -138,6 +138,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/saves/{id}/copies", s.copySave)
 	s.mux.HandleFunc("DELETE /v1/saves/{id}", s.deleteSave)
 	s.mux.HandleFunc("POST /v1/saves/{id}/undelete", s.undeleteSave)
+	s.mux.HandleFunc("POST /v1/saves/{id}/pin", s.pinSave(true))
+	s.mux.HandleFunc("DELETE /v1/saves/{id}/pin", s.pinSave(false))
 	s.mux.HandleFunc("POST /v1/saves/{id}/verify", s.verifySave)
 	s.mux.HandleFunc("GET /v1/templates", s.listTemplates)
 	s.mux.HandleFunc("PUT /v1/templates/{name}", s.importTemplate)
@@ -416,6 +418,19 @@ func (s *Server) verifySave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, sv)
+}
+
+// pinSave pins or unpins a save: pruning keeps pinned saves and delete
+// refuses them.
+func (s *Server) pinSave(pinned bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sv, err := s.eng.PinSave(r.Context(), r.PathValue("id"), pinned)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, sv)
+	}
 }
 
 func (s *Server) undeleteSave(w http.ResponseWriter, r *http.Request) {
