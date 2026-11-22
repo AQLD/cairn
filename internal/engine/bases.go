@@ -59,8 +59,15 @@ func (b *baseState) init() {
 
 // ensureBase makes sure base sha exists, linking (or copying) it from src, a
 // tar whose content is sha. Atomic: built under a temporary name and renamed.
+//
+// Either way the base's modification time becomes now: garbage collection
+// spares a base for baseGrace after its last use, for the moment between a
+// workspace or save starting to use it and recording that it does. A base
+// linked from a template keeps the template's (old) time otherwise, which
+// gave no grace at all.
 func (e *Engine) ensureBase(sha, src string) error {
 	if _, err := os.Stat(e.basePath(sha)); err == nil {
+		e.touchBase(sha)
 		return nil
 	}
 	if err := os.MkdirAll(e.basesDir(), 0o700); err != nil {
@@ -83,7 +90,16 @@ func (e *Engine) ensureBase(sha, src string) error {
 	if err := os.Rename(tmp, e.basePath(sha)); err != nil {
 		return err
 	}
+	e.touchBase(sha)
 	return syncDir(e.basesDir())
+}
+
+// touchBase marks base sha as used now (see ensureBase).
+func (e *Engine) touchBase(sha string) {
+	now := e.cfg.Now()
+	if err := os.Chtimes(e.basePath(sha), now, now); err != nil {
+		e.log.Warn("could not mark base as used", "base", sha, "err", err)
+	}
 }
 
 // baseIndex returns the index of base sha. The stored index is used only if

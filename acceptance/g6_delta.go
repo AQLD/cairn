@@ -524,4 +524,26 @@ func init() {
 		e.Must(err)
 		Equal(e, "same.txt in a copy", e.Sh(copies[0].ID, "cat "+deltaDir+"/same.txt"), "BBBB")
 	})
+
+	register("G6.12.10", func(e *Env) {
+		t := deltaTemplate(e, "grace")
+		basePath := filepath.Join(e.DataDir, "bases", t.SHA256+".tar")
+		e.Clock.Advance(3 * time.Hour) // the template is old
+
+		ws := templatedWorkspace(e, "grace", "late") // uses the base now
+		e.Must(e.C.DeleteTemplate(e.Ctx, "grace"))
+		e.Must(e.C.DeleteWorkspace(e.Ctx, ws.ID))
+		_, err := e.Engine.PurgeExpired(e.Ctx) // collects unused bases
+		e.Must(err)
+		if _, err := os.Stat(basePath); err != nil {
+			e.T.Fatalf("base used minutes ago was collected: %v", err)
+		}
+
+		e.Clock.Advance(2 * time.Hour)
+		_, err = e.Engine.PurgeExpired(e.Ctx)
+		e.Must(err)
+		if _, err := os.Stat(basePath); err == nil {
+			e.T.Fatal("base kept long after its last use with nothing referring to it")
+		}
+	})
 }
