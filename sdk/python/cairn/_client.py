@@ -23,7 +23,7 @@ from typing import IO, Any, Iterable, Iterator, Optional, Sequence, Union
 
 from . import __version__
 from ._errors import CairnError, CommandFailed, ConnectionFailed, TooManyRequests, from_response
-from ._types import Event, ExecResult, Info, Limits, OutputCallback, RunResult, Save, Session, Template, Workspace
+from ._types import Event, ExecResult, Info, Limits, OutputCallback, RunResult, Save, SaveDiff, Session, Template, Workspace
 
 Content = Union[bytes, str, IO[bytes], "os.PathLike[str]"]
 
@@ -467,6 +467,18 @@ class Client:
 
     def undelete_save(self, save_id: str) -> Save:
         return Save._from(self._json("POST", f"/v1/saves/{_q(save_id)}/undelete", safe=True), self)
+
+    def diff_saves(self, save_id: str, from_save: Optional[str] = None, limit: int = 0) -> SaveDiff:
+        """Files added, modified and removed from from_save (default: the save
+        save_id came from) to save_id, read from the saves without restoring.
+        limit caps the changes listed (0: the engine's default, 1000)."""
+        q = {}
+        if from_save:
+            q["from"] = from_save
+        if limit > 0:
+            q["limit"] = str(limit)
+        path = f"/v1/saves/{_q(save_id)}/diff" + ("?" + urllib.parse.urlencode(q) if q else "")
+        return SaveDiff._from(self._json("GET", path))
 
     def verify_save(self, save_id: str) -> Save:
         """Re-checks the save's checksums: state "ready", or "corrupt"/"missing"."""

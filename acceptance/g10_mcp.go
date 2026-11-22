@@ -183,7 +183,7 @@ func init() {
 			names[name] = true
 		}
 		for _, want := range []string{"workspace_create", "exec", "write_file", "read_file", "push_dir", "pull_dir",
-			"session_run", "save", "rewind", "copy", "list_saves", "history", "workspace_list", "pause", "workspace_delete"} {
+			"session_run", "save", "rewind", "copy", "list_saves", "diff", "history", "workspace_list", "pause", "workspace_delete"} {
 			if !names[want] {
 				e.T.Errorf("tool %s is missing", want)
 			}
@@ -394,6 +394,56 @@ func init() {
 		m2.initialize()
 		if h2 := m2.ok("history", map[string]any{"workspace": ws}); !strings.Contains(h2, "exit 3") || !strings.Contains(h2, sv) {
 			e.T.Fatalf("history from a new conversation:\n%s", h2)
+		}
+	})
+
+	register("G10.12.4", func(e *Env) {
+		m := startMCP(e)
+		m.initialize()
+		m.ok("workspace_create", map[string]any{"name": "review"})
+		m.ok("exec", map[string]any{"command": "mkdir -p review && echo one > review/a.txt && echo bye > review/gone.txt"})
+		first := firstMatch(e, saveIDPattern, m.ok("save", map[string]any{}))
+		m.ok("exec", map[string]any{"command": "echo two >> review/a.txt && rm review/gone.txt && echo n > review/new.txt"})
+		second := firstMatch(e, saveIDPattern, m.ok("save", map[string]any{}))
+
+		out := m.ok("diff", map[string]any{"save": second})
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		if !strings.Contains(lines[0], "from "+first+" to "+second) {
+			e.T.Fatalf("summary does not name the saves compared: %q", lines[0])
+		}
+		for _, want := range []string{"M ", "D ", "A "} {
+			found := false
+			for _, l := range lines[1:] {
+				suffix := map[string]string{"M ": "review/a.txt", "D ": "review/gone.txt", "A ": "review/new.txt"}[want]
+				if strings.HasPrefix(l, want) && strings.HasSuffix(l, suffix) {
+					found = true
+				}
+			}
+			if !found {
+				e.T.Fatalf("diff lacks the %q change:\n%s", want, out)
+			}
+		}
+		if !strings.Contains(lines[0], "1 added, 1 modified, 1 removed") {
+			e.T.Fatalf("counts: %q", lines[0])
+		}
+
+		back := m.ok("diff", map[string]any{"save": first, "from": second})
+		hasLine := func(out, prefix, suffix string) bool {
+			for _, l := range strings.Split(out, "\n") {
+				if strings.HasPrefix(l, prefix) && strings.HasSuffix(l, suffix) {
+					return true
+				}
+			}
+			return false
+		}
+		if !strings.Contains(back, "1 added, 1 modified, 1 removed") || !hasLine(back, "A ", "review/gone.txt") || !hasLine(back, "D ", "review/new.txt") {
+			e.T.Fatalf("diff the other way:\n%s", back)
+		}
+		if cut := m.ok("diff", map[string]any{"save": second, "limit": 1}); !strings.Contains(cut, "first 1 listed") {
+			e.T.Fatalf("limit 1 does not say the list was cut:\n%s", cut)
+		}
+		if _, isErr := m.tool("diff", map[string]any{}); !isErr {
+			e.T.Fatal("diff without a save is not an error")
 		}
 	})
 }

@@ -240,6 +240,45 @@ class Event:
 
 
 @dataclass
+class Change:
+    """One path that differs between two saves."""
+
+    path: str  # absolute, as the workspace sees it
+    change: str  # added, modified or removed
+    type: str  # file, dir or symlink
+    size: int = 0  # a file's size
+
+    @classmethod
+    def _from(cls, d: dict) -> "Change":
+        return cls(path=d.get("path", ""), change=d.get("change", ""), type=d.get("type", ""), size=d.get("size", 0))
+
+
+@dataclass
+class SaveDiff:
+    """What changed in the files from one save (from_save) to another (to_save).
+
+    A path is modified when its content, type, link target or permissions
+    differ, not its modification time alone. Memory and processes are not
+    compared. ``truncated`` says ``changes`` stops at the limit; the counts
+    include every change.
+    """
+
+    from_save: str
+    to_save: str
+    added: int
+    modified: int
+    removed: int
+    changes: list
+    truncated: bool = False
+
+    @classmethod
+    def _from(cls, d: dict) -> "SaveDiff":
+        return cls(from_save=d.get("from", ""), to_save=d.get("to", ""), added=d.get("added", 0),
+                   modified=d.get("modified", 0), removed=d.get("removed", 0),
+                   changes=[Change._from(c) for c in d.get("changes") or []], truncated=d.get("truncated", False))
+
+
+@dataclass
 class Save:
     id: str
     workspace_id: str
@@ -266,6 +305,10 @@ class Save:
 
     def copy(self, count: int = 1, **kw) -> list[Workspace]:
         return self._client.copy(self.id, count, **kw)
+
+    def diff(self, from_save: Optional[str] = None, limit: int = 0) -> SaveDiff:
+        """Files changed since from_save, or since the save this one came from."""
+        return self._client.diff_saves(self.id, from_save, limit)
 
     def delete(self) -> None:
         self._client.delete_save(self.id)

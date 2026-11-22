@@ -25,6 +25,7 @@ Edit files locally as usual: `cairn run` copies your edits in before each comman
 cairn save . --full                 # a few seconds; files, memory and running servers; the workspace keeps running
 cairn saves .                       # list saves (newest last), with the save each came from
 cairn resume SAVE_ID                # rewind: files, memory and processes exactly as saved
+cairn diff SAVE_ID                  # files that step changed (A/M/D), against the save it came from
 cairn resume .                      # back to the clean baseline: dependencies installed, nothing else
 ```
 

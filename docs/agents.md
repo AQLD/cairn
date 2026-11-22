@@ -55,6 +55,7 @@ The entry launches the absolute path of the `cairn` binary you ran, so desktop a
 | `rewind` | Puts the workspace back exactly as it was at a save, running processes included for full saves. |
 | `copy` | New, independent workspaces from a save, to try approaches in parallel. |
 | `list_saves` | A workspace's saves, each with the save it came from. |
+| `diff` | Files added, modified and removed between two saves (by default, what a save's step changed since the save it came from). |
 | `workspace_list`, `pause`, `workspace_delete` | Housekeeping. |
 
 Tool descriptions tell the agent when to use each one (save before deleting files, migrations or upgrades; rewind instead of repairing by hand), and a failing command's result names the last save to rewind to. A command exiting non-zero is a normal result; tool errors (`isError`) are engine errors such as `not_found`, with Cairn's error code in the message. Long output is cut to its first and last parts, about 20,000 characters in all.

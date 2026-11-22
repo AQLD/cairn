@@ -50,7 +50,7 @@ func toolList() []*tool {
 }
 
 var order = []string{"workspace_create", "exec", "write_file", "read_file", "push_dir", "pull_dir", "session_run",
-	"save", "rewind", "copy", "list_saves", "history", "workspace_list", "pause", "workspace_delete"}
+	"save", "rewind", "copy", "list_saves", "diff", "history", "workspace_list", "pause", "workspace_delete"}
 
 func toolOrder(name string) int {
 	for i, n := range order {
@@ -362,6 +362,38 @@ func init() {
 				return toolResult{}, err
 			}
 			return text("%s", formatSaves(w, svs)), nil
+		},
+	})
+
+	register(&tool{
+		Name: "diff",
+		Description: "Lists the files added (A), modified (M) and removed (D) between two saves, read from the saves without " +
+			"restoring anything. By default compares a save with the save it came from, so it shows what that step did. " +
+			"Use it to review a step before keeping it, or to see what a rewind would undo. Only files are compared, not processes.",
+		InputSchema: props([]string{"save"}, map[string][2]string{
+			"save":  {"string", "The later save (from save or list_saves)."},
+			"from":  {"string", "The earlier save. Default: the save the later one came from."},
+			"limit": {"integer", "List at most this many paths. Default 200."},
+		}),
+		run: func(ctx context.Context, s *Server, args json.RawMessage) (toolResult, error) {
+			var a struct {
+				Save, From string
+				Limit      int
+			}
+			if err := decode(args, &a); err != nil {
+				return toolResult{}, err
+			}
+			if a.Save == "" {
+				return toolResult{}, fmt.Errorf("save is required")
+			}
+			if a.Limit <= 0 {
+				a.Limit = 200
+			}
+			d, err := s.c.DiffSaves(ctx, a.Save, a.From, a.Limit)
+			if err != nil {
+				return toolResult{}, err
+			}
+			return text("%s", formatDiff(d)), nil
 		},
 	})
 
@@ -690,6 +722,26 @@ func formatHistory(ws string, evs []client.Event, kind string) string {
 	for _, ev := range evs {
 		// summaries already say how a command ended ("→ exit 1 in 0.2 s")
 		fmt.Fprintf(&b, "#%d %s  %s\n", ev.ID, ev.Time.Local().Format(time.DateTime), ev.Summary)
+	}
+	return b.String()
+}
+
+// formatDiff is a diff as an agent reads it: a summary line, then one
+// "A|M|D path" line per change (folders end in /).
+func formatDiff(d *client.SaveDiff) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d added, %d modified, %d removed from %s to %s", d.Added, d.Modified, d.Removed, d.From, d.To)
+	if d.Truncated {
+		fmt.Fprintf(&b, " (first %d listed; pass a larger limit for more)", len(d.Changes))
+	}
+	b.WriteString("\n")
+	mark := map[string]string{"added": "A", "modified": "M", "removed": "D"}
+	for _, c := range d.Changes {
+		suffix := ""
+		if c.Type == "dir" {
+			suffix = "/"
+		}
+		fmt.Fprintf(&b, "%s %s%s\n", mark[c.Change], c.Path, suffix)
 	}
 	return b.String()
 }
