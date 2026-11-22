@@ -58,12 +58,18 @@ const MaxCopies = 64
 const DefaultRetention = 7 * 24 * time.Hour
 
 type Config struct {
-	DataDir    string
-	Runtime    runtime.Runtime
-	Logger     *slog.Logger
-	Retention  time.Duration    // how long deleted saves are kept; DefaultRetention if zero
-	Now        func() time.Time // clock; time.Now if nil (tests move it forward)
-	Failpoints *failpoint.Set   // tests only
+	DataDir   string
+	Runtime   runtime.Runtime
+	Logger    *slog.Logger
+	Retention time.Duration    // how long deleted saves are kept; DefaultRetention if zero
+	Now       func() time.Time // clock; time.Now if nil (tests move it forward)
+	// KeepSaves and KeepSavesFor are the pruning policy (see Prune): keep each
+	// workspace's newest KeepSaves saves and those younger than KeepSavesFor.
+	// Zero means the default (DefaultKeepSaves, DefaultKeepSavesFor); a
+	// negative value turns that limit off.
+	KeepSaves    int
+	KeepSavesFor time.Duration
+	Failpoints   *failpoint.Set // tests only
 	// MinFreeBytes is the free space a save must leave behind; a save that would
 	// go below it is refused before anything is written. DefaultMinFreeBytes if 0.
 	MinFreeBytes int64
@@ -185,6 +191,18 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	switch {
+	case cfg.KeepSaves == 0:
+		cfg.KeepSaves = DefaultKeepSaves
+	case cfg.KeepSaves < 0:
+		cfg.KeepSaves = pruneOff
+	}
+	switch {
+	case cfg.KeepSavesFor == 0:
+		cfg.KeepSavesFor = DefaultKeepSavesFor
+	case cfg.KeepSavesFor < 0:
+		cfg.KeepSavesFor = pruneOff
+	}
 	if cfg.ExclusiveWait <= 0 {
 		cfg.ExclusiveWait = DefaultExclusiveWait
 	}
@@ -253,6 +271,11 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 		st.Close()
 		e.events.Close()
 		return nil, fmt.Errorf("recover: %w", err)
+	}
+	if _, err := e.Prune(ctx); err != nil {
+		st.Close()
+		e.events.Close()
+		return nil, fmt.Errorf("prune: %w", err)
 	}
 	if _, err := e.PurgeExpired(ctx); err != nil {
 		st.Close()
