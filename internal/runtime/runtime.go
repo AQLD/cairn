@@ -38,6 +38,10 @@ type Capabilities struct {
 	NetworkControl bool `json:"network_control"`
 	// PersistentProcesses: processes keep running between commands.
 	PersistentProcesses bool `json:"persistent_processes"`
+	// SharedTemplates: workspaces made from one template share its files
+	// read-only and store only their own changes (set by the engine, whatever
+	// the runtime: it needs Linux, root and overlayfs).
+	SharedTemplates bool `json:"shared_templates"`
 }
 
 // Limits are the resources a workspace may use. Zero means the engine default.

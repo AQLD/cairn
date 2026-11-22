@@ -43,6 +43,7 @@ class Capabilities:
     disk_limits: bool = False
     network_control: bool = False
     persistent_processes: bool = False
+    shared_templates: bool = False  # workspaces share their template's files read-only
 
 
 @dataclass

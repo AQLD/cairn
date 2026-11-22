@@ -57,6 +57,7 @@ func run() error {
 	saveStore := flag.String("save-store", "", "keep a copy of every save in S3-compatible object storage: s3://bucket/prefix?endpoint=https://host&region=r (credentials from AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)")
 	restoreState := flag.Bool("restore-state", false, "rebuild a lost or damaged state database from its last backup and the data folder, then run as usual")
 	backupEvery := flag.Duration("state-backup-interval", time.Hour, "how often to back up the state database (state.db.backup; 0 disables)")
+	sharedTemplates := flag.Bool("shared-templates", true, "workspaces share one read-only copy of their template and store only their changes (needs Linux, root and overlayfs; otherwise each gets its own copy)")
 	diskImages := flag.Bool("disk-images", true, "enforce workspace disk sizes with an ext4 image per workspace (needs root, mkfs.ext4 and loop devices)")
 	var imports templateImports
 	flag.Var(&imports, "import-template", "NAME=ROOTFS.tar to import at startup if missing or changed (repeatable)")
@@ -100,7 +101,7 @@ func run() error {
 			return err
 		}
 	}
-	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, KeepSaves: offIfZero(*keepSaves), KeepSavesFor: time.Duration(offIfZero(int(*keepSavesFor))), DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, MaxCommands: *maxCommands, MaxOps: *maxOps, RestoreState: *restoreState, Objects: objects})
+	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, KeepSaves: offIfZero(*keepSaves), KeepSavesFor: time.Duration(offIfZero(int(*keepSavesFor))), DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, NoSharedTemplates: !*sharedTemplates, MaxCommands: *maxCommands, MaxOps: *maxOps, RestoreState: *restoreState, Objects: objects})
 	if err != nil {
 		return err
 	}

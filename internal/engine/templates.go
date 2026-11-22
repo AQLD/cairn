@@ -20,8 +20,10 @@ import (
 )
 
 // A template is a root filesystem that new workspaces start from (a Python or
-// Node toolchain, say). It is stored once as a tar file; every workspace gets
-// its own extracted copy, so a workspace can never change its template.
+// Node toolchain, say). It is stored once as a tar file. Where overlays work,
+// workspaces share one read-only extracted copy of it (its base's root) and
+// store only their own changes; elsewhere each gets its own extracted copy.
+// Either way a workspace can never change its template.
 //
 //	templates/<name>/rootfs.tar
 //	templates/<name>/template.json
@@ -202,6 +204,12 @@ func (e *Engine) createRootfs(id string, spec Spec) error {
 	if err := tmp.remove(); err != nil {
 		return err
 	}
+	if spec.Template != "" && e.overlayErr == nil {
+		done, err := e.createLayeredRootfs(id, spec, root, tmp)
+		if done || err != nil {
+			return err
+		}
+	}
 	var f *os.File
 	var size int64
 	if spec.Template != "" {
@@ -244,6 +252,47 @@ func (e *Engine) createRootfs(id string, spec Spec) error {
 		e.recordTemplateBase(id, spec.Template, f, size, extracted)
 	}
 	return nil
+}
+
+// createLayeredRootfs gives a new workspace a filesystem layered on its
+// template's shared root. It returns done=false, with nothing built, when
+// the template cannot be shared this time (its base cannot be made), so the
+// caller copies it as before.
+func (e *Engine) createLayeredRootfs(id string, spec Spec, root, tmp volume) (bool, error) {
+	t, err := e.GetTemplate(context.Background(), spec.Template)
+	if err != nil {
+		return false, err
+	}
+	tar := filepath.Join(e.templateDir(spec.Template), "rootfs.tar")
+	if err := e.ensureBase(t.SHA256, tar); err != nil {
+		e.log.Warn("template cannot be shared; copying it", "template", spec.Template, "err", err)
+		return false, nil
+	}
+	if _, err := e.ensureRoot(t.SHA256); err != nil {
+		e.log.Warn("template cannot be shared; copying it", "template", spec.Template, "err", err)
+		return false, nil
+	}
+	tmp.lower = t.SHA256
+	err = tmp.prepare()
+	extracted := time.Now() // every file from the base is older than this
+	if err == nil {
+		err = tmp.release()
+	}
+	if err != nil {
+		_ = tmp.remove()
+		return true, err
+	}
+	if err := tmp.renameTo(root); err != nil {
+		return true, err
+	}
+	if err := root.attach(); err != nil {
+		return true, err
+	}
+	margin := save.ChangeTimeMargin(root.path)
+	if err := e.writeBaseRecord(id, save.BaseRef{SHA256: t.SHA256, Size: t.Size}, extracted, margin); err != nil {
+		e.log.Warn("could not record workspace base", "workspace", id, "err", err)
+	}
+	return true, nil
 }
 
 // recordTemplateBase records that a new workspace's filesystem is the

@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 92 | 9 | 2 |
+| E3 | 96 | 12 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -301,6 +301,14 @@ Save, resume and copy are quick, and enough workspaces fit on a server for the e
 - 📏 **G9.6** Full save and resume meet the targets set in E0 · E0 · needs full_save, linux_bench · `BenchmarkFullSaveResume`
 - 📏 **G9.7** Seven workspaces fit on an 8 vCPU / 32 GiB server under agent-like load · E4 · needs linux_bench · `BenchmarkDensity`
 - ✅ **G9.8** A stopped workspace costs only its storage · E4 · needs full_save, in_process
+- 📂 **G9.9** Workspaces made from one template share it instead of copying it · E3
+  - ✅ **G9.9.1** A workspace made from a template takes disk only for its own changes · E3 · needs shared_templates
+  - ✅ **G9.9.2** Changes in one workspace never reach the template or another workspace · E3 · needs shared_templates, in_process
+  - ✅ **G9.9.3** Saves, resumes and copies of workspaces sharing a template restore exactly · E3 · needs shared_templates, in_process
+  - ⏳ **G9.9.4** A template's shared files stay while anything uses them and go after · E3 · needs shared_templates, in_process
+  - ✅ **G9.9.5** Workspaces sharing a template come back after an engine restart and after a host restart · E3 · needs shared_templates, in_process
+  - ⏳ **G9.9.6** A disk limit applies to a workspace's own changes · E3 · needs shared_templates, disk_limits
+  - ⏳ **G9.9.7** A crash while a template's shared files or a workspace on them are being built leaves nothing half-made · E3 · needs shared_templates, in_process
 
 ## G10 Easy to run and operate
 

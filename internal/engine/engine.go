@@ -85,6 +85,9 @@ type Config struct {
 	DiskMB int64
 	// NoDiskImages keeps new workspaces in plain folders, with no disk limit.
 	NoDiskImages bool
+	// NoSharedTemplates gives every workspace its own copy of its template
+	// instead of an overlay on one shared, read-only copy.
+	NoSharedTemplates bool
 	// MaxCommands is how many commands one workspace may run at once
 	// (DefaultMaxCommands if 0); more are refused with ErrBusy.
 	MaxCommands int
@@ -114,12 +117,15 @@ type Engine struct {
 	events *eventlog.Log // activity log (activity.go)
 	bases  baseState     // bases.go
 
-	mu       sync.Mutex
-	diskErr  error                // why new workspaces get no disk image; nil if they do
-	locks    map[string]*wsLock   // per workspace
-	activity map[string]time.Time // last use per workspace, for pausing idle ones
-	ops      chan struct{}        // slots for heavy operations
-	running  sync.Map             // workspace/session -> struct{}: sessions running a cell
+	mu      sync.Mutex
+	diskErr error // why new workspaces get no disk image; nil if they do
+	// overlayErr is why filesystems built on a base are copies rather than
+	// overlays on its shared root; nil if they are overlays.
+	overlayErr error
+	locks      map[string]*wsLock   // per workspace
+	activity   map[string]time.Time // last use per workspace, for pausing idle ones
+	ops        chan struct{}        // slots for heavy operations
+	running    sync.Map             // workspace/session -> struct{}: sessions running a cell
 
 	uploadKick   chan struct{}      // wakes the uploader
 	stopUploads  context.CancelFunc // ends it
@@ -259,6 +265,16 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if e.diskErr != nil {
 		e.log.Warn("workspace disk sizes are not enforced", "reason", e.diskErr.Error())
 	}
+	if cfg.NoSharedTemplates {
+		e.overlayErr = errors.New("shared templates switched off")
+	} else if err := os.MkdirAll(filepath.Join(cfg.DataDir, "workspaces"), 0o700); err != nil {
+		e.overlayErr = err
+	} else {
+		e.overlayErr = disk.OverlaySupported(filepath.Join(cfg.DataDir, "workspaces"))
+	}
+	if e.overlayErr != nil {
+		e.log.Info("each workspace gets its own copy of its template", "reason", e.overlayErr.Error())
+	}
 	if restore {
 		if err := e.reconcile(ctx); err != nil {
 			st.Close()
@@ -333,6 +349,7 @@ func (e *Engine) Counts(ctx context.Context) (*store.Counts, error) { return e.s
 func (e *Engine) Info() Info {
 	caps := e.cfg.Runtime.Capabilities()
 	caps.DiskLimits = e.diskErr == nil // enforced by the engine, whatever the runtime
+	caps.SharedTemplates = e.overlayErr == nil
 	return Info{
 		Runtime:        e.cfg.Runtime.Name(),
 		RuntimeVersion: e.cfg.Runtime.Version(),
@@ -1522,8 +1539,18 @@ func (e *Engine) extractSave(saveID string, m *save.Manifest, v volume, ws Spec)
 		return time.Time{}, err
 	}
 	var extracted time.Time
+	if m.Base != nil && e.overlayErr == nil {
+		if _, rerr := e.ensureRoot(m.Base.SHA256); rerr == nil {
+			v.lower = m.Base.SHA256 // the save's changes on the base's shared root
+		} else {
+			e.log.Warn("base cannot be shared; copying it", "base", m.Base.SHA256, "err", rerr)
+		}
+	}
 	err := v.prepare()
-	if err == nil && m.Base != nil {
+	if err == nil && v.lower != "" {
+		extracted = time.Now() // every file from the base is older than this
+		err = e.applyDelta(saveID, v.path)
+	} else if err == nil && m.Base != nil {
 		extracted, err = e.extractWithBase(saveID, m, v.path)
 	} else if err == nil {
 		err = untarFile(filepath.Join(e.saveDir(saveID), save.RootfsFile), v.path, save.UntarDir)
@@ -1556,6 +1583,11 @@ func (e *Engine) extractWithBase(saveID string, m *save.Manifest, dir string) (t
 		return time.Time{}, err
 	}
 	return save.ExtractWithBase(base, m.Base.Size, delta, di.Size(), dir)
+}
+
+// applyDelta applies a save's delta to dir, which holds its base.
+func (e *Engine) applyDelta(saveID, dir string) error {
+	return untarFile(filepath.Join(e.saveDir(saveID), save.DeltaFile), dir, save.ApplyDelta)
 }
 
 // untarFile extracts the tar at path into dir, its content bounded by its size.
