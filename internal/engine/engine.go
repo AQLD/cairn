@@ -1267,8 +1267,22 @@ func (e *Engine) saveForKey(ctx context.Context, key, workspaceID string) (*Save
 	return e.toSave(sv), nil
 }
 
-// readySave loads a save and verifies every byte before anything uses it.
+// readySave loads a save and verifies every byte before anything uses it,
+// and checks that this engine's runtime can restore it.
 func (e *Engine) readySave(ctx context.Context, saveID string) (*store.Save, *save.Manifest, error) {
+	sv, m, err := e.verifiedSave(ctx, saveID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if m.Kind == save.Full && m.Runtime != e.cfg.Runtime.Name() {
+		return nil, nil, fmt.Errorf("%w: full save made by runtime %q cannot restore on %q", ErrConflict, m.Runtime, e.cfg.Runtime.Name())
+	}
+	return sv, m, nil
+}
+
+// verifiedSave loads a ready save, fetching it from object storage if it is
+// not here, and verifies every byte of it and of its base.
+func (e *Engine) verifiedSave(ctx context.Context, saveID string) (*store.Save, *save.Manifest, error) {
 	sv, err := e.store.GetSave(ctx, saveID)
 	if err != nil {
 		return nil, nil, err
@@ -1310,9 +1324,6 @@ func (e *Engine) readySave(ctx context.Context, saveID string) (*store.Save, *sa
 			_ = e.store.SetSaveState(ctx, saveID, store.SaveCorrupt)
 		}
 		return nil, nil, err
-	}
-	if m.Kind == save.Full && m.Runtime != e.cfg.Runtime.Name() {
-		return nil, nil, fmt.Errorf("%w: full save made by runtime %q cannot restore on %q", ErrConflict, m.Runtime, e.cfg.Runtime.Name())
 	}
 	return sv, m, nil
 }

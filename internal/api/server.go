@@ -133,6 +133,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/workspaces/{id}/saves", s.createSave)
 	s.mux.HandleFunc("GET /v1/workspaces/{id}/saves", s.listSaves)
 	s.mux.HandleFunc("GET /v1/saves/{id}", s.getSave)
+	s.mux.HandleFunc("GET /v1/saves/{id}/diff", s.diffSave)
 	s.mux.HandleFunc("POST /v1/saves/{id}/resume", s.resume)
 	s.mux.HandleFunc("POST /v1/saves/{id}/copies", s.copySave)
 	s.mux.HandleFunc("DELETE /v1/saves/{id}", s.deleteSave)
@@ -292,6 +293,27 @@ func (s *Server) getSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, sv)
+}
+
+// diffSave lists the files that changed from ?from= (default: the save's
+// parent) to this save, at most ?limit= of them.
+func (s *Server) diffSave(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit := 0
+	if v := q.Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			writeError(w, http.StatusBadRequest, "invalid_argument", "limit must be a positive number")
+			return
+		}
+		limit = n
+	}
+	d, err := s.eng.DiffSaves(r.Context(), r.PathValue("id"), q.Get("from"), limit)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
 }
 
 func (s *Server) resume(w http.ResponseWriter, r *http.Request) {

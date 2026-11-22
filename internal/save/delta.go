@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -79,17 +80,29 @@ const modeBits = fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky
 // every path. Hard links get their target's entry: they are the same file.
 func BuildIndex(r io.Reader) (*Index, error) {
 	idx := &Index{Entries: map[string]IndexEntry{}}
+	return idx, readIndex(idx, r, false)
+}
+
+// readIndex records into idx the paths of the tar r. With overlay, r is a
+// delta applied to what idx already holds, as ApplyDelta applies it to a
+// folder: a whiteout removes a path and everything under it, and an entry
+// replaces what is there unless both are folders.
+func readIndex(idx *Index, r io.Reader, overlay bool) error {
 	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
-			return idx, nil
+			return nil
 		}
 		if err != nil {
-			return nil, err
+			return err
 		}
 		name := path.Clean(strings.TrimSuffix(hdr.Name, "/"))
 		if name == "." || path.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") {
+			continue
+		}
+		if overlay && hdr.PAXRecords[whiteoutKey] != "" {
+			removeTree(idx, name)
 			continue
 		}
 		e := IndexEntry{Mode: uint32(hdr.FileInfo().Mode() & modeBits), UID: hdr.Uid, GID: hdr.Gid, Mtime: hdr.ModTime.Unix()}
@@ -100,7 +113,7 @@ func BuildIndex(r io.Reader) (*Index, error) {
 			h := sha256.New()
 			n, err := io.Copy(h, tr)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			e.Type, e.Size, e.SHA256 = 'f', n, hex.EncodeToString(h.Sum(nil))
 		case tar.TypeSymlink:
@@ -114,8 +127,33 @@ func BuildIndex(r io.Reader) (*Index, error) {
 		default:
 			continue // not extracted (devices, fifos)
 		}
+		if old, ok := idx.Entries[name]; overlay && ok && !(old.Type == 'd' && e.Type == 'd') {
+			removeTree(idx, name)
+		}
 		idx.Entries[name] = e
 	}
+}
+
+// removeTree removes name and everything under it from idx.
+func removeTree(idx *Index, name string) {
+	delete(idx.Entries, name)
+	prefix := name + "/"
+	for p := range idx.Entries {
+		if strings.HasPrefix(p, prefix) {
+			delete(idx.Entries, p)
+		}
+	}
+}
+
+// IndexWithDelta returns the index of a save's filesystem stored as a delta
+// against base, without extracting it: base's paths with the delta applied.
+// base is not changed.
+func IndexWithDelta(base *Index, delta io.Reader) (*Index, error) {
+	idx := &Index{Entries: maps.Clone(base.Entries)}
+	if idx.Entries == nil {
+		idx.Entries = map[string]IndexEntry{}
+	}
+	return idx, readIndex(idx, delta, true)
 }
 
 // WriteIndex and ReadIndex store an index as JSON.

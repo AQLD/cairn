@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -169,6 +170,31 @@ type Save struct {
 	// Parent is the save the workspace's state came from when this one was
 	// made: a workspace's saves form a tree, and rewinding then saving branches.
 	Parent string `json:"parent,omitempty"`
+}
+
+// SaveDiff is what changed in the files from one save (From) to another (To).
+// Memory and processes are not compared.
+type SaveDiff struct {
+	From     string `json:"from"`
+	To       string `json:"to"`
+	Added    int    `json:"added"`
+	Modified int    `json:"modified"`
+	Removed  int    `json:"removed"`
+	// Changes lists changed paths, sorted, up to the limit asked for;
+	// Truncated says some were left out (the counts include them).
+	Changes   []Change `json:"changes"`
+	Truncated bool     `json:"truncated,omitempty"`
+}
+
+// Change is one path that differs between two saves. Change is "added",
+// "modified" or "removed"; Type is "file", "dir" or "symlink"; Size is a
+// file's size. A path is modified when its content, type, link target,
+// permissions or owner differ (not its modification time alone).
+type Change struct {
+	Path   string `json:"path"`
+	Change string `json:"change"`
+	Type   string `json:"type"`
+	Size   int64  `json:"size,omitempty"`
 }
 
 type Exec struct {
@@ -518,6 +544,25 @@ func (c *Client) UndeleteSave(ctx context.Context, id string) (*Save, error) {
 
 // VerifySave re-checks a save's checksums on the engine and returns its state:
 // "ready", or "corrupt" / "missing" if its files are damaged or gone.
+// DiffSaves lists the files added, modified and removed from save from to
+// save to. With from empty it compares with the save to came from (its
+// parent). limit caps the changes listed (0: the engine's default, 1000).
+func (c *Client) DiffSaves(ctx context.Context, to, from string, limit int) (*SaveDiff, error) {
+	q := url.Values{}
+	if from != "" {
+		q.Set("from", from)
+	}
+	if limit > 0 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	p := "/v1/saves/" + url.PathEscape(to) + "/diff"
+	if len(q) > 0 {
+		p += "?" + q.Encode()
+	}
+	var out SaveDiff
+	return &out, c.do(ctx, http.MethodGet, p, nil, &out)
+}
+
 func (c *Client) VerifySave(ctx context.Context, id string) (*Save, error) {
 	var out Save
 	return &out, c.do(ctx, http.MethodPost, "/v1/saves/"+url.PathEscape(id)+"/verify", nil, &out)
