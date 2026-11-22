@@ -1025,6 +1025,9 @@ func (e *Engine) buildSave(ctx context.Context, spec runtime.Spec, saveID string
 		if err := b.AddMemory(); err != nil {
 			return nil, err
 		}
+		if e.rootLayered(spec.ID) {
+			b.SetLayered() // restored onto the same kind of filesystem (see extractSave)
+		}
 	}
 
 	// the filesystem: a delta against the base it was extracted from, else whole
@@ -1539,9 +1542,19 @@ func (e *Engine) extractSave(saveID string, m *save.Manifest, v volume, ws Spec)
 		return time.Time{}, err
 	}
 	var extracted time.Time
-	if m.Base != nil && e.overlayErr == nil {
+	layer := m.Base != nil && e.overlayErr == nil
+	if m.Kind == save.Full {
+		// a checkpoint restores only onto the kind of filesystem it was taken on
+		if m.Layered && !layer {
+			return time.Time{}, fmt.Errorf("%w: this full save was made where workspaces share their template's files, which this server cannot do (%v); restore it on such a server, or restore a quick save", ErrConflict, e.overlayErr)
+		}
+		layer = m.Layered
+	}
+	if layer {
 		if _, rerr := e.ensureRoot(m.Base.SHA256); rerr == nil {
 			v.lower = m.Base.SHA256 // the save's changes on the base's shared root
+		} else if m.Layered {
+			return time.Time{}, fmt.Errorf("full save made on a layered filesystem: %w", rerr)
 		} else {
 			e.log.Warn("base cannot be shared; copying it", "base", m.Base.SHA256, "err", rerr)
 		}

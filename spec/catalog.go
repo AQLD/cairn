@@ -248,6 +248,7 @@ var Catalog = []Scenario{
 					{ID: "G9.9.5", Title: "Workspaces sharing a template come back after an engine restart and after a host restart", Proves: "With their mounts still there or all gone (as after a reboot), workspaces have every file and run commands.", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedInProcess}},
 					{ID: "G9.9.6", Title: "A disk limit applies to a workspace's own changes", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedDiskLimits}},
 					{ID: "G9.9.7", Title: "A crash while a template's shared files or a workspace on them are being built leaves nothing half-made", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedInProcess}},
+					{ID: "G9.9.8", Title: "Saves made before workspaces shared their template still restore, processes included", Proves: "A quick and a full save of a workspace that had its own copy of the template (an older engine, or sharing switched off) restore on an engine that shares templates: the files exactly, and the full save's processes with their pids.", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedFullSave, NeedPersistent, NeedInProcess}},
 				}},
 		},
 	},

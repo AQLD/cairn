@@ -30,9 +30,10 @@ import (
 )
 
 // FormatVersion is the newest version this package reads. A save is written
-// as version 2 only when it needs to be (it has a base), so saves of
-// workspaces without a template stay readable by engines that know only 1.
-const FormatVersion = 2
+// as the oldest version that can describe it: 2 when it has a base, 3 when it
+// is a full save of a layered filesystem, so other saves stay readable by
+// engines that know only older versions.
+const FormatVersion = 3
 
 const (
 	ManifestFile = "manifest.json"
@@ -82,6 +83,11 @@ type Manifest struct {
 	// Base is the template tar the filesystem delta (DeltaFile) applies to
 	// (format 2). Restoring needs it, verified, as well as the save's files.
 	Base *BaseRef `json:"base,omitempty"`
+	// Layered (format 3, full saves only) says the saved processes ran on a
+	// filesystem layered on the base (an overlay of its shared root). gVisor
+	// restores a checkpoint only onto the same kind of filesystem it was
+	// taken on, so a full save is restored layered exactly when this is set.
+	Layered bool `json:"layered,omitempty"`
 }
 
 // WorkspaceInfo is what a copy of a save needs to know about its workspace.
@@ -143,8 +149,15 @@ func (b *Builder) SetBase(base BaseRef) error {
 		return err
 	}
 	b.manifest.Base = &base
-	b.manifest.FormatVersion = 2
+	b.manifest.FormatVersion = max(b.manifest.FormatVersion, 2)
 	return nil
+}
+
+// SetLayered records that a full save's processes ran on a filesystem
+// layered on its base, which makes it a format 3 save.
+func (b *Builder) SetLayered() {
+	b.manifest.Layered = true
+	b.manifest.FormatVersion = 3
 }
 
 // Dir is the temporary folder, for runtimes that write files themselves
@@ -282,6 +295,9 @@ func ReadManifest(dir string) (*Manifest, error) {
 	}
 	if m.Base != nil && (m.FormatVersion < 2 || !m.has(DeltaFile)) {
 		return nil, fmt.Errorf("%w: a base without a filesystem delta", ErrCorrupt)
+	}
+	if m.Layered && (m.FormatVersion < 3 || m.Base == nil || m.Kind != Full) {
+		return nil, fmt.Errorf("%w: layered, but not a full save with a base", ErrCorrupt)
 	}
 	return &m, nil
 }
