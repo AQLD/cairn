@@ -44,6 +44,8 @@ func run() error {
 	initPath := flag.String("init", "", "path to cairn-init, process 1 of every runsc workspace (default: next to cairnd, then PATH)")
 	token := flag.String("token", os.Getenv("CAIRN_TOKEN"), "API token required on every request (env CAIRN_TOKEN)")
 	retention := flag.Duration("retention", engine.DefaultRetention, "how long deleted saves can be undeleted before they are purged")
+	keepSaves := flag.Int("keep-saves", engine.DefaultKeepSaves, "pruning keeps each workspace's newest N saves (0: no count limit)")
+	keepSavesFor := flag.Duration("keep-saves-for", engine.DefaultKeepSavesFor, "pruning keeps saves younger than this (0: no age limit); with both 0, nothing is pruned")
 	scrubEvery := flag.Duration("scrub-interval", 6*time.Hour, "how often to re-verify every save's checksums (0 disables)")
 	defaultTemplate := flag.String("default-template", "", "template for workspaces created without one")
 	idlePause := flag.Duration("idle-pause", 0, "pause workspaces unused this long: full save, memory freed, woken on next use (0 disables; needs runsc)")
@@ -98,7 +100,7 @@ func run() error {
 			return err
 		}
 	}
-	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, MaxCommands: *maxCommands, MaxOps: *maxOps, RestoreState: *restoreState, Objects: objects})
+	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, KeepSaves: offIfZero(*keepSaves), KeepSavesFor: time.Duration(offIfZero(int(*keepSavesFor))), DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, MaxCommands: *maxCommands, MaxOps: *maxOps, RestoreState: *restoreState, Objects: objects})
 	if err != nil {
 		return err
 	}
@@ -154,7 +156,8 @@ func run() error {
 		}()
 	}
 
-	// Purge deleted saves whose retention window has ended (also done at startup).
+	// Prune old saves by policy, then purge deleted saves whose retention
+	// window has ended (also done at startup).
 	go func() {
 		t := time.NewTicker(time.Hour)
 		defer t.Stop()
@@ -163,6 +166,9 @@ func run() error {
 			case <-ctx.Done():
 				return
 			case <-t.C:
+				if _, err := eng.Prune(ctx); err != nil {
+					log.Error("pruning saves failed", "err", err)
+				}
 				if _, err := eng.PurgeExpired(ctx); err != nil {
 					log.Error("purge failed", "err", err)
 				}
@@ -298,4 +304,13 @@ func findInit(flagValue string) (string, error) {
 		return p, nil
 	}
 	return "", errors.New("cairn-init not found: install it next to cairnd or pass --init (build it with `go build ./cmd/cairn-init`)")
+}
+
+// offIfZero maps a flag's 0 ("no limit") to the engine's "off" (negative):
+// the engine reads 0 as "use the default".
+func offIfZero(v int) int {
+	if v == 0 {
+		return -1
+	}
+	return v
 }
