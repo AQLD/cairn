@@ -288,6 +288,30 @@ class TestSaves(EngineTest):
         self.assertEqual(copies[1].read_file("note.txt"), b"saved")
         self.assertEqual(ws.read_file("note.txt"), b"saved")
 
+    def test_diff_lists_what_changed_between_saves(self):
+        ws = self.workspace("diff")
+        ws.write_file("keep.txt", "same")
+        ws.write_file("edit.txt", "before")
+        ws.write_file("gone.txt", "bye")
+        first = ws.save()
+        ws.write_file("edit.txt", "after")
+        ws.write_file("new.txt", "hello")
+        ws.run("rm", "gone.txt")
+        second = ws.save()
+        d = second.diff()  # against the save it came from
+        self.assertEqual(d.from_save, first.id)
+        self.assertEqual(d.to_save, second.id)
+        got = {(c.change, c.path.rsplit("/", 1)[-1]) for c in d.changes}
+        self.assertEqual(got, {("modified", "edit.txt"), ("added", "new.txt"), ("removed", "gone.txt")})
+        self.assertEqual((d.added, d.modified, d.removed), (1, 1, 1))
+        new = next(c for c in d.changes if c.path.endswith("new.txt"))
+        self.assertEqual((new.type, new.size), ("file", 5))
+        cut = self.c.diff_saves(second.id, first.id, limit=1)
+        self.assertTrue(cut.truncated)
+        self.assertEqual(len(cut.changes), 1)
+        with self.assertRaises(cairn.InvalidArgument):
+            first.diff()  # the first save came from nothing
+
     def test_retried_save_and_copy_return_the_first_result(self):
         ws = self.workspace("retries")
         a = ws.save(idempotency_key="sdk-save-key-1")
