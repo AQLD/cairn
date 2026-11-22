@@ -159,6 +159,8 @@ type Save struct {
 	// made (the one it was last saved, resumed or copied from): a workspace's
 	// saves form a tree, and rewinding then saving starts a branch.
 	Parent string `json:"parent,omitempty"`
+	// Pinned saves are kept by pruning, and delete refuses them until unpinned.
+	Pinned bool `json:"pinned,omitempty"`
 }
 
 // Info describes the engine and what its runtime can do.
@@ -1072,7 +1074,36 @@ func (e *Engine) DeleteSave(ctx context.Context, id string) error {
 	case store.SaveDeleted:
 		return nil
 	}
+	if sv.Pinned {
+		return fmt.Errorf("%w: save %s is pinned; unpin it first", ErrConflict, id)
+	}
 	return e.store.SoftDeleteSave(ctx, id, e.cfg.Now())
+}
+
+// PinSave pins (or with pinned false, unpins) a save: pruning keeps a pinned
+// save, and delete refuses it. Pinning a pinned save does nothing.
+func (e *Engine) PinSave(ctx context.Context, id string, pinned bool) (*Save, error) {
+	sv, err := e.store.GetSave(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if sv.Auto {
+		return nil, errAutoSave(id)
+	}
+	switch sv.State {
+	case store.SavePending:
+		return nil, ErrNotFound
+	case store.SaveDeleted:
+		if pinned {
+			return nil, fmt.Errorf("%w: save %s is deleted; undelete it first", ErrConflict, id)
+		}
+	}
+	if sv.Pinned != pinned {
+		if err := e.store.SetPinned(ctx, id, pinned); err != nil {
+			return nil, err
+		}
+	}
+	return e.GetSave(ctx, id)
 }
 
 // UndeleteSave brings back a deleted save within its retention window.
@@ -1835,7 +1866,7 @@ func toWorkspace(w *store.Workspace) (*Workspace, error) {
 }
 
 func (e *Engine) toSave(sv *store.Save) *Save {
-	out := &Save{ID: sv.ID, WorkspaceID: sv.WorkspaceID, Kind: save.Kind(sv.Kind), State: sv.State, Size: sv.Size, CreatedAt: sv.CreatedAt, Auto: sv.Auto, Uploaded: sv.Uploaded, Parent: sv.Parent}
+	out := &Save{ID: sv.ID, WorkspaceID: sv.WorkspaceID, Kind: save.Kind(sv.Kind), State: sv.State, Size: sv.Size, CreatedAt: sv.CreatedAt, Auto: sv.Auto, Uploaded: sv.Uploaded, Parent: sv.Parent, Pinned: sv.Pinned}
 	if !sv.DeletedAt.IsZero() {
 		d, p := sv.DeletedAt, sv.DeletedAt.Add(e.cfg.Retention)
 		out.DeletedAt, out.PurgeAfter = &d, &p

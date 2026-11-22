@@ -77,6 +77,7 @@ type Save struct {
 	Auto        bool      `json:"auto"`       // made by the engine (pausing), not by a caller
 	Uploaded    bool      `json:"uploaded"`   // a complete copy is in object storage
 	Parent      string    `json:"parent"`     // the save the workspace's state came from when this one was made
+	Pinned      bool      `json:"pinned"`     // kept by pruning and refused by delete until unpinned
 }
 
 type Store struct{ db *sql.DB }
@@ -137,11 +138,15 @@ ALTER TABLE workspaces ADD COLUMN base_save TEXT NOT NULL DEFAULT '';
 ALTER TABLE saves ADD COLUMN parent TEXT NOT NULL DEFAULT '';
 UPDATE workspaces SET base_save = source_save;
 `,
+	// 7: pinned saves, which pruning keeps and delete refuses
+	`
+ALTER TABLE saves ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+`,
 }
 
 const (
 	workspaceCols = `id, name, state, spec, source_save, paused_save, base_save, created_at, updated_at`
-	saveCols      = `id, workspace_id, kind, state, size, created_at, deleted_at, auto, uploaded, parent`
+	saveCols      = `id, workspace_id, kind, state, size, created_at, deleted_at, auto, uploaded, parent, pinned`
 )
 
 // SchemaVersion is the schema this engine writes.
@@ -474,6 +479,12 @@ func (s *Store) SoftDeleteSave(ctx context.Context, id string, t time.Time) erro
 	return err
 }
 
+// SetPinned pins or unpins a save.
+func (s *Store) SetPinned(ctx context.Context, id string, pinned bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE saves SET pinned = ? WHERE id = ?`, pinned, id)
+	return err
+}
+
 // RestoreSave brings a deleted save back to ready.
 func (s *Store) RestoreSave(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE saves SET state = ?, deleted_at = 0 WHERE id = ?`, SaveReady, id)
@@ -548,7 +559,7 @@ func scanWorkspace(r scanner) (*Workspace, error) {
 func scanSave(r scanner) (*Save, error) {
 	var sv Save
 	var created, deleted int64
-	if err := r.Scan(&sv.ID, &sv.WorkspaceID, &sv.Kind, &sv.State, &sv.Size, &created, &deleted, &sv.Auto, &sv.Uploaded, &sv.Parent); err != nil {
+	if err := r.Scan(&sv.ID, &sv.WorkspaceID, &sv.Kind, &sv.State, &sv.Size, &created, &deleted, &sv.Auto, &sv.Uploaded, &sv.Parent, &sv.Pinned); err != nil {
 		return nil, err
 	}
 	sv.CreatedAt = time.Unix(0, created).UTC()

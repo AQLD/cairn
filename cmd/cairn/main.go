@@ -15,6 +15,7 @@
 //	cairn copy SAVE [--count N]
 //	cairn rm-save SAVE
 //	cairn undelete SAVE
+//	cairn pin SAVE | unpin SAVE
 //	cairn log WORKSPACE [-f] [-n N] [--kind K] [-v] [--json]
 //	cairn rm WORKSPACE
 //	cairn info
@@ -83,6 +84,7 @@ commands:
   verify SAVE                             re-check a save's checksums now
   rm-save SAVE                            delete a save (recoverable for the retention window)
   undelete SAVE                           bring back a deleted save
+  pin SAVE | unpin SAVE                   keep a save from pruning and deletion, or stop keeping it
   pause WORKSPACE                         free its memory now; the next command wakes it
   log WORKSPACE [-f] [-n N] [--kind K] [-v] [--json]
                                           what was done in it: commands, files, saves, sessions
@@ -295,9 +297,13 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 			return 1, err
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tKIND\tSTATE\tSIZE\tCREATED")
+		fmt.Fprintln(tw, "ID\tKIND\tSTATE\tSIZE\tCREATED\tPINNED")
 		for _, s := range svs {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", s.ID, s.Kind, s.State, s.Size, s.CreatedAt.Local().Format(time.DateTime))
+			pinned := ""
+			if s.Pinned {
+				pinned = "yes"
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\n", s.ID, s.Kind, s.State, s.Size, s.CreatedAt.Local().Format(time.DateTime), pinned)
 		}
 		return 0, tw.Flush()
 
@@ -482,6 +488,24 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 			return 1, err
 		}
 		fmt.Println(sv.ID, sv.State)
+
+	case "pin", "unpin":
+		if len(args) != 1 {
+			return 2, fmt.Errorf("usage: cairn %s SAVE", cmd)
+		}
+		pin := c.PinSave
+		if cmd == "unpin" {
+			pin = c.UnpinSave
+		}
+		sv, err := pin(ctx, args[0])
+		if err != nil {
+			return 1, err
+		}
+		state := "unpinned"
+		if sv.Pinned {
+			state = "pinned"
+		}
+		fmt.Println(sv.ID, state)
 
 	case "log":
 		return runLog(ctx, c, args)
