@@ -10,6 +10,7 @@
 //	cairn get WORKSPACE REMOTE_PATH [LOCAL_FILE]
 //	cairn save WORKSPACE [--full [--stop]]
 //	cairn saves WORKSPACE
+//	cairn diff SAVE [--from SAVE] [--limit N] [--json]
 //	cairn resume SAVE
 //	cairn copy SAVE [--count N]
 //	cairn rm-save SAVE
@@ -74,6 +75,9 @@ commands:
   save WORKSPACE [--full [--stop]]        save files (quick); --full adds memory and running processes
                                           and keeps the workspace running (--stop: leave it stopped)
   saves WORKSPACE                         list a workspace's saves
+  diff SAVE [--from SAVE] [--limit N] [--json]
+                                          files added (A), modified (M) and removed (D) since
+                                          the save it came from, or since --from
   resume SAVE                             restore a workspace to a save
   copy SAVE [--count N]                   make workspaces from a save
   verify SAVE                             re-check a save's checksums now
@@ -296,6 +300,38 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", s.ID, s.Kind, s.State, s.Size, s.CreatedAt.Local().Format(time.DateTime))
 		}
 		return 0, tw.Flush()
+
+	case "diff":
+		fs := flag.NewFlagSet("diff", flag.ContinueOnError)
+		from := fs.String("from", "", "compare with this save instead of the one it came from")
+		limit := fs.Int("limit", 0, "list at most N changes (default 1000)")
+		asJSON := fs.Bool("json", false, "print the engine's JSON")
+		to, rest := splitID(args)
+		if err := fs.Parse(rest); err != nil || to == "" || fs.NArg() != 0 {
+			return 2, errors.New("usage: cairn diff SAVE [--from SAVE] [--limit N] [--json]")
+		}
+		d, err := c.DiffSaves(ctx, to, *from, *limit)
+		if err != nil {
+			return 1, err
+		}
+		if *asJSON {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			return 0, enc.Encode(d)
+		}
+		mark := map[string]string{"added": "A", "modified": "M", "removed": "D"}
+		for _, ch := range d.Changes {
+			suffix := ""
+			if ch.Type == "dir" {
+				suffix = "/"
+			}
+			fmt.Printf("%s %s%s\n", mark[ch.Change], ch.Path, suffix)
+		}
+		more := ""
+		if d.Truncated {
+			more = fmt.Sprintf("; %d listed, --limit for more", len(d.Changes))
+		}
+		fmt.Fprintf(os.Stderr, "%d added, %d modified, %d removed since %s%s\n", d.Added, d.Modified, d.Removed, d.From, more)
 
 	case "resume":
 		if len(args) != 1 {

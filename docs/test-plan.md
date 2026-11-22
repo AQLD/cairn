@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 81 | 11 | 2 |
+| E3 | 85 | 10 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -22,7 +22,7 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 
 | Journey | For | Steps proven | Steps unblocked | Capability scenarios still pending |
 | --- | --- | --- | --- | --- |
-| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 7 of 9 | 7 of 9 | 4 |
+| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 7 of 9 | 7 of 9 | 3 |
 | [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 5 of 6 | 5 of 6 | 1 |
 | [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 3 of 6 | 3 of 6 | 3 |
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 3 of 5 | 4 of 5 | 1 |
@@ -43,7 +43,7 @@ An agent sets up a repository, works on it across days, tries fixes in parallel 
 - ✅ **G11.4** Stops for the night at no compute cost and carries on next day with the dev server running · E3 · needs python, full_save, persistent_processes · uses G4.1 ✅, G4.2 ✅, G1.8.1 ✅, G1.8.2 ✅
 - ✅ **G11.5** Tries three fixes in parallel and keeps the one whose tests pass · E3 · needs python · uses G2.1 ✅, G2.2 ✅, G2.7 ✅
 - ✅ **G11.6** Undoes a destructive command by rewinding one step · E3 · needs python, full_save, persistent_processes · uses G18.3 ✅
-- ⏳ **G11.7** A person reviews what changed and takes over · E4 · uses G1.4 ✅, G18.4 ⏳, G19.3 ⏳
+- ⏳ **G11.7** A person reviews what changed and takes over · E4 · uses G1.4 ✅, G18.4 ✅, G19.3 ⏳
 
 ## G12 A data agent analyses private data across sessions
 
@@ -350,7 +350,11 @@ An agent's computer keeps a tree of its past states, cheap enough to checkpoint 
 - 📏 **G18.1** A checkpoint after a small step stores only what changed · E3 · `BenchmarkStepCheckpoint`
 - ✅ **G18.2** Every save records the save it came from · E3
 - ✅ **G18.3** Rewinding returns the workspace to an earlier step, running processes included · E3 · needs full_save, persistent_processes
-- ⏳ **G18.4** The files changed between two saves can be listed · E3
+- 📂 **G18.4** The files changed between two saves can be listed · E3
+  - ✅ **G18.4.1** A diff names every file added, modified and removed between two saves · E3
+  - ✅ **G18.4.2** A diff compares with the save it came from unless told otherwise · E3
+  - ✅ **G18.4.3** Saves of templated workspaces diff the same, read from their deltas · E3
+  - ✅ **G18.4.4** A long diff is cut at the limit asked for, with full counts · E3
 - ⏳ **G18.5** Old steps are pruned by policy while pinned steps are kept · E3
 - ✅ **G18.6** A copy can start from any earlier step · E3
 - 📂 **G18.7** A full save can keep the workspace running · E3
