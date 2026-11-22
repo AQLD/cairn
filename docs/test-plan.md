@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 91 | 9 | 2 |
+| E3 | 92 | 9 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -247,6 +247,7 @@ Every save either restores exactly or is refused with a clear error. Gate: **E2*
   - ✅ **G6.12.7** A file a restore wrote is never mistaken for base content by the next save · E3
   - ✅ **G6.12.8** A base that cannot be fetched now is not mistaken for a damaged save · E3 · needs in_process
   - ✅ **G6.12.9** A base's index is never trusted unchecked · E3 · needs in_process
+  - ✅ **G6.12.10** A base used within the last hour is kept even when nothing refers to it · E3 · needs in_process
 
 ## G7 The engine survives crashes and lost servers
 
