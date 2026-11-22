@@ -264,6 +264,8 @@ func (e *Env) has(n spec.Need) (bool, string) {
 		return caps.NetworkControl, "runtime " + e.Info.Runtime + " cannot control networking"
 	case spec.NeedPersistent:
 		return caps.PersistentProcesses, "runtime " + e.Info.Runtime + " does not keep processes between commands"
+	case spec.NeedSharedTemplates:
+		return caps.SharedTemplates, "this engine copies templates into each workspace (needs Linux, root and overlayfs)"
 	case spec.NeedInProcess:
 		return e.Engine != nil, "running against CAIRN_ENDPOINT"
 	case spec.NeedPython:

@@ -36,12 +36,13 @@ type Need string
 
 const (
 	// Runtime capabilities, as reported by GET /v1/info.
-	NeedIsolation      Need = "isolation"
-	NeedFullSave       Need = "full_save"
-	NeedResourceLimits Need = "resource_limits" // CPU, memory, process count
-	NeedDiskLimits     Need = "disk_limits"
-	NeedNetworkControl Need = "network_control"
-	NeedPersistent     Need = "persistent_processes"
+	NeedIsolation       Need = "isolation"
+	NeedFullSave        Need = "full_save"
+	NeedResourceLimits  Need = "resource_limits" // CPU, memory, process count
+	NeedDiskLimits      Need = "disk_limits"
+	NeedNetworkControl  Need = "network_control"
+	NeedPersistent      Need = "persistent_processes"
+	NeedSharedTemplates Need = "shared_templates" // workspaces overlay one shared copy of their template (Linux, root, overlayfs)
 
 	// Test environment features.
 	NeedInProcess     Need = "in_process"     // the test controls the engine (restart, failpoints, disk access)
