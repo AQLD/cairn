@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 29 | 1 | 1 |
-| E3 | 96 | 12 | 2 |
+| E3 | 97 | 12 | 2 |
 | E4 | 8 | 23 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -309,6 +309,7 @@ Save, resume and copy are quick, and enough workspaces fit on a server for the e
   - ✅ **G9.9.5** Workspaces sharing a template come back after an engine restart and after a host restart · E3 · needs shared_templates, in_process
   - ⏳ **G9.9.6** A disk limit applies to a workspace's own changes · E3 · needs shared_templates, disk_limits
   - ⏳ **G9.9.7** A crash while a template's shared files or a workspace on them are being built leaves nothing half-made · E3 · needs shared_templates, in_process
+  - ✅ **G9.9.8** Saves made before workspaces shared their template still restore, processes included · E3 · needs shared_templates, full_save, persistent_processes, in_process
 
 ## G10 Easy to run and operate
 

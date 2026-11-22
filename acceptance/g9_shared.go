@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/AQLD/cairn/internal/engine"
+
 	"github.com/AQLD/cairn/client"
 	"github.com/AQLD/cairn/internal/disk"
 )
@@ -129,5 +131,26 @@ func init() {
 		e.start()
 		sameListing(e, "after the mounts were lost", fsListing(e, ws.ID), want)
 		Equal(e, "commands run", e.Sh(ws.ID, `cat `+deltaDir+`/lib/new.txt`), "new\n")
+	})
+
+	register("G9.9.8", func(e *Env) {
+		e.RestartWith(func(c *engine.Config) { c.NoSharedTemplates = true })
+		deltaTemplate(e, "shared-old")
+		ws := templatedWorkspace(e, "shared-old", "old")
+		e.Sh(ws.ID, agentEdits)
+		pid := sleeper(e, ws.ID, "old")
+		want := templateFiles(e, ws.ID)
+		quick := e.Save(ws.ID)
+		full, err := e.C.Save(e.Ctx, ws.ID, client.FullSave)
+		e.Must(err)
+
+		e.RestartWith(func(c *engine.Config) { c.NoSharedTemplates = false })
+		if _, err := e.Engine.Resume(e.Ctx, full.ID); err != nil {
+			e.T.Fatalf("full save from before sharing: %v", err)
+		}
+		Equal(e, "process of the full save", alive(e, ws.ID, pid), true)
+		sameListing(e, "files of the full save", templateFiles(e, ws.ID), want)
+		e.Resume(quick.ID)
+		sameListing(e, "files of the quick save", templateFiles(e, ws.ID), want)
 	})
 }

@@ -289,6 +289,12 @@ func (e *Engine) VolumeFree() (uint64, error) { return freeBytes(e.cfg.DataDir) 
 
 // --- layered filesystems ---
 
+// rootLayered reports whether a workspace's live filesystem is layered.
+func (e *Engine) rootLayered(id string) bool {
+	_, err := os.Stat(filepath.Join(e.workspaceDir(id), "rootfs.layer"))
+	return err == nil
+}
+
 func (v volume) baseRoot(sha string) string { return filepath.Join(v.basesDir, sha+".root") }
 
 // prepareLayered creates an empty layer on base v.lower and mounts the
