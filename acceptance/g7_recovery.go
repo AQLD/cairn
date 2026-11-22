@@ -1,8 +1,10 @@
 package acceptance
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/AQLD/cairn/client"
 	"github.com/AQLD/cairn/internal/failpoint"
@@ -122,4 +124,58 @@ func assertNoSwapLeftovers(e *Env, id string) {
 			e.T.Fatalf("%s left behind", name)
 		}
 	}
+
+}
+
+func init() {
+	register("G7.15", func(e *Env) {
+		srv := withObjectStore(e)
+		t := deltaTemplate(e, "hang")
+		basePath := filepath.Join(e.DataDir, "bases", t.SHA256+".tar")
+		ws := templatedWorkspace(e, "hang", "hang")
+		e.Sh(ws.ID, agentEdits)
+		e.Save(ws.ID)
+		e.Must(e.Engine.SyncRemote(e.Ctx))
+
+		// a save committed just before a crash; then the base is lost here
+		// and every request to the store hangs
+		e.Failpoints.Enable(failpoint.SaveAfterCommit, failpoint.ErrCrash)
+		if _, err := e.C.Save(e.Ctx, ws.ID, client.QuickSave); err == nil {
+			e.T.Fatal("save reported success despite the crash")
+		}
+		e.Must(os.Remove(basePath))
+		release := make(chan struct{})
+		srv.SetFail(func(*http.Request) bool { <-release; return true })
+		hanging := true
+		unhang := func() {
+			if hanging {
+				srv.SetFail(nil)
+				close(release)
+				hanging = false
+			}
+		}
+		defer unhang()
+
+		start := time.Now()
+		e.Restart()
+		if took := time.Since(start); took > 15*time.Second {
+			e.T.Fatalf("restart took %s with the store hanging: recovery waited on it", took)
+		}
+		saves, err := e.C.ListSaves(e.Ctx, ws.ID)
+		e.Must(err)
+		var crashed string
+		for _, sv := range saves {
+			if sv.State == "missing" {
+				crashed = sv.ID
+			}
+		}
+		if crashed == "" {
+			e.T.Fatalf("the save committed before the crash is not kept as missing: %+v", saves)
+		}
+
+		unhang()
+		fixed, err := e.C.VerifySave(e.Ctx, crashed)
+		e.Must(err)
+		Equal(e, "after the store answers again", fixed.State, "ready")
+	})
 }

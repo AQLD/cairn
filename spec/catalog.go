@@ -206,6 +206,7 @@ var Catalog = []Scenario{
 			{ID: "G7.12", Title: "A power cut mid-operation loses nothing acknowledged", Proves: "Everything the engine acknowledged was on disk, not just in memory.", Milestone: E2},
 			{ID: "G7.13", Title: "A flood of requests is refused or queued, never fails or takes the engine down", Proves: "One caller's burst cannot exhaust the host or starve other workspaces.", Milestone: E1, Needs: []Need{NeedInProcess}},
 			{ID: "G7.14", Title: "A crash around a restore never makes a later save miss a change", Proves: "Which base a workspace's files came from is recorded only once they are in place; after a crash before or after the swap, the next save still captures every change (it reads more files, never fewer).", Milestone: E3, Needs: []Need{NeedInProcess}},
+			{ID: "G7.15", Title: "Recovery never waits on object storage", Proves: "With the store hanging, an engine restarting after a crash is up within seconds: a save committed before the crash whose base is not here is kept as missing (never fetched during recovery) and becomes ready once the store answers again.", Milestone: E3, Needs: []Need{NeedInProcess}},
 			{ID: "G7.7", Title: "A lost server's workspaces resume elsewhere from their last save", Proves: "Losing a server loses at most the work since the last save.", Milestone: E5, Needs: []Need{NeedInProcess}},
 			{ID: "G7.8", Title: "A workspace never runs on two servers at once", Proves: "Leases and fencing hold under partitions and slow servers.", Milestone: E5, Needs: []Need{NeedMultiServer}},
 		},
