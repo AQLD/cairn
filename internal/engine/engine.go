@@ -85,9 +85,12 @@ type Config struct {
 	DiskMB int64
 	// NoDiskImages keeps new workspaces in plain folders, with no disk limit.
 	NoDiskImages bool
-	// NoSharedTemplates gives every workspace its own copy of its template
-	// instead of an overlay on one shared, read-only copy.
-	NoSharedTemplates bool
+	// SharedTemplates makes workspaces share one read-only copy of their
+	// template (an overlay on its base's root) instead of each getting its
+	// own copy, where the host supports it. Off by default: on Linux 7.0,
+	// overlayfs does not report a write that fails underneath it (a full
+	// host volume under a sparse layer image) to the program's fsync.
+	SharedTemplates bool
 	// MaxCommands is how many commands one workspace may run at once
 	// (DefaultMaxCommands if 0); more are refused with ErrBusy.
 	MaxCommands int
@@ -265,8 +268,8 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if e.diskErr != nil {
 		e.log.Warn("workspace disk sizes are not enforced", "reason", e.diskErr.Error())
 	}
-	if cfg.NoSharedTemplates {
-		e.overlayErr = errors.New("shared templates switched off")
+	if !cfg.SharedTemplates {
+		e.overlayErr = errors.New("shared templates not switched on (cairnd --shared-templates)")
 	} else if err := os.MkdirAll(filepath.Join(cfg.DataDir, "workspaces"), 0o700); err != nil {
 		e.overlayErr = err
 	} else {

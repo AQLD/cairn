@@ -41,6 +41,13 @@ func templateFiles(e *Env, ws string) map[string]string {
 	return out
 }
 
+// shareTemplates restarts the engine with shared templates switched on
+// (they are off by default; see engine.Config.SharedTemplates).
+func shareTemplates(e *Env) {
+	e.T.Helper()
+	e.RestartWith(func(c *engine.Config) { c.SharedTemplates = true })
+}
+
 // ownBytes is the disk a workspace takes of its own, as the engine reports.
 func ownBytes(e *Env, ws string) int64 {
 	e.T.Helper()
@@ -57,6 +64,7 @@ func ownBytes(e *Env, ws string) int64 {
 
 func init() {
 	register("G9.9.1", func(e *Env) {
+		shareTemplates(e)
 		t := deltaTemplateWith(e, "shared", sharedExtra)
 		var wss []*client.Workspace
 		for _, n := range []string{"one", "two", "three"} {
@@ -75,6 +83,7 @@ func init() {
 	})
 
 	register("G9.9.2", func(e *Env) {
+		shareTemplates(e)
 		deltaTemplate(e, "shared-iso")
 		a := templatedWorkspace(e, "shared-iso", "a")
 		b := templatedWorkspace(e, "shared-iso", "b")
@@ -90,6 +99,7 @@ func init() {
 	})
 
 	register("G9.9.3", func(e *Env) {
+		shareTemplates(e)
 		t := deltaTemplateWith(e, "shared-saves", sharedExtra)
 		ws := templatedWorkspace(e, "shared-saves", "work")
 		e.Sh(ws.ID, agentEdits)
@@ -114,6 +124,7 @@ func init() {
 	})
 
 	register("G9.9.5", func(e *Env) {
+		shareTemplates(e)
 		deltaTemplate(e, "shared-boot")
 		ws := templatedWorkspace(e, "shared-boot", "boot")
 		e.Sh(ws.ID, agentEdits)
@@ -134,7 +145,7 @@ func init() {
 	})
 
 	register("G9.9.8", func(e *Env) {
-		e.RestartWith(func(c *engine.Config) { c.NoSharedTemplates = true })
+		e.RestartWith(func(c *engine.Config) { c.SharedTemplates = false })
 		deltaTemplate(e, "shared-old")
 		ws := templatedWorkspace(e, "shared-old", "old")
 		e.Sh(ws.ID, agentEdits)
@@ -144,7 +155,7 @@ func init() {
 		full, err := e.C.Save(e.Ctx, ws.ID, client.FullSave)
 		e.Must(err)
 
-		e.RestartWith(func(c *engine.Config) { c.NoSharedTemplates = false })
+		shareTemplates(e)
 		if _, err := e.Engine.Resume(e.Ctx, full.ID); err != nil {
 			e.T.Fatalf("full save from before sharing: %v", err)
 		}

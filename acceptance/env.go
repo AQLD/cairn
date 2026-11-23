@@ -265,7 +265,12 @@ func (e *Env) has(n spec.Need) (bool, string) {
 	case spec.NeedPersistent:
 		return caps.PersistentProcesses, "runtime " + e.Info.Runtime + " does not keep processes between commands"
 	case spec.NeedSharedTemplates:
-		return caps.SharedTemplates, "this engine copies templates into each workspace (needs Linux, root and overlayfs)"
+		// switched on per scenario (shareTemplates); here: can this host do it
+		if e.Engine == nil {
+			return false, "shared templates are switched on in-process"
+		}
+		err := disk.OverlaySupported(e.DataDir)
+		return err == nil, fmt.Sprintf("this host cannot share templates: %v", err)
 	case spec.NeedInProcess:
 		return e.Engine != nil, "running against CAIRN_ENDPOINT"
 	case spec.NeedPython:
