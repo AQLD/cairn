@@ -274,6 +274,11 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 		e.overlayErr = err
 	} else {
 		e.overlayErr = disk.OverlaySupported(filepath.Join(cfg.DataDir, "workspaces"))
+		if e.overlayErr == nil {
+			// a kernel whose overlayfs hides failed writes from fsync would lose
+			// a workspace's data silently when its host volume fills
+			e.overlayErr = disk.OverlayReportsWriteErrors(filepath.Join(cfg.DataDir, "workspaces"))
+		}
 	}
 	if e.overlayErr != nil {
 		e.log.Info("each workspace gets its own copy of its template", "reason", e.overlayErr.Error())

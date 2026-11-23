@@ -1,13 +1,15 @@
 package acceptance
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"github.com/AQLD/cairn/internal/engine"
-
 	"github.com/AQLD/cairn/client"
 	"github.com/AQLD/cairn/internal/disk"
+	"github.com/AQLD/cairn/internal/engine"
 )
 
 // G9.9: workspaces made from one template share one read-only copy of it and
@@ -163,5 +165,57 @@ func init() {
 		sameListing(e, "files of the full save", templateFiles(e, ws.ID), want)
 		e.Resume(quick.ID)
 		sameListing(e, "files of the quick save", templateFiles(e, ws.ID), want)
+	})
+
+	register("G9.9.9", func(e *Env) {
+		if _, err := exec.LookPath("mkfs.ext4"); err != nil {
+			e.T.Skip("needs mkfs.ext4")
+		}
+		deltaTemplate(e, "shared-full")
+		// the engine's data on a small volume of its own, as G6.4.3
+		vol := e.T.TempDir()
+		img, mnt := filepath.Join(vol, "volume.img"), filepath.Join(vol, "data")
+		e.Must(os.Mkdir(mnt, 0o700))
+		run(e, "truncate", "-s", fmt.Sprintf("%dM", fullVolumeMB), img)
+		run(e, "mkfs.ext4", "-q", "-F", "-m", "0", img)
+		run(e, "mount", "-o", "loop", img, mnt)
+		e.T.Cleanup(func() {
+			unmountAll(mnt)
+			_ = exec.Command("umount", "-l", mnt).Run()
+		})
+		tmplTar := filepath.Join(e.DataDir, "templates", "shared-full", "rootfs.tar")
+		e.stop()
+		orig := e.DataDir
+		e.T.Cleanup(func() { unmountAll(orig) })
+		e.DataDir = mnt
+		e.configure = func(c *engine.Config) { c.MinFreeBytes = 64 << 20; c.SharedTemplates = true }
+		e.start()
+		defer func() { e.configure = nil }()
+		f, err := os.Open(tmplTar)
+		e.Must(err)
+		_, err = e.C.ImportTemplate(e.Ctx, "shared-full", f)
+		f.Close()
+		e.Must(err)
+
+		info, err := e.C.Info(e.Ctx)
+		e.Must(err)
+		ws, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "full", Template: "shared-full", Limits: client.Limits{DiskMB: 1024}})
+		e.Must(err)
+		_, layerErr := os.Stat(filepath.Join(mnt, "workspaces", ws.ID, "rootfs.layer"))
+		if info.Capabilities.SharedTemplates != (layerErr == nil) {
+			e.T.Fatalf("engine says shared templates %v, but the workspace is layered: %v", info.Capabilities.SharedTemplates, layerErr == nil)
+		}
+		if !info.Capabilities.SharedTemplates {
+			e.T.Log("this kernel would hide failed writes from fsync on a shared template: the engine copies templates instead")
+		}
+
+		run(e, "sh", "-c", "dd if=/dev/zero of="+filepath.Join(mnt, "filler")+" bs=1M 2>/dev/null; sync; true")
+		res, err := e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"sh", "-c", "dd if=/dev/urandom of=" + deltaDir + "/inside.bin bs=1M count=64 conv=fsync"}, TimeoutMS: 60_000})
+		if err != nil {
+			e.ErrCode(err, "insufficient_storage")
+		} else if res.ExitCode == 0 {
+			e.T.Fatalf("a 64 MB write with fsync succeeded on a full volume (shared templates %v)", info.Capabilities.SharedTemplates)
+		}
+		e.Must(os.Remove(filepath.Join(mnt, "filler")))
 	})
 }
