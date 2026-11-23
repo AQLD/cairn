@@ -137,6 +137,7 @@ func (e *Engine) importTemplate(ctx context.Context, name string, r io.Reader, s
 	} else if _, err := e.baseIndex(t.SHA256); err != nil {
 		e.log.Warn("could not index base", "template", name, "err", err)
 	}
+	e.dropWarm(ctx, name) // warm workspaces of the old content
 	return &t, nil
 }
 
@@ -179,14 +180,18 @@ func (e *Engine) ListTemplates(ctx context.Context) ([]Template, error) {
 	return out, nil
 }
 
-func (e *Engine) DeleteTemplate(_ context.Context, name string) error {
+func (e *Engine) DeleteTemplate(ctx context.Context, name string) error {
 	if !templateName.MatchString(name) {
 		return fmt.Errorf("%w: template %q", ErrNotFound, name)
 	}
 	if _, err := os.Stat(e.templateDir(name)); errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("%w: template %q", ErrNotFound, name)
 	}
-	return os.RemoveAll(e.templateDir(name))
+	if err := os.RemoveAll(e.templateDir(name)); err != nil {
+		return err
+	}
+	e.dropWarm(ctx, name)
+	return nil
 }
 
 // createRootfs gives a new workspace its filesystem: empty, or a copy of a
