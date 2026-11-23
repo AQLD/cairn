@@ -51,7 +51,7 @@ The entry launches the absolute path of the `cairn` binary you ran, so desktop a
 | `write_file`, `read_file` | One file at a time. |
 | `push_dir`, `pull_dir` | A whole folder between your machine and the workspace (your project in, the finished work out), merging with what is there. |
 | `session_run` | Python or shell code in an interpreter that stays alive, like a notebook. |
-| `save` | Saves the workspace. `full=true` also keeps memory and running processes; the workspace carries on at once. |
+| `save` | Saves the workspace. `full=true` also keeps memory and running processes; the workspace carries on at once. `pin=true` keeps the save however old it gets (the engine prunes old saves beyond the newest 20 and older than 7 days). |
 | `rewind` | Puts the workspace back exactly as it was at a save, running processes included for full saves. |
 | `copy` | New, independent workspaces from a save, to try approaches in parallel. |
 | `list_saves` | A workspace's saves, each with the save it came from. |

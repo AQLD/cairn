@@ -258,11 +258,13 @@ func init() {
 		InputSchema: props(nil, map[string][2]string{
 			"workspace": {"string", wsArg},
 			"full":      {"boolean", "Also save memory and running processes. Default false (files only)."},
+			"pin":       {"boolean", "Keep this save however old it gets. The engine deletes old saves (beyond the newest 20 and older than 7 days); pin milestones you may want to come back to much later. Default false."},
 		}),
 		run: func(ctx context.Context, s *Server, args json.RawMessage) (toolResult, error) {
 			var a struct {
 				Workspace string `json:"workspace"`
 				Full      bool   `json:"full"`
+				Pin       bool   `json:"pin"`
 			}
 			if err := decode(args, &a); err != nil {
 				return toolResult{}, err
@@ -280,7 +282,14 @@ func init() {
 			if err != nil {
 				return toolResult{}, err
 			}
-			return text("Saved %s as %s (%s, %s). Rewind to it with rewind save=%s; copy it to try alternatives.", ws, sv.ID, sv.Kind, size(sv.Size), sv.ID), nil
+			pinned := ""
+			if a.Pin {
+				if _, err := s.c.PinSave(ctx, sv.ID); err != nil {
+					return toolResult{}, fmt.Errorf("saved %s as %s, but could not pin it: %w", ws, sv.ID, err)
+				}
+				pinned = ", pinned: kept however old it gets"
+			}
+			return text("Saved %s as %s (%s, %s%s). Rewind to it with rewind save=%s; copy it to try alternatives.", ws, sv.ID, sv.Kind, size(sv.Size), pinned, sv.ID), nil
 		},
 	})
 
@@ -680,6 +689,9 @@ func formatSaves(w *client.Workspace, svs []client.Save) string {
 		fmt.Fprintf(&b, "%s  %-5s  %s  %s  from %s", sv.ID, sv.Kind, sv.CreatedAt.Local().Format(time.DateTime), size(sv.Size), orNone(sv.Parent))
 		if sv.Auto {
 			b.WriteString("  (automatic pause save)")
+		}
+		if sv.Pinned {
+			b.WriteString("  (pinned)")
 		}
 		if sv.ID == w.BaseSave {
 			b.WriteString("  <- current")
