@@ -35,7 +35,15 @@ const (
 	Pausing  WorkspaceState = "pausing"  // being saved to pause it
 	Paused   WorkspaceState = "paused"   // saved and stopped by the engine; the next use wakes it
 	Deleted  WorkspaceState = "deleted"
+	// Warm workspaces are created and started ahead of demand and belong to
+	// no one until a create claims one (it becomes running); warming ones are
+	// still being built. Neither is listed or reachable by ID.
+	Warm    WorkspaceState = "warm"
+	Warming WorkspaceState = "warming"
 )
+
+// Hidden states are ones callers never see: deleted, or not yet anyone's.
+func (s WorkspaceState) Hidden() bool { return s == Deleted || s == Warm || s == Warming }
 
 // Transitional states are ones the engine can crash in the middle of.
 func (s WorkspaceState) Transitional() bool {
@@ -407,11 +415,35 @@ func (s *Store) GetWorkspace(ctx context.Context, id string) (*Workspace, error)
 	return w, err
 }
 
-// ListWorkspaces returns workspaces that are not deleted, oldest first.
+// ListWorkspaces returns callers' workspaces (not deleted, not warm), oldest first.
 func (s *Store) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 	return s.queryWorkspaces(ctx,
-		`SELECT `+workspaceCols+` FROM workspaces WHERE state != ? ORDER BY created_at, id`,
-		Deleted)
+		`SELECT `+workspaceCols+` FROM workspaces WHERE state NOT IN (?, ?, ?) ORDER BY created_at, id`,
+		Deleted, Warm, Warming)
+}
+
+// WarmWorkspaces returns the warm and warming workspaces.
+func (s *Store) WarmWorkspaces(ctx context.Context) ([]Workspace, error) {
+	return s.queryWorkspaces(ctx,
+		`SELECT `+workspaceCols+` FROM workspaces WHERE state IN (?, ?) ORDER BY created_at, id`,
+		Warm, Warming)
+}
+
+// ClaimWarm hands a warm workspace made with exactly spec to a caller: it
+// becomes running under name (its own ID if name is empty) and requestKey,
+// created now. Atomic, so two creates never get the same one. ErrNotFound if
+// none is warm.
+func (s *Store) ClaimWarm(ctx context.Context, spec json.RawMessage, name, requestKey string, now time.Time) (*Workspace, error) {
+	row := s.db.QueryRowContext(ctx,
+		`UPDATE workspaces SET state = ?, name = CASE WHEN ? = '' THEN id ELSE ? END, request_key = ?, created_at = ?, updated_at = ?
+		 WHERE id = (SELECT id FROM workspaces WHERE state = ? AND spec = ? ORDER BY created_at, id LIMIT 1)
+		 RETURNING `+workspaceCols,
+		Running, name, name, nullable(requestKey), now.UnixNano(), now.UnixNano(), Warm, string(spec))
+	w, err := scanWorkspace(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return w, duplicate(err)
 }
 
 // TransitionalWorkspaces are the ones a crash may have interrupted.

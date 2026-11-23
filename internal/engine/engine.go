@@ -91,6 +91,10 @@ type Config struct {
 	// overlayfs does not report a write that fails underneath it (a full
 	// host volume under a sparse layer image) to the program's fsync.
 	SharedTemplates bool
+	// Warm keeps this many workspaces per template created and started
+	// ahead of demand (the key "" is the default template); a create with
+	// no limits or network set claims one at once. Nil or empty: no pool.
+	Warm map[string]int
 	// MaxCommands is how many commands one workspace may run at once
 	// (DefaultMaxCommands if 0); more are refused with ErrBusy.
 	MaxCommands int
@@ -125,6 +129,8 @@ type Engine struct {
 	// overlayErr is why filesystems built on a base are copies rather than
 	// overlays on its shared root; nil if they are overlays.
 	overlayErr error
+	warm       warmState            // the warm pool (warm.go)
+	warmMu     sync.Mutex           // guards warm.gen
 	locks      map[string]*wsLock   // per workspace
 	activity   map[string]time.Time // last use per workspace, for pausing idle ones
 	ops        chan struct{}        // slots for heavy operations
@@ -306,6 +312,11 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 		e.events.Close()
 		return nil, fmt.Errorf("purge: %w", err)
 	}
+	if err := e.startWarm(ctx); err != nil {
+		st.Close()
+		e.events.Close()
+		return nil, fmt.Errorf("warm pool: %w", err)
+	}
 	if e.remoteOn() {
 		uctx, cancel := context.WithCancel(context.Background())
 		// learn saves made elsewhere, but never wait long on the store: one
@@ -325,6 +336,7 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 // Close closes the state store. Sandboxes keep running: they belong to the
 // workspaces, not to this process, and the next Open picks them up again.
 func (e *Engine) Close() error {
+	e.stopWarm()
 	if e.stopUploads != nil {
 		e.stopUploads()
 		<-e.uploaderDone
@@ -413,6 +425,16 @@ func (e *Engine) createWorkspace(ctx context.Context, req CreateRequest) (*Works
 		}
 		templateSize = t.Size
 	}
+	spec := Spec{Limits: req.Limits, Network: req.Network, Template: template}
+	e.diskFor(&spec)
+	// a warm workspace made with exactly this spec, if the pool has one
+	if w, err := e.claimWarm(ctx, spec, req.Name, req.RequestKey); errors.Is(err, store.ErrDuplicateKey) {
+		return e.workspaceForKey(ctx, req.RequestKey, "") // lost a race with the same key
+	} else if err != nil {
+		return nil, err
+	} else if w != nil {
+		return toWorkspace(w)
+	}
 	if err := e.needSpace("the workspace", templateSize); err != nil {
 		return nil, err
 	}
@@ -426,8 +448,6 @@ func (e *Engine) createWorkspace(ctx context.Context, req CreateRequest) (*Works
 	if name == "" {
 		name = id
 	}
-	spec := Spec{Limits: req.Limits, Network: req.Network, Template: template}
-	e.diskFor(&spec)
 	w, err := e.insertWorkspace(ctx, id, name, spec, "", req.RequestKey)
 	if errors.Is(err, store.ErrDuplicateKey) {
 		return e.workspaceForKey(ctx, req.RequestKey, "") // lost a race with the same key
@@ -504,7 +524,7 @@ func (e *Engine) GetWorkspace(ctx context.Context, id string) (*Workspace, error
 	if err != nil {
 		return nil, err
 	}
-	if w.State == store.Deleted {
+	if w.State.Hidden() {
 		return nil, ErrNotFound
 	}
 	return toWorkspace(w)
@@ -1889,7 +1909,7 @@ func (e *Engine) liveWorkspace(ctx context.Context, id string) (*store.Workspace
 	if err != nil {
 		return nil, err
 	}
-	if w.State == store.Deleted {
+	if w.State.Hidden() {
 		return nil, ErrNotFound
 	}
 	return w, nil
