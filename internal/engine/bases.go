@@ -6,6 +6,10 @@ package engine
 //	bases/<sha256>.tar          the template's tar, named by its content
 //	bases/<sha256>.index.json   every path in it, for computing deltas (rebuilt
 //	                            from the tar whenever missing)
+//	bases/<sha256>.root/        the tar extracted once, shared read-only by
+//	                            every layered workspace filesystem on it (see
+//	                            volume); built from the verified tar in a temp
+//	                            folder, renamed in, never changed
 //	workspaces/<id>/rootfs.base which base a workspace's filesystem was
 //	                            extracted from, and when (written only after
 //	                            the filesystem is in place)
@@ -40,6 +44,7 @@ const baseGrace = time.Hour
 func (e *Engine) basesDir() string            { return filepath.Join(e.cfg.DataDir, "bases") }
 func (e *Engine) basePath(sha string) string  { return filepath.Join(e.basesDir(), sha+".tar") }
 func (e *Engine) indexPath(sha string) string { return filepath.Join(e.basesDir(), sha+".index.json") }
+func (e *Engine) rootPath(sha string) string  { return filepath.Join(e.basesDir(), sha+".root") }
 func (e *Engine) baseRecordPath(id string) string {
 	return filepath.Join(e.workspaceDir(id), "rootfs.base")
 }
@@ -49,6 +54,7 @@ func remoteBaseKey(sha string) string { return "bases/" + sha + ".tar" }
 type baseState struct {
 	mu      sync.Mutex
 	indexes map[string]*save.Index
+	rootMu  sync.Mutex // one root built at a time
 }
 
 func (b *baseState) init() {
@@ -181,7 +187,8 @@ func writeAtomic(path string, data []byte) error {
 	return syncDir(filepath.Dir(path))
 }
 
-// cleanupBases removes temporary files a crash left in bases/.
+// cleanupBases removes temporary files (and half-built roots) a crash left
+// in bases/.
 func (e *Engine) cleanupBases() {
 	entries, err := os.ReadDir(e.basesDir())
 	if err != nil {
@@ -189,9 +196,59 @@ func (e *Engine) cleanupBases() {
 	}
 	for _, d := range entries {
 		if strings.Contains(d.Name(), ".tmp-") {
-			_ = os.Remove(filepath.Join(e.basesDir(), d.Name()))
+			_ = os.RemoveAll(filepath.Join(e.basesDir(), d.Name()))
 		}
 	}
+}
+
+// ensureRoot returns base sha's shared root, extracting the base tar into it
+// first if this is the first layered filesystem on it. The tar is verified
+// as it is extracted (its bytes must hash to sha) so a root never holds
+// anything but the base; the root is built in a temporary folder and renamed
+// in, so it is either complete or absent.
+func (e *Engine) ensureRoot(sha string) (string, error) {
+	root := e.rootPath(sha)
+	if _, err := os.Stat(root); err == nil {
+		return root, nil
+	}
+	e.bases.rootMu.Lock()
+	defer e.bases.rootMu.Unlock()
+	if _, err := os.Stat(root); err == nil {
+		return root, nil // built while we waited
+	}
+	f, err := os.Open(e.basePath(sha))
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	tmp, err := os.MkdirTemp(e.basesDir(), sha+".tmp-root-")
+	if err != nil {
+		return "", err
+	}
+	h := sha256.New()
+	tee := io.TeeReader(f, h)
+	err = save.UntarDir(tee, tmp, info.Size())
+	if err == nil {
+		_, err = io.Copy(io.Discard, tee) // the tar's padding, so the hash covers the file
+	}
+	if err == nil && hex.EncodeToString(h.Sum(nil)) != sha {
+		err = fmt.Errorf("%w: base %s does not match its checksum", save.ErrCorrupt, sha)
+	}
+	if err == nil {
+		err = syncTree(tmp)
+	}
+	if err == nil {
+		err = os.Rename(tmp, root)
+	}
+	if err != nil {
+		_ = os.RemoveAll(tmp)
+		return "", err
+	}
+	return root, syncDir(e.basesDir())
 }
 
 // errBaseMissing: a base is not here (and could not be fetched). It says
@@ -415,6 +472,11 @@ func (e *Engine) gcBases(ctx context.Context) (int, error) {
 		info, err := d.Info()
 		if err != nil || info.ModTime().After(cutoff) {
 			continue
+		}
+		// the shared root first: a root without its tar could not be rebuilt
+		// or checked, a tar without its root is rebuilt on next use
+		if err := os.RemoveAll(e.rootPath(sha)); err != nil {
+			return n, err
 		}
 		if err := os.Remove(e.basePath(sha)); err != nil {
 			return n, err

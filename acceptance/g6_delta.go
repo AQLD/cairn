@@ -38,6 +38,13 @@ const bigTemplateFile = 8 << 20
 // with a big file, a hard link, a symlink and a folder to delete.
 func deltaTemplate(e *Env, name string) *client.Template {
 	e.T.Helper()
+	return deltaTemplateWith(e, name, 0)
+}
+
+// deltaTemplateWith is deltaTemplate plus a file of extra bytes (opt/extra.bin)
+// that nothing changes, to make the template's size stand out.
+func deltaTemplateWith(e *Env, name string, extra int) *client.Template {
+	e.T.Helper()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
 	if p := os.Getenv("CAIRN_TEST_TEMPLATE"); p != "" {
@@ -86,6 +93,13 @@ func deltaTemplate(e *Env, name string) *client.Template {
 	file(deltaDir+"/keep/edit.txt", []byte("edited in place\n"), 0o644)
 	e.Must(tw.WriteHeader(&tar.Header{Name: deltaDir + "/link", Typeflag: tar.TypeSymlink, Linkname: "lib/a.txt", ModTime: when}))
 	e.Must(tw.WriteHeader(&tar.Header{Name: deltaDir + "/hard", Typeflag: tar.TypeLink, Linkname: deltaDir + "/lib/a.txt", ModTime: when}))
+	if extra > 0 {
+		data := make([]byte, extra)
+		for i := range data {
+			data[i] = byte(i*13 + i/8192)
+		}
+		file("opt/extra.bin", data, 0o644)
+	}
 	e.Must(tw.Close())
 	t, err := e.C.ImportTemplate(e.Ctx, name, &buf)
 	e.Must(err)

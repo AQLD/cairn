@@ -76,6 +76,7 @@ type Capabilities struct {
 	DiskLimits          bool `json:"disk_limits"`
 	NetworkControl      bool `json:"network_control"`
 	PersistentProcesses bool `json:"persistent_processes"`
+	SharedTemplates     bool `json:"shared_templates"` // workspaces share their template's files read-only
 }
 
 type Info struct {

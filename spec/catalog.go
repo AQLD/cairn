@@ -240,6 +240,18 @@ var Catalog = []Scenario{
 			{ID: "G9.6", Title: "Full save and resume meet the targets set in E0", Milestone: E0, Needs: []Need{NeedFullSave, NeedLinuxBench}, Bench: "BenchmarkFullSaveResume"},
 			{ID: "G9.7", Title: "Seven workspaces fit on an 8 vCPU / 32 GiB server under agent-like load", Proves: "The density behind the cost model holds.", Milestone: E4, Needs: []Need{NeedLinuxBench}, Bench: "BenchmarkDensity"},
 			{ID: "G9.8", Title: "A stopped workspace costs only its storage", Milestone: E4, Needs: []Need{NeedFullSave, NeedInProcess}},
+			{ID: "G9.9", Title: "Workspaces made from one template share it instead of copying it", Proves: "A 1 GB toolchain template costs its disk once, not once per workspace and copy, so many workspaces fit on one server.", Milestone: E3,
+				Children: []Scenario{
+					{ID: "G9.9.1", Title: "A workspace made from a template takes disk only for its own changes", Proves: "Several workspaces and a copy made from an 8 MB template each use well under 1 MB of their own after small edits; the template is stored once.", Milestone: E3, Needs: []Need{NeedSharedTemplates}},
+					{ID: "G9.9.2", Title: "Changes in one workspace never reach the template or another workspace", Proves: "Edits, deletes, permission changes, a folder renamed and a hard link in one workspace leave another workspace and a new one exactly as the template made them.", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedInProcess}},
+					{ID: "G9.9.3", Title: "Saves, resumes and copies of workspaces sharing a template restore exactly", Proves: "A workspace's every file attribute comes back from its save after a mess, in a copy and in a copy's copy, each still sharing the template.", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedInProcess}},
+					{ID: "G9.9.4", Title: "A template's shared files stay while anything uses them and go after", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedInProcess}},
+					{ID: "G9.9.5", Title: "Workspaces sharing a template come back after an engine restart and after a host restart", Proves: "With their mounts still there or all gone (as after a reboot), workspaces have every file and run commands.", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedInProcess}},
+					{ID: "G9.9.6", Title: "A disk limit applies to a workspace's own changes", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedDiskLimits}},
+					{ID: "G9.9.7", Title: "A crash while a template's shared files or a workspace on them are being built leaves nothing half-made", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedInProcess}},
+					{ID: "G9.9.8", Title: "Saves made before workspaces shared their template still restore, processes included", Proves: "A quick and a full save of a workspace that had its own copy of the template (an older engine, or sharing switched off) restore on an engine that shares templates: the files exactly, and the full save's processes with their pids.", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedFullSave, NeedPersistent, NeedInProcess}},
+					{ID: "G9.9.9", Title: "A write that cannot reach the disk fails the program's fsync on a shared template, as on a copy", Proves: "With the host volume full under a workspace sharing its template, a program's fsync reports the failed write, on every supported kernel (on Linux 7.0 overlayfs drops the error today, which is why sharing is off by default).", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedInProcess}},
+				}},
 		},
 	},
 	{
