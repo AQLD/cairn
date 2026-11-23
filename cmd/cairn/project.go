@@ -172,10 +172,13 @@ func cmdRun(ctx context.Context, c *client.Client, args []string) (int, error) {
 	if rel != "." {
 		dir = p.Remote + "/" + filepath.ToSlash(rel)
 	}
-	// mark the moment before the command, so what it writes can be found
+	// mark the moment before the command, so what it writes can be found.
+	// Change times come from a coarse clock (a few ms per tick): the pauses
+	// keep the push's writes before the mark's tick and the command's after
+	// it, or a write in the same tick as the mark would be missed.
 	mark := fmt.Sprintf("/tmp/.cairn-run-%d", time.Now().UnixNano())
 	if !*noPull {
-		if _, err := c.Exec(ctx, p.Workspace, client.Exec{Command: []string{"touch", mark}}); err != nil {
+		if _, err := c.Exec(ctx, p.Workspace, client.Exec{Command: []string{"sh", "-c", `sleep 0.03; touch "$0" && sleep 0.03`, mark}}); err != nil {
 			return 1, err
 		}
 	}
