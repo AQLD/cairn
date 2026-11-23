@@ -1,7 +1,9 @@
 package acceptance
 
 import (
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -29,8 +31,61 @@ func Run(t *testing.T) {
 	}
 }
 
+// exclusive lists scenarios that need the machine to themselves when
+// scenarios run in parallel (CAIRN_TEST_PARALLEL): they count host resources,
+// fill the host's disk or memory, measure time or throughput, or kill
+// engines. A listed ID covers its children; a family holding one is
+// exclusive too. Go runs a goal's exclusive scenarios before its parallel
+// ones start, and goals one after another, so these never overlap anything.
+var exclusive = []string{
+	"G1.7",   // golden workloads: saved within seconds of starting
+	"G1.8",   // clocks across a pause
+	"G3.2",   // CPU, memory and disk limits
+	"G6.4.3", // the host volume really fills
+	"G7.6",   // kill -9 rounds
+	"G7.10",  // concurrent workers
+	"G7.12",  // power cuts
+	"G7.13",  // request floods
+	"G8.5",   // a full workspace disk
+	"G9.7",   // density
+	"G9.8",   // a stopped workspace's cost
+	"G9.9.9", // the host volume really fills
+	"G10.6",  // upgrade: engines as processes
+	"G10.7",  // counts host resources
+	"G10.11", // Docker
+	"G12.1",  // gigabytes of data
+	"G13",    // browser saves of ~1 GB each: in parallel they fill the disk
+	"G14.5",  // counts host resources
+	"G19.5",  // gigabytes of files, free-space headroom
+}
+
+func isExclusive(s spec.Scenario) bool {
+	for _, x := range exclusive {
+		if s.ID == x || strings.HasPrefix(s.ID, x+".") {
+			return true
+		}
+	}
+	for _, c := range s.Children {
+		if isExclusive(c) {
+			return true
+		}
+	}
+	return false
+}
+
+// parallel says scenarios run side by side (within each goal):
+// CAIRN_TEST_PARALLEL set to a number above 0 (pass the same as go test
+// -parallel to bound how many).
+var parallel = func() bool {
+	n, err := strconv.Atoi(os.Getenv("CAIRN_TEST_PARALLEL"))
+	return err == nil && n > 0
+}()
+
 func runScenario(t *testing.T, s spec.Scenario) {
 	t.Run(testName(s), func(t *testing.T) {
+		if parallel && !isExclusive(s) {
+			t.Parallel()
+		}
 		fn, implemented := Impl[s.ID]
 		switch {
 		case implemented:
