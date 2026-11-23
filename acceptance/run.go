@@ -46,6 +46,7 @@ var exclusive = []string{
 	"G7.10",  // concurrent workers
 	"G7.12",  // power cuts
 	"G7.13",  // request floods
+	"G7.16",  // concurrent restores and sandbox starts
 	"G8.5",   // a full workspace disk
 	"G9.7",   // density
 	"G9.8",   // a stopped workspace's cost
