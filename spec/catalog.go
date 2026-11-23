@@ -250,7 +250,7 @@ var Catalog = []Scenario{
 					{ID: "G9.9.6", Title: "A disk limit applies to a workspace's own changes", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedDiskLimits}},
 					{ID: "G9.9.7", Title: "A crash while a template's shared files or a workspace on them are being built leaves nothing half-made", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedInProcess}},
 					{ID: "G9.9.8", Title: "Saves made before workspaces shared their template still restore, processes included", Proves: "A quick and a full save of a workspace that had its own copy of the template (an older engine, or sharing switched off) restore on an engine that shares templates: the files exactly, and the full save's processes with their pids.", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedFullSave, NeedPersistent, NeedInProcess}},
-					{ID: "G9.9.9", Title: "A write that cannot reach the disk fails the program's fsync on a shared template, as on a copy", Proves: "With the host volume full under a workspace sharing its template, a program's fsync reports the failed write, on every supported kernel (on Linux 7.0 overlayfs drops the error today, which is why sharing is off by default).", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedInProcess}},
+					{ID: "G9.9.9", Title: "A write that cannot reach the disk fails the program's fsync on a shared template, as on a copy", Proves: "With the host volume full under a workspace sharing its template, a program's fsync reports the failed write, or, on a kernel whose overlayfs would hide it (Linux 7.0), the engine refuses to share and says so, so a program's fsync always sees a failed write.", Milestone: E3, Needs: []Need{NeedSharedTemplates, NeedInProcess}},
 				}},
 		},
 	},

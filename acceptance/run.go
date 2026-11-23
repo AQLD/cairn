@@ -49,6 +49,7 @@ var exclusive = []string{
 	"G8.5",   // a full workspace disk
 	"G9.7",   // density
 	"G9.8",   // a stopped workspace's cost
+	"G9.9.5", // takes a workspace's mounts away (a host restart)
 	"G9.9.9", // the host volume really fills
 	"G10.6",  // upgrade: engines as processes
 	"G10.7",  // counts host resources

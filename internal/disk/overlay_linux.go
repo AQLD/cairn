@@ -66,3 +66,88 @@ func OverlaySupported(scratch string) error {
 	}
 	return nil
 }
+
+// OverlayReportsWriteErrors reports nil if a write that fails underneath an
+// overlay whose upper layer is on a disk image (as a workspace's is) reaches
+// the program's fsync as an error, or why not. Some kernels (Linux 7.0) drop
+// it: the program is told its data is safe while the kernel logs data loss.
+//
+// It reproduces that small, twice, each on its own: a 32 MB sparse image on
+// an 8 MB tmpfs, mounted, and a 16 MB write and fsync that must fail - once
+// straight on the image (if that does not fail, the probe proves nothing and
+// says so), once through an overlay whose upper layer is on the image.
+func OverlayReportsWriteErrors(scratch string) error {
+	if failedWriteReported(scratch, false) != nil {
+		// not a verdict on overlays: the setup itself could not show an error
+		return fmt.Errorf("%w: write-error probe inconclusive (a failed write was not reported even without an overlay)", ErrUnsupported)
+	}
+	if err := failedWriteReported(scratch, true); err != nil {
+		return fmt.Errorf("%w: %v", ErrUnsupported, err)
+	}
+	return nil
+}
+
+// failedWriteReported fills a sparse image's backing volume with a write
+// (through an overlay on the image, with overlay) and returns nil if fsync
+// reported the failure.
+func failedWriteReported(scratch string, overlay bool) error {
+	tmp, err := os.MkdirTemp(scratch, ".fsync-probe-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	host, layer, lower, merged := filepath.Join(tmp, "host"), filepath.Join(tmp, "layer"), filepath.Join(tmp, "lower"), filepath.Join(tmp, "merged")
+	for _, d := range []string{host, layer, lower, merged} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			return err
+		}
+	}
+	if err := unix.Mount("tmpfs", host, "tmpfs", 0, "size=8m"); err != nil {
+		return fmt.Errorf("probe tmpfs: %w", err)
+	}
+	defer Unmount(host)
+	img := filepath.Join(host, "probe.img")
+	if err := Create(img, MinSizeMB); err != nil {
+		return fmt.Errorf("probe image: %w", err)
+	}
+	if err := Mount(img, layer); err != nil {
+		return fmt.Errorf("probe mount: %w", err)
+	}
+	defer Unmount(layer)
+	target := filepath.Join(layer, "f")
+	if overlay {
+		for _, d := range []string{"upper", "work"} {
+			if err := os.Mkdir(filepath.Join(layer, d), 0o755); err != nil {
+				return err
+			}
+		}
+		if err := MountOverlay(lower, filepath.Join(layer, "upper"), filepath.Join(layer, "work"), merged); err != nil {
+			return err
+		}
+		defer Unmount(merged)
+		target = filepath.Join(merged, "f")
+	}
+	if writeAndSync(target) == nil {
+		return errors.New("a write that failed underneath was reported to fsync as success (a full volume under a workspace would lose data silently)")
+	}
+	return nil
+}
+
+// writeAndSync writes 16 MB to a new file and syncs it, returning the first error.
+func writeAndSync(path string) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	buf := make([]byte, 1<<20)
+	for i := range buf {
+		buf[i] = byte(i*31 + 7) // not zeros: nothing may skip writing them
+	}
+	for range 16 {
+		if _, err := f.Write(buf); err != nil {
+			return err
+		}
+	}
+	return f.Sync()
+}
