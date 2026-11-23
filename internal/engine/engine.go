@@ -283,13 +283,17 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 		return nil, fmt.Errorf("purge: %w", err)
 	}
 	if e.remoteOn() {
-		// learn saves made elsewhere; a store that is down only delays this
-		if err := e.importRemote(ctx); err != nil {
-			e.log.Error("could not read saves from object storage", "store", cfg.Objects.String(), "err", err)
-		}
 		uctx, cancel := context.WithCancel(context.Background())
+		// learn saves made elsewhere, but never wait long on the store: one
+		// that is down or hanging is retried in the background instead
+		ictx, icancel := context.WithTimeout(ctx, importWait)
+		err := e.importRemote(ictx)
+		icancel()
+		if err != nil {
+			e.log.Error("could not read saves from object storage yet; retrying in the background", "store", cfg.Objects.String(), "err", err)
+		}
 		e.uploadKick, e.stopUploads, e.uploaderDone = make(chan struct{}, 1), cancel, make(chan struct{})
-		go e.uploader(uctx)
+		go e.uploader(uctx, err != nil)
 	}
 	return e, nil
 }
@@ -1688,11 +1692,16 @@ func (e *Engine) recover(ctx context.Context) error {
 				if err := e.store.MarkSaveReady(ctx, sv.ID, m.Size()); err != nil {
 					return err
 				}
+				// the base is checked here only, never fetched: recovery must
+				// not wait on object storage. With a store, a base missing or
+				// damaged here is fetched by the next verify or restore.
 				state := store.SaveReady
-				if berr := e.checkBase(ctx, m, nil); errors.Is(berr, save.ErrCorrupt) {
-					state = store.SaveCorrupt
-				} else if berr != nil {
-					state = store.SaveMissing
+				if m.Base != nil {
+					if berr := e.verifyBase(m.Base); errors.Is(berr, save.ErrCorrupt) && !e.remoteOn() {
+						state = store.SaveCorrupt
+					} else if berr != nil {
+						state = store.SaveMissing
+					}
 				}
 				if state != store.SaveReady {
 					e.log.Error("save committed before a crash cannot be restored until its base is back", "save", sv.ID, "state", state)

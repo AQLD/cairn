@@ -44,11 +44,26 @@ func (e *Engine) kickUploads() {
 }
 
 // uploader copies pending saves to object storage until ctx ends.
-func (e *Engine) uploader(ctx context.Context) {
+// importWait bounds how long opening the engine waits to learn the saves in
+// object storage; the rest happens in the background (see uploader).
+const importWait = 5 * time.Second
+
+// uploader uploads saves as they are made, every 30 seconds and when kicked.
+// With importDue it also keeps trying to learn the saves in object storage
+// until it succeeds (opening the engine gave up waiting for that).
+func (e *Engine) uploader(ctx context.Context, importDue bool) {
 	defer close(e.uploaderDone)
 	tick := time.NewTicker(30 * time.Second)
 	defer tick.Stop()
 	for {
+		if importDue {
+			if err := e.importRemote(ctx); err == nil {
+				importDue = false
+				e.log.Info("read saves from object storage")
+			} else if ctx.Err() == nil {
+				e.log.Error("could not read saves from object storage yet", "err", err)
+			}
+		}
 		e.uploadPending(ctx)
 		select {
 		case <-ctx.Done():

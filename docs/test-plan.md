@@ -273,6 +273,7 @@ However the engine stops, it comes back knowing every workspace and save, and ne
 - ✅ **G7.12** A power cut mid-operation loses nothing acknowledged · E2
 - ✅ **G7.13** A flood of requests is refused or queued, never fails or takes the engine down · E1 · needs in_process
 - ✅ **G7.14** A crash around a restore never makes a later save miss a change · E3 · needs in_process
+- ✅ **G7.15** Recovery never waits on object storage · E3 · needs in_process
 - ✅ **G7.7** A lost server's workspaces resume elsewhere from their last save · E5 · needs in_process
 - ⏳ **G7.8** A workspace never runs on two servers at once · E5 · needs multi_server
 
