@@ -68,11 +68,21 @@ func init() {
 		}
 		// ...and a program writing inside the workspace fails, or (once the
 		// workspace's disk has hit write errors) the engine says why up front
+		diag := func(when string) {
+			out, _ := exec.Command("sh", "-c", "echo; uname -r; df -B1 "+mnt+"; for f in /sys/fs/ext4/*/errors_count; do echo $f $(cat $f); done; mount | grep -E 'overlay|loop' | grep "+mnt+"; ls -lsR "+mnt+"/workspaces/"+ws.ID+"/rootfs.layer/upper 2>&1 | head -30; ls -ls "+mnt+"/workspaces/"+ws.ID+"/ ; dmesg | tail -15").CombinedOutput()
+			e.T.Logf("DIAG %s:%s", when, out)
+		}
+		diag("before the dd")
 		res, err := e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"sh", "-c", "dd if=/dev/zero of=inside.bin bs=1M count=64 conv=fsync"}, TimeoutMS: 60_000})
 		if err != nil {
 			e.ErrCode(err, "insufficient_storage")
 		} else if res.ExitCode == 0 {
+			diag("after the dd")
+			e.T.Logf("dd stdout %q stderr %q", res.Stdout, res.Stderr)
 			e.T.Fatal("a 64 MB write inside the workspace succeeded on a full volume")
+		} else {
+			diag("after the dd (failed as expected)")
+			e.T.Logf("dd exit %d stderr %q", res.ExitCode, res.Stderr)
 		}
 
 		// room again: the workspace is intact and everything works
