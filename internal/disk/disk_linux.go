@@ -124,6 +124,15 @@ func Repair(img string) error {
 // Mount attaches img to a free loop device and mounts it at dir, which must
 // exist. The loop device is released when the filesystem is unmounted.
 func Mount(img, dir string) error {
+	// An image whose filesystem is still alive somewhere must never be
+	// mounted again: two live instances of one ext4 filesystem lose data (the
+	// new one reads what the old one has not written yet; the old one later
+	// writes over the new one's). Unmounting does not always end a filesystem
+	// at once: a mount namespace created at that moment (a sandbox starting)
+	// holds a copy until it lets go, and a busy mount is detached lazily.
+	if err := waitDetached(img, detachWait); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(img, os.O_RDWR|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return err
@@ -287,4 +296,56 @@ func unescape(s string) string {
 		b.WriteByte(s[i])
 	}
 	return b.String()
+}
+
+// detachWait bounds how long Mount waits for an image's previous filesystem
+// to end before refusing to mount it.
+const detachWait = 30 * time.Second
+
+// ErrStillMounted: an image's filesystem is still alive after waiting.
+var ErrStillMounted = errors.New("disk image is still in use by an earlier mount")
+
+// waitDetached waits until no loop device is attached to img.
+func waitDetached(img string, wait time.Duration) error {
+	deadline := time.Now().Add(wait)
+	for {
+		loops, err := attachedLoops(img)
+		if err != nil || len(loops) == 0 {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("%w: %s on %v", ErrStillMounted, img, loops)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// attachedLoops lists the loop devices whose backing file is img, matched by
+// device and inode so a renamed image is still found.
+func attachedLoops(img string) ([]string, error) {
+	var st unix.Stat_t
+	if err := unix.Stat(img, &st); err != nil {
+		return nil, err
+	}
+	devs, err := filepath.Glob("/sys/block/loop*")
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, d := range devs {
+		dev := "/dev/" + filepath.Base(d)
+		f, err := os.Open(dev)
+		if err != nil {
+			continue // no node (a container's /dev) or gone: not ours to check
+		}
+		info, err := unix.IoctlLoopGetStatus64(int(f.Fd()))
+		f.Close()
+		if err != nil {
+			continue // not bound
+		}
+		if info.Device == uint64(st.Dev) && info.Inode == st.Ino {
+			out = append(out, dev)
+		}
+	}
+	return out, nil
 }
