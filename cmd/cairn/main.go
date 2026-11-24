@@ -57,6 +57,8 @@ commands:
   version                                 print this CLI's version
   create [--name NAME] [--template T] [--network | --allow NAME...] [--memory MB] [--disk MB] [--cpus N]
                                           create a workspace (from a template)
+  secret set NAME --host HOST...          store a secret (value read from stdin; sent only to those hosts)
+  secret ls | secret rm NAME              list (never values) or delete secrets
   template import NAME ROOTFS.tar         import a root filesystem tar as a template
                                           (e.g. docker export $(docker create python:3.12-slim) > python.tar)
   template pull NAME IMAGE [--insecure]   build a template from a container image in a registry
@@ -367,6 +369,48 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 			fmt.Println(w.ID)
 		}
 		fmt.Fprintln(os.Stderr, "cairn: each copy is a whole workspace; `cairn rm ID` the ones you don't keep")
+
+	case "secret":
+		switch {
+		case len(args) >= 2 && args[0] == "set":
+			fs := flag.NewFlagSet("secret set", flag.ContinueOnError)
+			var hosts stringList
+			fs.Var(&hosts, "host", "a host the secret may be sent to (github.com, *.githubusercontent.com, an IPv4 range); repeat it")
+			if err := fs.Parse(args[2:]); err != nil {
+				return 2, err
+			}
+			// the value comes from stdin, never the command line (shell history, ps)
+			value, err := io.ReadAll(io.LimitReader(os.Stdin, 64<<10))
+			if err != nil {
+				return 1, err
+			}
+			v := strings.TrimRight(string(value), "\r\n")
+			if v == "" {
+				return 2, errors.New("secret set reads the value from stdin: echo \"$TOKEN\" | cairn secret set NAME --host HOST")
+			}
+			sec, err := c.SetSecret(ctx, args[1], v, hosts)
+			if err != nil {
+				return 1, err
+			}
+			fmt.Printf("%s  for %s\n", sec.Name, strings.Join(sec.Hosts, ", "))
+		case len(args) == 1 && args[0] == "ls":
+			list, err := c.ListSecrets(ctx)
+			if err != nil {
+				return 1, err
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "NAME\tHOSTS\tUPDATED")
+			for _, s := range list {
+				fmt.Fprintf(tw, "%s\t%s\t%s\n", s.Name, strings.Join(s.Hosts, ","), s.UpdatedAt.Local().Format(time.DateTime))
+			}
+			tw.Flush()
+		case len(args) == 2 && args[0] == "rm":
+			if err := c.DeleteSecret(ctx, args[1]); err != nil {
+				return 1, err
+			}
+		default:
+			return 2, errors.New("usage: cairn secret set NAME --host HOST... (value on stdin) | secret ls | secret rm NAME")
+		}
 
 	case "template":
 		switch {

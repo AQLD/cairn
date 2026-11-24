@@ -685,3 +685,33 @@ func readError(resp *http.Response) error {
 	}
 	return &Error{Status: resp.StatusCode, Code: e.Error.Code, Message: e.Error.Message, RequestID: id}
 }
+
+// Secret is a stored secret as the engine shows it: never its value.
+type Secret struct {
+	Name      string    `json:"name"`
+	Hosts     []string  `json:"hosts"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// SetSecret creates or replaces a secret: its value, and the hosts it may be
+// sent to ("github.com", "*.githubusercontent.com", IPv4 ranges). The engine
+// never returns the value.
+func (c *Client) SetSecret(ctx context.Context, name, value string, hosts []string) (*Secret, error) {
+	var out Secret
+	body := map[string]any{"value": value, "hosts": hosts}
+	return &out, c.do(ctx, http.MethodPut, "/v1/secrets/"+url.PathEscape(name), body, &out)
+}
+
+// ListSecrets lists secrets, without values.
+func (c *Client) ListSecrets(ctx context.Context) ([]Secret, error) {
+	var out struct {
+		Secrets []Secret `json:"secrets"`
+	}
+	return out.Secrets, c.do(ctx, http.MethodGet, "/v1/secrets", nil, &out)
+}
+
+// DeleteSecret removes a secret.
+func (c *Client) DeleteSecret(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/secrets/"+url.PathEscape(name), nil, nil)
+}

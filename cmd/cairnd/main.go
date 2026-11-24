@@ -27,6 +27,7 @@ import (
 	"github.com/AQLD/cairn/internal/engine"
 	"github.com/AQLD/cairn/internal/objstore"
 	"github.com/AQLD/cairn/internal/runtime"
+	"github.com/AQLD/cairn/internal/secrets"
 )
 
 func main() {
@@ -44,6 +45,7 @@ func run() error {
 	initPath := flag.String("init", "", "path to cairn-init, process 1 of every runsc workspace (default: next to cairnd, then PATH)")
 	token := flag.String("token", os.Getenv("CAIRN_TOKEN"), "API token required on every request (env CAIRN_TOKEN)")
 	tlsCert := flag.String("tls-cert", os.Getenv("CAIRN_TLS_CERT"), "serve the API over HTTPS with this certificate (PEM, chain included; reloaded when it changes; env CAIRN_TLS_CERT)")
+	secretsKey := flag.String("secrets-key", os.Getenv("CAIRN_SECRETS_KEY_FILE"), "file holding the 32-byte key that seals secrets (openssl rand -hex 32); keep it outside --data; without it secrets are refused (env CAIRN_SECRETS_KEY_FILE)")
 	tlsKey := flag.String("tls-key", os.Getenv("CAIRN_TLS_KEY"), "private key for --tls-cert (PEM; env CAIRN_TLS_KEY)")
 	retention := flag.Duration("retention", engine.DefaultRetention, "how long deleted saves can be undeleted before they are purged")
 	keepSaves := flag.Int("keep-saves", engine.DefaultKeepSaves, "pruning keeps each workspace's newest N saves (0: no count limit)")
@@ -115,7 +117,16 @@ func run() error {
 			return err
 		}
 	}
-	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, KeepSaves: offIfZero(*keepSaves), KeepSavesFor: time.Duration(offIfZero(int(*keepSavesFor))), DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, DiskReserve: reserveBytes(*diskReserveMB), Warm: warmPool(*warm), SharedTemplates: *sharedTemplates, MaxCommands: *maxCommands, MaxOps: *maxOps, RestoreState: *restoreState, Objects: objects})
+	var sealKey []byte
+	if *secretsKey != "" {
+		if sealKey, err = secrets.LoadKey(*secretsKey); err != nil {
+			return fmt.Errorf("--secrets-key: %w", err)
+		}
+		if abs, _ := filepath.Abs(*secretsKey); strings.HasPrefix(abs+"/", mustAbs(*data)+"/") {
+			return errors.New("--secrets-key must be outside --data: saves and backups of the data folder would carry it")
+		}
+	}
+	eng, err := engine.Open(ctx, engine.Config{SecretsKey: sealKey, DataDir: *data, Runtime: r, Logger: log, Retention: *retention, KeepSaves: offIfZero(*keepSaves), KeepSavesFor: time.Duration(offIfZero(int(*keepSavesFor))), DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, DiskReserve: reserveBytes(*diskReserveMB), Warm: warmPool(*warm), SharedTemplates: *sharedTemplates, MaxCommands: *maxCommands, MaxOps: *maxOps, RestoreState: *restoreState, Objects: objects})
 	if err != nil {
 		return err
 	}
@@ -350,4 +361,12 @@ func reserveBytes(mb int64) int64 {
 		return -1
 	}
 	return mb << 20
+}
+
+func mustAbs(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return p
+	}
+	return abs
 }

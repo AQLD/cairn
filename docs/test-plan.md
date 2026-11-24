@@ -10,7 +10,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E1 | 55 | 0 | 4 |
 | E2 | 30 | 1 | 1 |
 | E3 | 109 | 11 | 2 |
-| E4 | 16 | 27 | 1 |
+| E4 | 18 | 25 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
 
@@ -22,11 +22,11 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 
 | Journey | For | Steps proven | Steps unblocked | Capability scenarios still pending |
 | --- | --- | --- | --- | --- |
-| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 7 of 9 | 7 of 9 | 10 |
+| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 7 of 9 | 7 of 9 | 8 |
 | [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 6 of 6 | 6 of 6 | 0 |
 | [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 3 of 6 | 4 of 6 | 2 |
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 4 of 5 | 5 of 5 | 0 |
-| [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 4 of 6 | 4 of 6 | 11 |
+| [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 4 of 6 | 4 of 6 | 9 |
 | [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 0 of 6 | 2 of 6 | 5 |
 | [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 3 of 6 | 4 of 6 | 2 |
 
@@ -215,9 +215,9 @@ Cairn runs entirely on your own servers, safely, with nothing leaving your netwo
   - ⏳ **G5.9.2** No save or copy contains a secret's value · E4 · needs network_control, in_process
   - ⏳ **G5.9.3** A placeholder sent to a host off the secret's list is refused · E4 · needs network_control, in_process
   - ⏳ **G5.9.4** git clones private code over HTTPS with a secret · E4 · needs network_control, in_process
-  - ⏳ **G5.9.5** A secret's value is never shown · E4 · needs network_control, in_process
+  - ✅ **G5.9.5** A secret's value is never shown · E4 · needs in_process
   - ⏳ **G5.9.6** Rotating or deleting a secret applies to running workspaces · E4 · needs network_control, in_process
-  - ⏳ **G5.9.7** Secret values are stored only encrypted · E4 · needs network_control, in_process
+  - ✅ **G5.9.7** Secret values are stored only encrypted · E4 · needs in_process
   - ⏳ **G5.9.8** A copy gets its own placeholders · E4 · needs network_control, in_process
   - ⏳ **G5.9.9** Bypassing the proxy gets nowhere · E4 · needs network_control, in_process
 

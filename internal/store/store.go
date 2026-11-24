@@ -150,6 +150,16 @@ UPDATE workspaces SET base_save = source_save;
 	`
 ALTER TABLE saves ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
 `,
+	// 8: secrets, values sealed with a key kept outside the data folder
+	`
+CREATE TABLE secrets (
+	name       TEXT PRIMARY KEY,
+	hosts      TEXT NOT NULL,
+	sealed     BLOB NOT NULL,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+`,
 }
 
 const (
@@ -599,4 +609,81 @@ func scanSave(r scanner) (*Save, error) {
 		sv.DeletedAt = time.Unix(0, deleted).UTC()
 	}
 	return &sv, nil
+}
+
+// Secret is a stored secret; Sealed is its value encrypted (internal/secrets).
+type Secret struct {
+	Name      string
+	Hosts     []string
+	Sealed    []byte
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// PutSecret creates or replaces a secret.
+func (s *Store) PutSecret(ctx context.Context, sec Secret) error {
+	hosts, err := json.Marshal(sec.Hosts)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO secrets (name, hosts, sealed, created_at, updated_at) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(name) DO UPDATE SET hosts = excluded.hosts, sealed = excluded.sealed, updated_at = excluded.updated_at`,
+		sec.Name, string(hosts), sec.Sealed, sec.CreatedAt.UnixNano(), sec.UpdatedAt.UnixNano())
+	return err
+}
+
+// GetSecret returns a secret, or ErrNotFound.
+func (s *Store) GetSecret(ctx context.Context, name string) (Secret, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name, hosts, sealed, created_at, updated_at FROM secrets WHERE name = ?`, name)
+	if err != nil {
+		return Secret{}, err
+	}
+	list, err := scanSecrets(rows)
+	if err != nil {
+		return Secret{}, err
+	}
+	if len(list) == 0 {
+		return Secret{}, ErrNotFound
+	}
+	return list[0], nil
+}
+
+// ListSecrets returns every secret, by name.
+func (s *Store) ListSecrets(ctx context.Context) ([]Secret, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name, hosts, sealed, created_at, updated_at FROM secrets ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	return scanSecrets(rows)
+}
+
+// DeleteSecret removes a secret; ErrNotFound if there is none.
+func (s *Store) DeleteSecret(ctx context.Context, name string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM secrets WHERE name = ?`, name)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func scanSecrets(rows *sql.Rows) ([]Secret, error) {
+	defer rows.Close()
+	var out []Secret
+	for rows.Next() {
+		var sec Secret
+		var hosts string
+		var created, updated int64
+		if err := rows.Scan(&sec.Name, &hosts, &sec.Sealed, &created, &updated); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(hosts), &sec.Hosts); err != nil {
+			return nil, err
+		}
+		sec.CreatedAt, sec.UpdatedAt = time.Unix(0, created), time.Unix(0, updated)
+		out = append(out, sec)
+	}
+	return out, rows.Err()
 }

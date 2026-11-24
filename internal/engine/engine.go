@@ -32,6 +32,7 @@ import (
 	"github.com/AQLD/cairn/internal/redact"
 	"github.com/AQLD/cairn/internal/runtime"
 	"github.com/AQLD/cairn/internal/save"
+	"github.com/AQLD/cairn/internal/secrets"
 	"github.com/AQLD/cairn/internal/store"
 )
 
@@ -88,6 +89,9 @@ type Config struct {
 	// (DefaultDiskMB if 0). Sizes are enforced with a disk image per workspace
 	// where the machine supports them (Linux, root, mkfs.ext4, loop devices).
 	DiskMB int64
+	// SecretsKey (32 bytes, kept outside DataDir) seals secret values in the
+	// state store; without it the engine refuses secrets.
+	SecretsKey []byte
 	// NoDiskImages keeps new workspaces in plain folders, with no disk limit.
 	NoDiskImages bool
 	// SharedTemplates makes workspaces share one read-only copy of their
@@ -123,11 +127,12 @@ type Config struct {
 }
 
 type Engine struct {
-	cfg    Config
-	log    *slog.Logger
-	store  *store.Store
-	events *eventlog.Log // activity log (activity.go)
-	bases  baseState     // bases.go
+	cfg     Config
+	secrets *secrets.Box // nil: no key, secrets refused
+	log     *slog.Logger
+	store   *store.Store
+	events  *eventlog.Log // activity log (activity.go)
+	bases   baseState     // bases.go
 
 	mu           sync.Mutex
 	diskErr      error       // why new workspaces get no disk image; nil if they do
@@ -278,6 +283,10 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	}
 	e = &Engine{cfg: cfg, log: cfg.Logger, store: st, locks: map[string]*wsLock{}, activity: map[string]time.Time{}, ops: make(chan struct{}, cfg.MaxOps)}
 	if err := e.openEvents(); err != nil {
+		st.Close()
+		return nil, err
+	}
+	if err := e.openSecrets(); err != nil {
 		st.Close()
 		return nil, err
 	}
