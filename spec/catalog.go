@@ -126,7 +126,13 @@ var Catalog = []Scenario{
 					{ID: "G5.6.3", Title: "A renewed certificate is used without a restart", Proves: "Replacing the certificate and key files switches new connections to the new certificate within seconds, in the same engine process; a renewal that does not load leaves the last good one serving.", Milestone: E3, Needs: []Need{NeedInProcess}},
 					{ID: "G5.6.4", Title: "The CLI and the Python SDK reach an HTTPS engine with a private CA", Proves: "CAIRN_ENDPOINT=https://… with CAIRN_CA_CERT lets the CLI and the Python SDK talk to the engine; without the CA both refuse.", Milestone: E3, Needs: []Need{NeedInProcess, NeedPython}},
 				}},
-			{ID: "G5.7", Title: "Each caller has its own API key, scoped and revocable", Proves: "One agent's access can be limited or withdrawn without touching any other.", Milestone: E4},
+			{ID: "G5.7", Title: "Each caller has its own API key, scoped and revocable", Proves: "One agent's access can be limited or withdrawn without touching any other.", Milestone: E4,
+				Children: []Scenario{
+					{ID: "G5.7.1", Title: "A key made by the operator works, and its token is shown once and never stored", Proves: "The operator's token creates a key; the key's token drives the API; listings never show it, and no file in the data folder holds it.", Milestone: E4, Needs: []Need{NeedInProcess}},
+					{ID: "G5.7.2", Title: "A revoked key stops working at once, and only that key", Proves: "After revocation the key's next request is unauthorized; another key and the operator's token keep working.", Milestone: E4, Needs: []Need{NeedInProcess}},
+					{ID: "G5.7.3", Title: "A read key can look but not change anything", Proves: "With a read key, listing and reading work; creating, running, writing, saving and deleting are forbidden and change nothing.", Milestone: E4, Needs: []Need{NeedInProcess}},
+					{ID: "G5.7.4", Title: "Only admin keys manage keys, secrets and templates", Proves: "A write key uses workspaces fully but cannot create keys, set secrets or change templates; an admin key can.", Milestone: E4, Needs: []Need{NeedInProcess}},
+				}},
 			{ID: "G5.8", Title: "Every API action is recorded with the key that made it", Proves: "An operator can answer who ran what, on which workspace, and when.", Milestone: E4},
 			{ID: "G5.9", Title: "Secrets reach a workspace without landing on its disk or in its saves", Proves: "Credentials an agent uses cannot be read back from a save or a copy.", Milestone: E4, Needs: []Need{NeedNetworkControl},
 				Children: []Scenario{

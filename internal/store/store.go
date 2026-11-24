@@ -160,6 +160,17 @@ CREATE TABLE secrets (
 	updated_at INTEGER NOT NULL
 );
 `,
+	// 9: API keys, each caller's own; only the token's SHA-256 is kept
+	`
+CREATE TABLE api_keys (
+	id         TEXT PRIMARY KEY,
+	name       TEXT NOT NULL,
+	scope      TEXT NOT NULL,
+	hash       TEXT NOT NULL UNIQUE,
+	created_at INTEGER NOT NULL,
+	revoked_at INTEGER NOT NULL DEFAULT 0
+);
+`,
 }
 
 const (
@@ -684,6 +695,85 @@ func scanSecrets(rows *sql.Rows) ([]Secret, error) {
 		}
 		sec.CreatedAt, sec.UpdatedAt = time.Unix(0, created), time.Unix(0, updated)
 		out = append(out, sec)
+	}
+	return out, rows.Err()
+}
+
+// APIKey is a caller's key; only its token's hash is stored.
+type APIKey struct {
+	ID        string
+	Name      string
+	Scope     string
+	Hash      string
+	CreatedAt time.Time
+	RevokedAt time.Time // zero while it works
+}
+
+// InsertAPIKey records a new key.
+func (s *Store) InsertAPIKey(ctx context.Context, k APIKey) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO api_keys (id, name, scope, hash, created_at) VALUES (?, ?, ?, ?, ?)`,
+		k.ID, k.Name, k.Scope, k.Hash, k.CreatedAt.UnixNano())
+	return err
+}
+
+// APIKeyByHash returns the key with this token hash, revoked or not.
+func (s *Store) APIKeyByHash(ctx context.Context, hash string) (APIKey, error) {
+	return s.oneKey(ctx, `WHERE hash = ?`, hash)
+}
+
+// GetAPIKey returns a key by ID.
+func (s *Store) GetAPIKey(ctx context.Context, id string) (APIKey, error) {
+	return s.oneKey(ctx, `WHERE id = ?`, id)
+}
+
+func (s *Store) oneKey(ctx context.Context, where string, arg any) (APIKey, error) {
+	list, err := s.keys(ctx, where, arg)
+	if err != nil {
+		return APIKey{}, err
+	}
+	if len(list) == 0 {
+		return APIKey{}, ErrNotFound
+	}
+	return list[0], nil
+}
+
+// ListAPIKeys returns every key, oldest first.
+func (s *Store) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
+	return s.keys(ctx, `ORDER BY created_at`)
+}
+
+// RevokeAPIKey marks a key revoked (idempotent).
+func (s *Store) RevokeAPIKey(ctx context.Context, id string, at time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at = 0`, at.UnixNano(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if _, err := s.GetAPIKey(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) keys(ctx context.Context, rest string, args ...any) ([]APIKey, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, scope, hash, created_at, revoked_at FROM api_keys `+rest, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []APIKey
+	for rows.Next() {
+		var k APIKey
+		var created, revoked int64
+		if err := rows.Scan(&k.ID, &k.Name, &k.Scope, &k.Hash, &created, &revoked); err != nil {
+			return nil, err
+		}
+		k.CreatedAt = time.Unix(0, created)
+		if revoked != 0 {
+			k.RevokedAt = time.Unix(0, revoked)
+		}
+		out = append(out, k)
 	}
 	return out, rows.Err()
 }

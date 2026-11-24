@@ -59,6 +59,8 @@ commands:
                                           create a workspace (from a template)
   secret set NAME --host HOST...          store a secret (value read from stdin; sent only to those hosts)
   secret ls | secret rm NAME              list (never values) or delete secrets
+  key create NAME [--scope read|write|admin]  an API key for one caller (token shown once)
+  key ls | key rm ID                      list or revoke API keys
   template import NAME ROOTFS.tar         import a root filesystem tar as a template
                                           (e.g. docker export $(docker create python:3.12-slim) > python.tar)
   template pull NAME IMAGE [--insecure]   build a template from a container image in a registry
@@ -410,6 +412,43 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 			}
 		default:
 			return 2, errors.New("usage: cairn secret set NAME --host HOST... (value on stdin) | secret ls | secret rm NAME")
+		}
+
+	case "key":
+		switch {
+		case len(args) >= 2 && args[0] == "create":
+			fs := flag.NewFlagSet("key create", flag.ContinueOnError)
+			scope := fs.String("scope", "write", "what the key may do: read, write or admin")
+			if err := fs.Parse(args[2:]); err != nil {
+				return 2, err
+			}
+			k, err := c.CreateKey(ctx, args[1], *scope)
+			if err != nil {
+				return 1, err
+			}
+			fmt.Fprintf(os.Stderr, "%s (%s, %s): the token below is shown only now\n", k.ID, k.Name, k.Scope)
+			fmt.Println(k.Token)
+		case len(args) == 1 && args[0] == "ls":
+			list, err := c.ListKeys(ctx)
+			if err != nil {
+				return 1, err
+			}
+			tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+			fmt.Fprintln(tw, "ID\tNAME\tSCOPE\tCREATED\tREVOKED")
+			for _, k := range list {
+				revoked := ""
+				if k.RevokedAt != nil {
+					revoked = k.RevokedAt.Local().Format(time.DateTime)
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", k.ID, k.Name, k.Scope, k.CreatedAt.Local().Format(time.DateTime), revoked)
+			}
+			tw.Flush()
+		case len(args) == 2 && args[0] == "rm":
+			if err := c.RevokeKey(ctx, args[1]); err != nil {
+				return 1, err
+			}
+		default:
+			return 2, errors.New("usage: cairn key create NAME [--scope read|write|admin] | key ls | key rm ID")
 		}
 
 	case "template":
