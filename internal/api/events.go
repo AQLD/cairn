@@ -18,14 +18,32 @@ import (
 //	?follow=1    stream: newline-delimited JSON events, the existing ones
 //	             (from after/last) then new ones as they happen, until the
 //	             client disconnects or the engine shuts down
-func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
+//
+// audit lists what was done across workspaces and the engine (admin only),
+// optionally by one key: GET /v1/audit?key=key_…&kind=&after=&limit=&last=.
+func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
+	eq, ok := eventQuery(w, r)
+	if !ok {
+		return
+	}
+	eq.Key = r.URL.Query().Get("key")
+	evs, err := s.eng.Audit(r.Context(), eq)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": evs})
+}
+
+// eventQuery reads after, limit, last and kind.
+func eventQuery(w http.ResponseWriter, r *http.Request) (engine.EventQuery, bool) {
 	q := r.URL.Query()
 	var eq engine.EventQuery
 	var err error
 	if v := q.Get("after"); v != "" {
 		if eq.After, err = strconv.ParseInt(v, 10, 64); err != nil || eq.After < 0 {
 			writeError(w, http.StatusBadRequest, "invalid_argument", "after must be an event ID")
-			return
+			return eq, false
 		}
 	}
 	for _, p := range []struct {
@@ -36,13 +54,22 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 			n, err := strconv.Atoi(v)
 			if err != nil || n < 1 {
 				writeError(w, http.StatusBadRequest, "invalid_argument", p.name+" must be a positive number")
-				return
+				return eq, false
 			}
 			*p.dst = n
 			eq.Tail = eq.Tail || p.name == "last"
 		}
 	}
 	eq.Kind = q.Get("kind")
+	return eq, true
+}
+
+func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
+	eq, ok := eventQuery(w, r)
+	if !ok {
+		return
+	}
+	q := r.URL.Query()
 	id := r.PathValue("id")
 	seen := s.eng.EventsLast() // before listing, so nothing slips between
 	evs, err := s.eng.Events(r.Context(), id, eq)

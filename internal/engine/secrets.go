@@ -102,6 +102,7 @@ func (e *Engine) SetSecret(ctx context.Context, name string, value []byte, hosts
 		return Secret{}, err
 	}
 	e.log.Info("secret set", "secret", name, "hosts", hosts) // never the value
+	e.note(ctx, "", "secret_set", fmt.Sprintf("secret %s set for %s", name, strings.Join(hosts, ", ")), nil, map[string]any{"secret": name})
 	return publicSecret(sec), nil
 }
 
@@ -129,6 +130,7 @@ func (e *Engine) DeleteSecret(ctx context.Context, name string) error {
 		return err
 	}
 	e.log.Info("secret deleted", "secret", name)
+	e.note(ctx, "", "secret_delete", "secret "+name+" deleted", nil, map[string]any{"secret": name})
 	return nil
 }
 

@@ -109,14 +109,14 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
 }
 
-// allowed: read keys look; write keys use workspaces; keys, secrets and
-// template changes need admin.
+// allowed: read keys look; write keys use workspaces; keys, secrets, the
+// audit log and template changes need admin.
 func allowed(scope string, r *http.Request) bool {
 	if scope == engine.ScopeAdmin {
 		return true
 	}
 	p := r.URL.Path
-	if strings.HasPrefix(p, "/v1/keys") || strings.HasPrefix(p, "/v1/secrets") {
+	if strings.HasPrefix(p, "/v1/keys") || strings.HasPrefix(p, "/v1/secrets") || p == "/v1/audit" {
 		return false
 	}
 	reading := r.Method == http.MethodGet || r.Method == http.MethodHead
@@ -174,6 +174,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PUT /v1/secrets/{name}", s.setSecret)
 	s.mux.HandleFunc("GET /v1/secrets", s.listSecrets)
 	s.mux.HandleFunc("DELETE /v1/secrets/{name}", s.deleteSecret)
+	s.mux.HandleFunc("GET /v1/audit", s.audit)
 	s.mux.HandleFunc("POST /v1/keys", s.createKey)
 	s.mux.HandleFunc("GET /v1/keys", s.listKeys)
 	s.mux.HandleFunc("DELETE /v1/keys/{id}", s.revokeKey)

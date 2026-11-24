@@ -33,6 +33,9 @@ type Event struct {
 	Time      time.Time `json:"time"`
 	Kind      string    `json:"kind"`
 	RequestID string    `json:"request_id,omitempty"`
+	// Key is who acted: an API key's ID, "operator" for the engine's own
+	// token, "" when the engine runs without authentication.
+	Key string `json:"key,omitempty"`
 	// Summary is one readable line ("exec: pytest -q → exit 1 in 2.3s").
 	Summary string `json:"summary"`
 	// Error is set when the operation failed.
@@ -94,7 +97,13 @@ CREATE TABLE IF NOT EXISTS ended (
 	workspace TEXT PRIMARY KEY,
 	at        INTEGER NOT NULL
 );
-PRAGMA user_version = 1;
+`
+
+// migrateV2 adds who acted (the API key) to every event.
+const migrateV2 = `
+ALTER TABLE events ADD COLUMN key TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS events_by_key ON events (key, id);
+PRAGMA user_version = 2;
 `
 
 // Open opens or creates the log at path. A log that cannot be opened (damaged,
@@ -136,7 +145,7 @@ func open(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, err
 	}
-	if v > 1 {
+	if v > 2 {
 		db.Close()
 		return nil, fmt.Errorf("activity log is version %d, newer than this engine", v)
 	}
@@ -151,6 +160,12 @@ func open(path string) (*sql.DB, error) {
 	if _, err := db.Exec(schema); err != nil {
 		db.Close()
 		return nil, err
+	}
+	if v < 2 {
+		if _, err := db.Exec(migrateV2); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("activity log: add keys: %w", err)
+		}
 	}
 	return db, nil
 }
@@ -229,8 +244,8 @@ func (l *Log) write(batch []Event) error {
 			}
 			data = string(b)
 		}
-		res, err := tx.Exec(`INSERT INTO events (workspace, time, kind, request_id, summary, error, data) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			ev.Workspace, ev.Time.UnixNano(), ev.Kind, ev.RequestID, ev.Summary, ev.Error, data)
+		res, err := tx.Exec(`INSERT INTO events (workspace, time, kind, request_id, summary, error, data, key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			ev.Workspace, ev.Time.UnixNano(), ev.Kind, ev.RequestID, ev.Summary, ev.Error, data, ev.Key)
 		if err != nil {
 			return err
 		}
@@ -282,9 +297,15 @@ type Query struct {
 	// Tail returns the newest Limit events (still oldest first) instead of the
 	// oldest ones after After.
 	Tail bool
+	// Key, if set, keeps only what this key did (see Event.Key).
+	Key string
 }
 
 const maxLimit = 1000
+
+// AllWorkspaces makes List read every workspace's events, and the engine's
+// own (keys, secrets), for an audit.
+const AllWorkspaces = "*"
 
 // List returns events oldest first.
 func (l *Log) List(ctx context.Context, workspace string, q Query) ([]Event, error) {
@@ -292,8 +313,16 @@ func (l *Log) List(ctx context.Context, workspace string, q Query) ([]Event, err
 		q.Limit = 100
 	}
 	q.Limit = min(q.Limit, maxLimit)
-	where := `workspace = ? AND id > ?`
-	args := []any{workspace, q.After}
+	where := `id > ?`
+	args := []any{q.After}
+	if workspace != AllWorkspaces {
+		where += ` AND workspace = ?`
+		args = append(args, workspace)
+	}
+	if q.Key != "" {
+		where += ` AND key = ?`
+		args = append(args, q.Key)
+	}
 	if q.Kind != "" {
 		if p, ok := strings.CutSuffix(q.Kind, "*"); ok {
 			where += ` AND kind LIKE ? ESCAPE '\'`
@@ -307,7 +336,7 @@ func (l *Log) List(ctx context.Context, workspace string, q Query) ([]Event, err
 	if q.Tail {
 		order = `DESC`
 	}
-	rows, err := l.db.QueryContext(ctx, `SELECT id, workspace, time, kind, request_id, summary, error, data FROM events WHERE `+
+	rows, err := l.db.QueryContext(ctx, `SELECT id, workspace, time, kind, request_id, summary, error, data, key FROM events WHERE `+
 		where+` ORDER BY id `+order+` LIMIT ?`, append(args, q.Limit)...)
 	if err != nil {
 		return nil, err
@@ -318,7 +347,7 @@ func (l *Log) List(ctx context.Context, workspace string, q Query) ([]Event, err
 		var ev Event
 		var t int64
 		var data string
-		if err := rows.Scan(&ev.ID, &ev.Workspace, &t, &ev.Kind, &ev.RequestID, &ev.Summary, &ev.Error, &data); err != nil {
+		if err := rows.Scan(&ev.ID, &ev.Workspace, &t, &ev.Kind, &ev.RequestID, &ev.Summary, &ev.Error, &data, &ev.Key); err != nil {
 			return nil, err
 		}
 		ev.Time = time.Unix(0, t).UTC()
