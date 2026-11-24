@@ -59,6 +59,7 @@ func run() error {
 	backupEvery := flag.Duration("state-backup-interval", time.Hour, "how often to back up the state database (state.db.backup; 0 disables)")
 	sharedTemplates := flag.Bool("shared-templates", false, "workspaces share one read-only copy of their template and store only their changes (needs Linux, root and overlayfs; experimental: on Linux 7.0 a program's fsync is not told about a write that failed underneath, as on a full host volume)")
 	warm := flag.Int("warm", 0, "keep N workspaces of the default template created and started ahead of demand, so creates return at once (0: off)")
+	diskReserveMB := flag.Int64("disk-reserve-mb", engine.DefaultDiskReserve>>20, "below this much free space on the data volume, workspace disks turn read-only until there is room (writes fail at once instead of being lost); 0 turns this off")
 	diskImages := flag.Bool("disk-images", true, "enforce workspace disk sizes with an ext4 image per workspace (needs root, mkfs.ext4 and loop devices)")
 	var imports templateImports
 	flag.Var(&imports, "import-template", "NAME=ROOTFS.tar to import at startup if missing or changed (repeatable)")
@@ -102,7 +103,7 @@ func run() error {
 			return err
 		}
 	}
-	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, KeepSaves: offIfZero(*keepSaves), KeepSavesFor: time.Duration(offIfZero(int(*keepSavesFor))), DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, Warm: warmPool(*warm), SharedTemplates: *sharedTemplates, MaxCommands: *maxCommands, MaxOps: *maxOps, RestoreState: *restoreState, Objects: objects})
+	eng, err := engine.Open(ctx, engine.Config{DataDir: *data, Runtime: r, Logger: log, Retention: *retention, KeepSaves: offIfZero(*keepSaves), KeepSavesFor: time.Duration(offIfZero(int(*keepSavesFor))), DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, DiskReserve: reserveBytes(*diskReserveMB), Warm: warmPool(*warm), SharedTemplates: *sharedTemplates, MaxCommands: *maxCommands, MaxOps: *maxOps, RestoreState: *restoreState, Objects: objects})
 	if err != nil {
 		return err
 	}
@@ -323,4 +324,12 @@ func warmPool(n int) map[string]int {
 		return nil
 	}
 	return map[string]int{"": n}
+}
+
+// reserveBytes maps --disk-reserve-mb to the engine's DiskReserve (0: off).
+func reserveBytes(mb int64) int64 {
+	if mb <= 0 {
+		return -1
+	}
+	return mb << 20
 }

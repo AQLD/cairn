@@ -139,6 +139,7 @@ var Catalog = []Scenario{
 					{ID: "G6.4.1", Title: "A save that would not fit is refused before anything is written", Milestone: E2, Needs: []Need{NeedInProcess}},
 					{ID: "G6.4.2", Title: "Running out of disk mid-save aborts cleanly and the workspace keeps running", Milestone: E2, Needs: []Need{NeedInProcess}},
 					{ID: "G6.4.3", Title: "A real full disk on a server", Milestone: E2, Needs: []Need{NeedInProcess}},
+					{ID: "G6.4.4", Title: "When the server's volume nearly fills, workspace writes wait or fail and nothing written is lost", Proves: "Below the reserve, workspace filesystems are frozen after writing out what they hold: programs' writes wait instead of being lost later, new commands and API writes are refused with insufficient_storage, file reads keep working; once there is room everything works again and every file written before is intact.", Milestone: E2, Needs: []Need{NeedDiskLimits, NeedInProcess}},
 				}},
 			{ID: "G6.5", Title: "Saves live in object storage and survive the server", Proves: "A save outlives the server that made it.", Milestone: E2, Needs: []Need{NeedInProcess},
 				Children: []Scenario{

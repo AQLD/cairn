@@ -238,6 +238,9 @@ func ensureNode(dev string, n int) error {
 // Unmount unmounts dir if something is mounted there. A filesystem still busy
 // (a sandbox's file server exiting) is retried for a few seconds, then detached.
 func Unmount(dir string) error {
+	if mounted, err := Mounted(dir); err == nil && mounted {
+		_ = Thaw(dir) // a frozen filesystem (disk pressure) is thawed before it goes
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		mounted, err := Mounted(dir)
@@ -348,4 +351,33 @@ func attachedLoops(img string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// Freeze and Thaw stop and resume writes to the filesystem mounted at dir
+// (FIFREEZE / FITHAW): freezing writes out everything the filesystem holds,
+// then makes every write wait until it is thawed. Remounting read-only would
+// fail instead while any file is open for writing, which a sandbox's file
+// server always has. Freezing a frozen filesystem, or thawing one that is
+// not frozen, does nothing.
+const (
+	fiFreeze = 0xC0045877 // _IOWR('X', 119, int)
+	fiThaw   = 0xC0045878 // _IOWR('X', 120, int)
+)
+
+func Freeze(dir string) error { return freezeIoctl(dir, fiFreeze) }
+func Thaw(dir string) error   { return freezeIoctl(dir, fiThaw) }
+
+func freezeIoctl(dir string, req uintptr) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, _, errno := unix.Syscall(unix.SYS_IOCTL, f.Fd(), req, 0)
+	switch {
+	case errno == 0, errno == unix.EBUSY && req == fiFreeze, errno == unix.EINVAL && req == fiThaw:
+		return nil // already frozen / not frozen
+	default:
+		return fmt.Errorf("%s %s: %w", map[uintptr]string{fiFreeze: "freeze", fiThaw: "thaw"}[req], dir, errno)
+	}
 }

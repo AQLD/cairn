@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/AQLD/cairn/client"
@@ -43,7 +44,7 @@ func init() {
 		orig := e.DataDir // runsc keeps its state here still
 		e.T.Cleanup(func() { unmountAll(orig) })
 		e.DataDir = mnt
-		e.configure = func(c *engine.Config) { c.MinFreeBytes = 64 << 20 }
+		e.configure = func(c *engine.Config) { c.MinFreeBytes = 64 << 20; c.DiskReserve = 256 << 20 }
 		e.start()
 		defer func() { e.configure = nil }()
 
@@ -68,10 +69,10 @@ func init() {
 		}
 		// ...and a program writing inside the workspace fails, or (once the
 		// workspace's disk has hit write errors) the engine says why up front
-		res, err := e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"sh", "-c", "dd if=/dev/zero of=inside.bin bs=1M count=64 conv=fsync"}, TimeoutMS: 60_000})
+		res, err := e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"sh", "-c", "dd if=/dev/zero of=inside.bin bs=1M count=64 conv=fsync"}, TimeoutMS: 10_000})
 		if err != nil {
 			e.ErrCode(err, "insufficient_storage")
-		} else if res.ExitCode == 0 {
+		} else if res.ExitCode == 0 && !res.TimedOut {
 			e.T.Fatal("a 64 MB write inside the workspace succeeded on a full volume")
 		}
 
@@ -101,4 +102,82 @@ func run(e *Env, name string, args ...string) {
 	if out, err := exec.Command(name, args...).CombinedOutput(); err != nil {
 		e.T.Fatalf("%s %v: %v\n%s", name, args, err, out)
 	}
+
+}
+
+func init() {
+	register("G6.4.4", func(e *Env) {
+		if _, err := exec.LookPath("fallocate"); err != nil {
+			e.T.Skip("needs fallocate")
+		}
+		vol := e.T.TempDir()
+		img, mnt := filepath.Join(vol, "volume.img"), filepath.Join(vol, "data")
+		e.Must(os.Mkdir(mnt, 0o700))
+		run(e, "truncate", "-s", fmt.Sprintf("%dM", fullVolumeMB), img)
+		run(e, "mkfs.ext4", "-q", "-F", "-m", "0", img)
+		run(e, "mount", "-o", "loop", img, mnt)
+		e.T.Cleanup(func() {
+			unmountAll(mnt)
+			_ = exec.Command("umount", "-l", mnt).Run()
+		})
+		e.stop()
+		orig := e.DataDir
+		e.T.Cleanup(func() { unmountAll(orig) })
+		e.DataDir = mnt
+		const reserve = 300 << 20
+		e.configure = func(c *engine.Config) { c.MinFreeBytes = 64 << 20; c.DiskReserve = reserve }
+		e.start()
+		defer func() { e.configure = nil }()
+
+		ws, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "pressed", Limits: client.Limits{DiskMB: 1024}})
+		e.Must(err)
+		e.Write(ws.ID, "kept.txt", "written before the volume filled")
+		e.Sh(ws.ID, "head -c 1048576 /dev/urandom > before.bin && sync")
+		sum := e.Sh(ws.ID, "cksum before.bin")
+
+		// something else takes the volume down to well under the reserve
+		var st syscall.Statfs_t
+		e.Must(syscall.Statfs(mnt, &st))
+		free := int64(st.Bavail) * int64(st.Bsize) //nolint:unconvert
+		filler := filepath.Join(mnt, "filler")
+		run(e, "fallocate", "-l", fmt.Sprint(free-reserve/2), filler)
+
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			err := e.C.WriteFile(e.Ctx, ws.ID, "probe.txt", []byte("x"))
+			if client.IsCode(err, "insufficient_storage") {
+				break
+			}
+			if time.Now().After(deadline) {
+				e.T.Fatalf("an API write 5 s after the volume went under the reserve: %v (want insufficient_storage)", err)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		// a program's write waits for room (the filesystem is frozen) or fails;
+		// it never completes onto a nearly full volume
+		_, err = e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"sh", "-c", "head -c 8388608 /dev/urandom > inside.bin && sync"}, TimeoutMS: 3_000})
+		e.ErrCode(err, "insufficient_storage")
+		Equal(e, "earlier file readable", e.Read(ws.ID, "kept.txt"), "written before the volume filled")
+		_, err = e.C.Run(e.Ctx, ws.ID, "true")
+		e.ErrCode(err, "insufficient_storage") // a new command would wait for room: refused at once
+
+		// room again
+		e.Must(os.Remove(filler))
+		deadline = time.Now().Add(5 * time.Second)
+		for {
+			err := e.C.WriteFile(e.Ctx, ws.ID, "after.txt", []byte("room again"))
+			if err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				e.T.Fatalf("writes still refused 5 s after room came back: %v", err)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		e.Sh(ws.ID, "head -c 8388608 /dev/urandom > inside.bin && sync")
+		sv := e.Save(ws.ID)
+		e.Resume(sv.ID)
+		Equal(e, "after resume", e.Read(ws.ID, "after.txt"), "room again")
+		Equal(e, "file from before the pressure", e.Sh(ws.ID, "cksum before.bin"), sum)
+	})
 }

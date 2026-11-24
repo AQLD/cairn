@@ -42,6 +42,7 @@ var exclusive = []string{
 	"G1.8",   // clocks across a pause
 	"G3.2",   // CPU, memory and disk limits
 	"G6.4.3", // the host volume really fills
+	"G6.4.4", // the host volume nearly fills
 	"G7.6",   // kill -9 rounds
 	"G7.10",  // concurrent workers
 	"G7.12",  // power cuts
