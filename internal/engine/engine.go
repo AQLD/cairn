@@ -155,6 +155,8 @@ type Spec struct {
 	Limits   runtime.Limits `json:"limits"`
 	Network  bool           `json:"network"`
 	Template string         `json:"template,omitempty"`
+	// Egress is the outbound allow-list (empty: no limit beyond Network).
+	Egress []string `json:"egress,omitempty"`
 	// DiskImage: the files live in an image of Limits.DiskMB (see volume).
 	// Decided at creation; workspaces made before disk limits have none.
 	DiskImage bool `json:"disk_image,omitempty"`
@@ -167,6 +169,7 @@ type Workspace struct {
 	State      store.WorkspaceState `json:"state"`
 	Limits     runtime.Limits       `json:"limits"`
 	Network    bool                 `json:"network"`
+	Egress     []string             `json:"egress,omitempty"`
 	Template   string               `json:"template,omitempty"`
 	SourceSave string               `json:"source_save,omitempty"`
 	BaseSave   string               `json:"base_save,omitempty"` // the save its state comes from: last saved, resumed or copied
@@ -413,6 +416,9 @@ type CreateRequest struct {
 	Limits   runtime.Limits `json:"limits"`
 	Network  bool           `json:"network"`
 	Template string         `json:"template,omitempty"`
+	// Egress limits outbound traffic to these names ("pypi.org",
+	// "*.github.com") and IPv4 ranges; it switches the network on.
+	Egress []string `json:"egress,omitempty"`
 	// RequestKey makes the request idempotent: a retry with the same key
 	// returns the workspace the first request created instead of a new one.
 	RequestKey string `json:"-"`
@@ -427,6 +433,15 @@ func (e *Engine) createWorkspace(ctx context.Context, req CreateRequest) (*Works
 	}
 	if req.Limits.DiskMB != 0 && e.diskErr != nil {
 		e.log.Warn("workspace disk size is not enforced", "reason", e.diskErr.Error())
+	}
+	if len(req.Egress) > 0 {
+		if _, err := runtime.ParseEgress(req.Egress); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalid, err)
+		}
+		if !e.cfg.Runtime.Capabilities().NetworkControl {
+			return nil, fmt.Errorf("%w: runtime %s cannot limit outbound traffic", ErrUnsupported, e.cfg.Runtime.Name())
+		}
+		req.Network = true
 	}
 	if !e.cfg.Runtime.Capabilities().NetworkControl {
 		// The setting is recorded either way; Info reports that it is not enforced.
@@ -449,7 +464,7 @@ func (e *Engine) createWorkspace(ctx context.Context, req CreateRequest) (*Works
 		}
 		templateSize = t.Size
 	}
-	spec := Spec{Limits: req.Limits, Network: req.Network, Template: template}
+	spec := Spec{Limits: req.Limits, Network: req.Network, Template: template, Egress: req.Egress}
 	e.diskFor(&spec)
 	// a warm workspace made with exactly this spec, if the pool has one
 	if w, err := e.claimWarm(ctx, spec, req.Name, req.RequestKey); errors.Is(err, store.ErrDuplicateKey) {
@@ -1981,7 +1996,7 @@ func (e *Engine) runtimeSpec(w *store.Workspace) (runtime.Spec, error) {
 			return runtime.Spec{}, err
 		}
 	}
-	return runtime.Spec{ID: w.ID, Hostname: w.ID, RootDir: e.rootDir(w.ID), Limits: spec.Limits, Network: spec.Network}, nil
+	return runtime.Spec{ID: w.ID, Hostname: w.ID, RootDir: e.rootDir(w.ID), Limits: spec.Limits, Network: spec.Network, Egress: spec.Egress}, nil
 }
 
 func (e *Engine) workspaceDir(id string) string {
@@ -2013,7 +2028,7 @@ func toWorkspace(w *store.Workspace) (*Workspace, error) {
 		}
 	}
 	return &Workspace{
-		ID: w.ID, Name: w.Name, State: w.State, Limits: spec.Limits, Network: spec.Network,
+		ID: w.ID, Name: w.Name, State: w.State, Limits: spec.Limits, Network: spec.Network, Egress: spec.Egress,
 		Template: spec.Template, SourceSave: w.SourceSave, BaseSave: w.BaseSave, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
 	}, nil
 }

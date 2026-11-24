@@ -2,7 +2,7 @@
 // through the REST API.
 //
 //	cairn up [--build] | down [--purge] | status
-//	cairn create [--name NAME] [--template T]
+//	cairn create [--name NAME] [--template T] [--network | --allow NAME|RANGE ...]
 //	cairn template import NAME ROOTFS.tar | template pull NAME IMAGE | template ls | template rm NAME
 //	cairn ls
 //	cairn exec WORKSPACE -- COMMAND [ARGS...]
@@ -55,7 +55,7 @@ commands:
   doctor                                  check the engine, agents and project; say how to fix
   run [--no-push] -- COMMAND [ARGS...]    push this project's edits into its workspace, run there
   version                                 print this CLI's version
-  create [--name NAME] [--template T] [--network] [--memory MB] [--disk MB] [--cpus N]
+  create [--name NAME] [--template T] [--network | --allow NAME...] [--memory MB] [--disk MB] [--cpus N]
                                           create a workspace (from a template)
   template import NAME ROOTFS.tar         import a root filesystem tar as a template
                                           (e.g. docker export $(docker create python:3.12-slim) > python.tar)
@@ -181,10 +181,12 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 		memory := fs.Int64("memory", 0, "memory limit in MB (default: the engine's)")
 		disk := fs.Int64("disk", 0, "disk size in MB (default: the engine's)")
 		cpus := fs.Float64("cpus", 0, "CPU limit, in CPUs (default: the engine's)")
+		var allow stringList
+		fs.Var(&allow, "allow", "allow outbound traffic only to this name (pypi.org), name suffix (*.github.com) or IPv4 range; repeat it; implies --network")
 		if err := fs.Parse(args); err != nil {
 			return 2, err
 		}
-		ws, err := c.CreateWorkspace(ctx, client.CreateWorkspace{Name: *name, Template: *template, Network: *network,
+		ws, err := c.CreateWorkspace(ctx, client.CreateWorkspace{Name: *name, Template: *template, Network: *network, Egress: allow,
 			Limits: client.Limits{MemoryMB: *memory, DiskMB: *disk, CPUs: *cpus}})
 		if err != nil {
 			return 1, err

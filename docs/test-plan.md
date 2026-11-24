@@ -10,7 +10,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E1 | 55 | 0 | 4 |
 | E2 | 30 | 1 | 1 |
 | E3 | 105 | 12 | 2 |
-| E4 | 8 | 23 | 1 |
+| E4 | 12 | 22 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
 
@@ -22,11 +22,11 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 
 | Journey | For | Steps proven | Steps unblocked | Capability scenarios still pending |
 | --- | --- | --- | --- | --- |
-| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 7 of 9 | 7 of 9 | 3 |
-| [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 5 of 6 | 5 of 6 | 1 |
-| [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 3 of 6 | 3 of 6 | 3 |
-| [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 3 of 5 | 4 of 5 | 1 |
-| [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 3 of 6 | 3 of 6 | 4 |
+| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 7 of 9 | 7 of 9 | 2 |
+| [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 5 of 6 | 6 of 6 | 0 |
+| [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 3 of 6 | 4 of 6 | 2 |
+| [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 3 of 5 | 5 of 5 | 0 |
+| [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 3 of 6 | 4 of 6 | 3 |
 | [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 0 of 6 | 2 of 6 | 5 |
 | [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 3 of 6 | 4 of 6 | 2 |
 
@@ -35,7 +35,7 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 An agent sets up a repository, works on it across days, tries fixes in parallel and hands the winner to a person. Gate: **E4**.
 
 - ✅ **G11.1** Starts from the team's toolchain image, ready to work · E3 · needs in_process, python · uses G1.10 ✅, G1.10.5 ✅, G9.1 ✅
-- ⏳ **G11.2** Fetches private code with a credential that never lands in the workspace or its saves · E4 · uses G5.9 ⏳, G5.4 ⏳
+- ⏳ **G11.2** Fetches private code with a credential that never lands in the workspace or its saves · E4 · uses G5.9 ⏳, G5.4 ✅
 - 📂 **G11.3** Installs dependencies, runs the tests and a dev server with live output · E3
   - ✅ **G11.3.1** Installs the project's dependencies from a private package index · E3 · needs python · uses G1.6 ✅, G1.2 ✅
   - ✅ **G11.3.2** Runs the test suite with output arriving while it runs · E3 · needs python · uses G1.6.8 ✅
@@ -52,7 +52,7 @@ Data goes in, analysis runs in a live session that lasts for days, results come 
 - ✅ **G12.1** Loads a dataset of several gigabytes · E3 · needs python · uses G19.5 ✅, G3.2.3 ✅
 - ✅ **G12.2** Keeps a live Python session between questions · E3 · needs persistent_processes · uses G19.1 ✅
 - ✅ **G12.3** Comes back a week later to the same session with its data still loaded · E3 · needs full_save, persistent_processes · uses G19.2 ✅, G1.8.1 ✅, G4.2 ✅
-- ⏳ **G12.4** Data cannot leave: the network is off or allow-listed · E4 · uses G5.3 ✅, G5.4 ⏳, G8.6 ✅
+- ⏳ **G12.4** Data cannot leave: the network is off or allow-listed · E4 · uses G5.3 ✅, G5.4 ✅, G8.6 ✅
 - ✅ **G12.5** A query that runs out of memory loses the query, not the session's files · E3 · needs resource_limits, persistent_processes · uses G3.2.4 ✅, G3.2.5 ✅
 - ✅ **G12.6** Charts and result files come back out · E3 · needs python · uses G1.4 ✅, G19.5 ✅
 
@@ -63,7 +63,7 @@ A signed-in browser keeps its place through waits for a person, reaches only the
 - ✅ **G13.1** A signed-in browser stays signed in across pause and resume · E3 · needs agent_tools, full_save, persistent_processes · uses G1.7.4 ✅, G4.2 ✅
 - ✅ **G13.2** Waits for a person's approval or one-time code at no compute cost · E3 · needs agent_tools, full_save, persistent_processes · uses G4.1 ✅, G4.4 ✅
 - ✅ **G13.3** A person sees the page and takes over the session after a pause · E3 · needs agent_tools, full_save, persistent_processes · uses G1.4 ✅, G4.2 ✅
-- ⏳ **G13.4** The browser reaches only the task's sites · E4 · uses G5.4 ⏳
+- ⏳ **G13.4** The browser reaches only the task's sites · E4 · uses G5.4 ✅
 - ⏳ **G13.5** Every action is on record · E4 · uses G5.8 ⏳, G10.4.2 ✅
 - ⏳ **G13.6** A person watches the browser live · later · uses G19.4 ⏳
 
@@ -72,7 +72,7 @@ A signed-in browser keeps its place through waits for a person, reaches only the
 Many short tasks start warm with their tools loaded, use only approved sources, and cost little. Gate: **E4**.
 
 - ✅ **G14.1** Each question starts from a warm save with its tools loaded · E3 · needs full_save, persistent_processes · uses G2.1 ✅, G9.5 ✅
-- ⏳ **G14.2** Fetches only from allowed sources · E4 · uses G5.4 ⏳
+- ⏳ **G14.2** Fetches only from allowed sources · E4 · uses G5.4 ✅
 - ✅ **G14.3** Reads documents with installed tools (PDF, office files) · E3 · needs agent_tools · uses G1.2 ✅, G1.10 ✅
 - ⏳ **G14.4** A hundred questions run side by side on one server · E4 · uses G2.4 ✅, G9.7 ✅
 - ✅ **G14.5** Finished questions leave nothing behind · E3 · needs full_save, persistent_processes, in_process · uses G10.7 ✅
@@ -82,7 +82,7 @@ Many short tasks start warm with their tools loaded, use only approved sources, 
 An agent acts on internal systems with credentials it cannot leak, waits for approval before risky steps, and leaves a full record and a way back. Gate: **E4**.
 
 - ⏳ **G15.1** Calls internal APIs with secrets it cannot read back or leak · E4 · uses G5.9 ⏳
-- ⏳ **G15.2** Reaches only the internal hosts it is allowed · E4 · uses G5.4 ⏳, G8.6 ✅
+- ⏳ **G15.2** Reaches only the internal hosts it is allowed · E4 · uses G5.4 ✅, G8.6 ✅
 - ✅ **G15.3** Waits for approval before a risky step at no compute cost · E3 · needs full_save, persistent_processes · uses G4.1 ✅, G4.2 ✅
 - ⏳ **G15.4** Every command is recorded with the key that ran it · E4 · uses G5.7 ⏳, G5.8 ⏳
 - ✅ **G15.5** A bad change inside the workspace is undone by rewinding · E3 · needs full_save, persistent_processes · uses G18.3 ✅
@@ -197,7 +197,11 @@ Cairn runs entirely on your own servers, safely, with nothing leaving your netwo
 - ✅ **G5.1** The engine needs nothing but its data folder · E1
 - ✅ **G5.2** The API refuses requests without the token · E1 · needs in_process
 - ✅ **G5.3** Network is off unless switched on per workspace · E1 · needs network_control
-- ⏳ **G5.4** Outbound traffic follows an allow-list · E4 · needs network_control
+- 📂 **G5.4** Outbound traffic follows an allow-list · E4
+  - ✅ **G5.4.1** An allowed name resolves and connects · E4 · needs network_control, in_process
+  - ✅ **G5.4.2** A name off the list does not resolve · E4 · needs network_control, in_process
+  - ✅ **G5.4.3** An address no allowed name led to is unreachable · E4 · needs network_control, in_process
+  - ✅ **G5.4.4** Resumes, copies and engine restarts keep the allow-list · E4 · needs network_control, in_process
 - ⏳ **G5.5** A fresh server runs its first workspace within five minutes · E3 · needs linux_bench
 - ⏳ **G5.6** The API can be served over TLS · E3
 - ⏳ **G5.7** Each caller has its own API key, scoped and revocable · E4
