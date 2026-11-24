@@ -58,6 +58,9 @@ type Spec struct {
 	RootDir  string // the workspace filesystem; owned by the engine
 	Limits   Limits
 	Network  bool
+	// Egress, when set, limits a workspace with network on to these names
+	// ("pypi.org", "*.github.com") and IPv4 ranges (see ParseEgress).
+	Egress []string
 }
 
 // ExecRequest runs one command inside a workspace.

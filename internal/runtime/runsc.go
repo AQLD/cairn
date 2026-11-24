@@ -10,6 +10,7 @@ import (
 	"hash/fnv"
 	"io"
 	"log/slog"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path"
@@ -54,6 +55,10 @@ type Runsc struct {
 	versions  map[string]string // runsc path -> version
 
 	mu sync.Mutex // serializes network setup
+	// guards enforce allow-lists, per workspace ID (egress.go). Upstream, if
+	// set, replaces the host's resolvers for allowed names (tests).
+	guards   map[string]*egressGuard
+	Upstream []string
 }
 
 // NewRunsc returns the gVisor runtime. stateDir must be on local disk and
@@ -636,10 +641,24 @@ func (r *Runsc) writeBundle(spec Spec) error {
 			"options": []string{"rbind", "rw", "nosuid", "nodev"},
 		})
 	}
-	cfg["mounts"] = append(mounts, map[string]any{
+	mounts = append(mounts, map[string]any{
 		"destination": initInSandbox, "type": "bind", "source": initFile(spec),
 		"options": []string{"bind", "ro"},
 	})
+	if spec.Network && len(spec.Egress) > 0 {
+		// names resolve only through the workspace's forwarder (egress.go); the
+		// workspace's own resolv.conf stays as it is, under this one
+		hostIP, _ := subnet(spec)
+		rc := filepath.Join(dir, "resolv.conf")
+		if err := os.WriteFile(rc, []byte("nameserver "+hostIP+"\noptions timeout:2 attempts:2\n"), 0o644); err != nil {
+			return err
+		}
+		mounts = append(mounts, map[string]any{
+			"destination": "/etc/resolv.conf", "type": "bind", "source": rc,
+			"options": []string{"bind", "ro"},
+		})
+	}
+	cfg["mounts"] = mounts
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
@@ -805,10 +824,23 @@ func (r *Runsc) firewallLocked(spec Spec) error {
 		return nil
 	}
 	// What the workspace may reach. -I puts a rule first in its chain (ahead
-	// of distribution defaults: Docker sets FORWARD to DROP).
+	// of distribution defaults: Docker sets FORWARD to DROP). With an
+	// allow-list, its outbound traffic goes through its own chain instead.
+	outbound := "ACCEPT"
+	var guard *egressGuard
+	if len(spec.Egress) > 0 {
+		var err error
+		if guard, err = r.guardLocked(spec); err != nil {
+			return err
+		}
+		if err := guard.buildChain(); err != nil {
+			return err
+		}
+		outbound = guard.chain
+	}
 	accepts := [][]string{
 		{"-t", "nat", "-A", "POSTROUTING", "-s", wsIP + "/32", "!", "-o", hostIf, "-j", "MASQUERADE"},
-		{"-I", "FORWARD", "-i", hostIf, "-j", "ACCEPT"},
+		{"-I", "FORWARD", "-i", hostIf, "-j", outbound},
 		{"-I", "FORWARD", "-o", hostIf, "-j", "ACCEPT"},
 	}
 	for _, rule := range accepts {
@@ -830,7 +862,54 @@ func (r *Runsc) firewallLocked(spec Spec) error {
 			return err
 		}
 	}
+	if guard != nil {
+		// its DNS forwarder is the one thing on the host it may reach: above the
+		// host DROP just put back first
+		for _, rule := range dnsRules(spec) {
+			for sh(append([]string{"iptables", "-D"}, rule...)...) == nil {
+			}
+			if err := sh(append([]string{"iptables", "-I", rule[0], "1"}, rule[1:]...)...); err != nil {
+				return err
+			}
+		}
+		return guard.start()
+	}
 	return nil
+}
+
+// dnsRules let a workspace with an allow-list reach its DNS forwarder.
+func dnsRules(spec Spec) [][]string {
+	hostIf := "ch" + shortHash(spec.ID, 10)
+	hostIP, _ := subnet(spec)
+	return [][]string{
+		{"INPUT", "-i", hostIf, "-d", hostIP, "-p", "udp", "--dport", "53", "-j", "ACCEPT"},
+	}
+}
+
+// guardLocked returns the workspace's allow-list guard, made on first use.
+func (r *Runsc) guardLocked(spec Spec) (*egressGuard, error) {
+	if g := r.guards[spec.ID]; g != nil {
+		return g, nil
+	}
+	eg, err := ParseEgress(spec.Egress)
+	if err != nil {
+		return nil, err
+	}
+	hostIP, _ := subnet(spec)
+	up := r.Upstream
+	if len(up) == 0 {
+		up = hostResolvers()
+	}
+	log := r.Log
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	g := &egressGuard{eg: eg, chain: egressChain(spec), listen: hostIP + ":53", upstream: up, log: log.With("workspace", spec.ID), learned: map[netip.Addr]time.Time{}}
+	if r.guards == nil {
+		r.guards = map[string]*egressGuard{}
+	}
+	r.guards[spec.ID] = g
+	return g, nil
 }
 
 // blockRules keep a workspace away from cloud metadata services (credentials
@@ -870,6 +949,21 @@ func (r *Runsc) netDown(spec Spec) {
 	}
 	for _, b := range blockRules(hostIf) {
 		rules = append(rules, append([]string{"-D"}, b...))
+	}
+	if g := r.guards[spec.ID]; g != nil || len(spec.Egress) > 0 {
+		chain := egressChain(spec)
+		rules = append(rules, []string{"-D", "FORWARD", "-i", hostIf, "-j", chain})
+		for _, d := range dnsRules(spec) {
+			rules = append(rules, append([]string{"-D"}, d...))
+		}
+		if g != nil {
+			g.stop()
+			delete(r.guards, spec.ID)
+		}
+		defer func() {
+			_ = exec.Command("iptables", "-w", "-F", chain).Run()
+			_ = exec.Command("iptables", "-w", "-X", chain).Run()
+		}()
 	}
 	for _, rule := range rules {
 		for exec.Command("iptables", rule...).Run() == nil { // every copy

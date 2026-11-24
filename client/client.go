@@ -116,6 +116,9 @@ type CreateWorkspace struct {
 	Limits   Limits `json:"limits,omitempty"`
 	Network  bool   `json:"network,omitempty"`
 	Template string `json:"template,omitempty"` // empty: the engine's default template
+	// Egress limits outbound traffic to these names ("pypi.org",
+	// "*.github.com") and IPv4 ranges; it switches the network on.
+	Egress []string `json:"egress,omitempty"`
 }
 
 // Template is a root filesystem new workspaces start from.
@@ -143,6 +146,7 @@ type Workspace struct {
 	State      string    `json:"state"` // running, stopped (full-saved), paused (woken on next use), ...
 	Limits     Limits    `json:"limits"`
 	Network    bool      `json:"network"`
+	Egress     []string  `json:"egress,omitempty"` // outbound allow-list, if any
 	Template   string    `json:"template,omitempty"`
 	SourceSave string    `json:"source_save,omitempty"`
 	BaseSave   string    `json:"base_save,omitempty"` // the save its state comes from: last saved, resumed or copied
