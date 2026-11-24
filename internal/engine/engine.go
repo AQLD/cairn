@@ -144,6 +144,7 @@ type Engine struct {
 	mu           sync.Mutex
 	diskErr      error       // why new workspaces get no disk image; nil if they do
 	pressured    atomic.Bool // the disk pressure guard has frozen workspace filesystems
+	startedAt    time.Time   // when this engine opened
 	needsRepair  sync.Map    // workspace ID -> true: its disk hit write errors the guard saw
 	stopPressure context.CancelFunc
 	pressureDone chan struct{}
@@ -294,7 +295,7 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	e = &Engine{cfg: cfg, log: cfg.Logger, store: st, locks: map[string]*wsLock{}, activity: map[string]time.Time{}, ops: make(chan struct{}, cfg.MaxOps)}
+	e = &Engine{startedAt: time.Now(), cfg: cfg, log: cfg.Logger, store: st, locks: map[string]*wsLock{}, activity: map[string]time.Time{}, ops: make(chan struct{}, cfg.MaxOps)}
 	if err := e.openEvents(); err != nil {
 		st.Close()
 		return nil, err

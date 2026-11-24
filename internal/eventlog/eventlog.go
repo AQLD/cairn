@@ -455,3 +455,29 @@ func (l *Log) Close() error {
 	l.mu.Unlock()
 	return l.db.Close()
 }
+
+// KindCount is how many events of one kind there were, and how many failed.
+type KindCount struct {
+	Total  int `json:"total"`
+	Failed int `json:"failed"`
+}
+
+// CountsSince counts events by kind since a time: numbers only, never what
+// the events say (commands, outputs), so they can leave the operator's hands.
+func (l *Log) CountsSince(ctx context.Context, since time.Time) (map[string]KindCount, error) {
+	rows, err := l.db.QueryContext(ctx, `SELECT kind, count(*), sum(error != '') FROM events WHERE time >= ? GROUP BY kind`, since.UnixNano())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]KindCount{}
+	for rows.Next() {
+		var kind string
+		var c KindCount
+		if err := rows.Scan(&kind, &c.Total, &c.Failed); err != nil {
+			return nil, err
+		}
+		out[kind] = c
+	}
+	return out, rows.Err()
+}

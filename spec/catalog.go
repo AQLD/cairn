@@ -316,7 +316,11 @@ var Catalog = []Scenario{
 			{ID: "G10.6", Title: "Upgrading the engine keeps all workspaces and saves", Proves: "State and save formats are read by newer engines.", Milestone: E2, Needs: []Need{NeedInProcess}},
 			{ID: "G10.7", Title: "Deleting workspaces leaves nothing behind on the host", Proves: "Every operation cleans up its mounts, devices, network, cgroups and sandboxes.", Milestone: E1, Needs: []Need{NeedInProcess}},
 			{ID: "G10.8", Title: "Every release is signed and ships a bill of materials", Proves: "An operator can verify what they install.", Milestone: E3},
-			{ID: "G10.9", Title: "An operator can produce a diagnostics bundle that holds no workspace contents", Proves: "Problems can be investigated without access to the operator's network or data.", Milestone: E3, Needs: []Need{NeedInProcess}},
+			{ID: "G10.9", Title: "An operator can produce a diagnostics bundle that holds no workspace contents", Proves: "Problems can be investigated without access to the operator's network or data.", Milestone: E3,
+				Children: []Scenario{
+					{ID: "G10.9.1", Title: "The bundle says what is needed to investigate", Proves: "It holds the engine's version and runtime, the host, the configuration, counts, each workspace and save by ID, state and size, recent activity counts and health checks, all readable JSON.", Milestone: E3, Needs: []Need{NeedInProcess}},
+					{ID: "G10.9.2", Title: "The bundle holds nothing from inside workspaces", Proves: "Workspace names, file contents and paths, commands, outputs, environment variables, secret values and key tokens planted on purpose appear nowhere in it; only admins can make it.", Milestone: E3, Needs: []Need{NeedInProcess}},
+				}},
 			{ID: "G10.10", Title: "The Python SDK drives every API operation", Proves: "Agents written in Python get the whole API, with safe retries, from a client with no dependencies (engine feature #18).", Milestone: E3, Needs: []Need{NeedPython}},
 			{ID: "G10.11", Title: "A developer runs a local engine with one command", Proves: "`cairn up` on a laptop (macOS through Docker Desktop or OrbStack, or Linux) gives real gVisor workspaces, so agents get full saves and sessions on day one, not the unisolated host runtime.", Milestone: E3,
 				Children: []Scenario{

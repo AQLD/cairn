@@ -59,6 +59,7 @@ commands:
                                           create a workspace (from a template)
   secret set NAME --host HOST...          store a secret (value read from stdin; sent only to those hosts)
   secret ls | secret rm NAME              list (never values) or delete secrets
+  diagnostics [-o FILE]                   a bundle for bug reports: facts, never workspace contents (admin)
   audit [--key ID] [--kind K] [--last N]  who did what, across workspaces (admin)
   key create NAME [--scope read|write|admin] [--own]  an API key for one caller (token shown once)
   key ls | key rm ID                      list or revoke API keys
@@ -414,6 +415,26 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 		default:
 			return 2, errors.New("usage: cairn secret set NAME --host HOST... (value on stdin) | secret ls | secret rm NAME")
 		}
+
+	case "diagnostics":
+		fs := flag.NewFlagSet("diagnostics", flag.ContinueOnError)
+		out := fs.String("o", "cairn-diagnostics-"+time.Now().Format("20060102-150405")+".tar.gz", "file to write the bundle to")
+		if err := fs.Parse(args); err != nil {
+			return 2, err
+		}
+		f, err := os.Create(*out)
+		if err != nil {
+			return 1, err
+		}
+		if err := c.Diagnostics(ctx, f); err != nil {
+			f.Close()
+			os.Remove(*out)
+			return 1, err
+		}
+		if err := f.Close(); err != nil {
+			return 1, err
+		}
+		fmt.Printf("%s: engine, host and state facts; no workspace names, files, commands, outputs or secrets (open it to check before sending)\n", *out)
 
 	case "audit":
 		fs := flag.NewFlagSet("audit", flag.ContinueOnError)

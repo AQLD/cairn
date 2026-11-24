@@ -147,7 +147,7 @@ func allowed(scope string, r *http.Request) bool {
 		return true
 	}
 	p := r.URL.Path
-	if strings.HasPrefix(p, "/v1/keys") || strings.HasPrefix(p, "/v1/secrets") || p == "/v1/audit" {
+	if strings.HasPrefix(p, "/v1/keys") || strings.HasPrefix(p, "/v1/secrets") || p == "/v1/audit" || p == "/v1/diagnostics" {
 		return false
 	}
 	reading := r.Method == http.MethodGet || r.Method == http.MethodHead
@@ -206,6 +206,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/secrets", s.listSecrets)
 	s.mux.HandleFunc("DELETE /v1/secrets/{name}", s.deleteSecret)
 	s.mux.HandleFunc("GET /v1/audit", s.audit)
+	s.mux.HandleFunc("GET /v1/diagnostics", s.diagnostics)
 	s.mux.HandleFunc("POST /v1/keys", s.createKey)
 	s.mux.HandleFunc("GET /v1/keys", s.listKeys)
 	s.mux.HandleFunc("DELETE /v1/keys/{id}", s.revokeKey)
@@ -590,6 +591,15 @@ func (s *Server) revokeKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// diagnostics streams the bundle (engine.Diagnostics): facts, never contents.
+func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Disposition", `attachment; filename="cairn-diagnostics.tar.gz"`)
+	if err := s.eng.Diagnostics(r.Context(), w); err != nil {
+		s.log.Error("diagnostics", "err", err) // headers are gone: the client sees a truncated archive
+	}
 }
 
 // --- plumbing ---
