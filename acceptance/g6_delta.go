@@ -323,7 +323,7 @@ func init() {
 		deltaTemplate(e, "delta")
 		ws := templatedWorkspace(e, "delta", "full")
 		e.Sh(ws.ID, agentEdits)
-		e.Sh(ws.ID, `nohup sh -c 'n=0; while :; do n=$((n+1)); echo $$ $n > /tmp/counter; sleep 0.1; done' >/dev/null 2>&1 &`)
+		e.Sh(ws.ID, `nohup sh -c 'n=0; while :; do n=$((n+1)); echo $$ $n > /tmp/counter.new; mv /tmp/counter.new /tmp/counter; sleep 0.1; done' >/dev/null 2>&1 &`)
 		time.Sleep(time.Second)
 		before := e.Sh(ws.ID, "cat /tmp/counter")
 
@@ -341,7 +341,14 @@ func init() {
 		e.Resume(sv.ID)
 		time.Sleep(500 * time.Millisecond)
 		after := e.Sh(ws.ID, "cat /tmp/counter")
-		Equal(e, "same process after resume", strings.Fields(after)[0], strings.Fields(before)[0])
+		pid := func(s string) string { // "PID N", written whole (renamed into place)
+			if f := strings.Fields(s); len(f) == 2 {
+				return f[0]
+			}
+			e.T.Fatalf("counter file holds %q", s)
+			return ""
+		}
+		Equal(e, "same process after resume", pid(after), pid(before))
 		Equal(e, "same-size edit kept", e.Sh(ws.ID, "cat "+deltaDir+"/same.txt"), "BBBB")
 	})
 

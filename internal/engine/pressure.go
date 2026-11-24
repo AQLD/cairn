@@ -107,6 +107,19 @@ func (e *Engine) setDisksReadOnly(ctx context.Context, ro bool) {
 	}
 }
 
+// thawWorkspace thaws one workspace's image filesystem, if mounted (frozen
+// or not: thawing a filesystem that is not frozen does nothing).
+func (e *Engine) thawWorkspace(w *store.Workspace) {
+	spec, err := specOf(w)
+	if err != nil || !spec.DiskImage {
+		return
+	}
+	dir := e.volume(w.ID, "rootfs", spec).diskDir()
+	if mounted, err := disk.Mounted(dir); err == nil && mounted {
+		_ = disk.Thaw(dir)
+	}
+}
+
 // thawAll thaws every live workspace filesystem: an engine that stopped while
 // the guard held them leaves them frozen.
 func (e *Engine) thawAll(ctx context.Context) { e.setDisksReadOnly(ctx, false) }
