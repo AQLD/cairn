@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 30 | 1 | 1 |
-| E3 | 105 | 12 | 2 |
+| E3 | 109 | 11 | 2 |
 | E4 | 16 | 19 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -203,7 +203,11 @@ Cairn runs entirely on your own servers, safely, with nothing leaving your netwo
   - ✅ **G5.4.3** An address no allowed name led to is unreachable · E4 · needs network_control, in_process
   - ✅ **G5.4.4** Resumes, copies and engine restarts keep the allow-list · E4 · needs network_control, in_process
 - ⏳ **G5.5** A fresh server runs its first workspace within five minutes · E3 · needs linux_bench
-- ⏳ **G5.6** The API can be served over TLS · E3
+- 📂 **G5.6** The API can be served over TLS · E3
+  - ✅ **G5.6.1** The engine serves its API over HTTPS · E3 · needs in_process
+  - ✅ **G5.6.2** A client refuses an engine it cannot verify · E3 · needs in_process
+  - ✅ **G5.6.3** A renewed certificate is used without a restart · E3 · needs in_process
+  - ✅ **G5.6.4** The CLI and the Python SDK reach an HTTPS engine with a private CA · E3 · needs in_process, python
 - ⏳ **G5.7** Each caller has its own API key, scoped and revocable · E4
 - ⏳ **G5.8** Every API action is recorded with the key that made it · E4
 - ⏳ **G5.9** Secrets reach a workspace without landing on its disk or in its saves · E4 · needs network_control

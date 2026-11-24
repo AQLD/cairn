@@ -18,6 +18,9 @@ const DefaultEndpoint = "http://127.0.0.1:7420"
 type Config struct {
 	Endpoint string `json:"endpoint"`
 	Token    string `json:"token,omitempty"`
+	// CACert is a PEM file of certificate authorities to trust for an
+	// https endpoint (a private CA), besides the system's.
+	CACert string `json:"ca_cert,omitempty"`
 }
 
 // ConfigPath is $CAIRN_CONFIG, else $XDG_CONFIG_HOME/cairn/config.json, else
@@ -42,7 +45,7 @@ func ConfigPath() string {
 // win, then the config file, then DefaultEndpoint with no token. A token from
 // the file is used only with the file's endpoint, never sent elsewhere.
 func LoadConfig() (Config, error) {
-	cfg := Config{Endpoint: os.Getenv("CAIRN_ENDPOINT"), Token: os.Getenv("CAIRN_TOKEN")}
+	cfg := Config{Endpoint: os.Getenv("CAIRN_ENDPOINT"), Token: os.Getenv("CAIRN_TOKEN"), CACert: os.Getenv("CAIRN_CA_CERT")}
 	if cfg.Endpoint != "" {
 		return cfg, nil
 	}
@@ -54,6 +57,9 @@ func LoadConfig() (Config, error) {
 	case file.Endpoint != "":
 		if cfg.Token == "" {
 			cfg.Token = file.Token
+		}
+		if cfg.CACert == "" {
+			cfg.CACert = file.CACert
 		}
 		cfg.Endpoint = file.Endpoint
 		return cfg, nil
@@ -95,5 +101,9 @@ func FromConfig() (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return New(cfg.Endpoint, cfg.Token), nil
+	c := New(cfg.Endpoint, cfg.Token)
+	if cfg.CACert != "" {
+		return c.WithCA(cfg.CACert)
+	}
+	return c, nil
 }

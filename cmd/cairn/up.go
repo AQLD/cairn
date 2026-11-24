@@ -406,7 +406,14 @@ func dockerReady(ctx context.Context) error {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return errors.New("docker not found: install Docker Desktop, OrbStack or colima (macOS) or Docker Engine (Linux)")
 	}
-	if out, err := docker(ctx, "info", "-f", "{{.OSType}}"); err != nil {
+	// a hung daemon never answers: bounded, so doctor and up say so instead
+	// of waiting forever
+	qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if out, err := docker(qctx, "info", "-f", "{{.OSType}}"); err != nil {
+		if qctx.Err() != nil {
+			return errors.New("docker does not answer (its daemon may be hung): restart Docker and try again")
+		}
 		return fmt.Errorf("docker is installed but not running (%s): start Docker and try again", strings.TrimSpace(out))
 	}
 	return nil

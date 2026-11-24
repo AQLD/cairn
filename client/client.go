@@ -11,12 +11,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +34,28 @@ type Client struct {
 // New returns a client for the engine at base, for example http://127.0.0.1:7420.
 func New(base, token string) *Client {
 	return &Client{base: strings.TrimRight(base, "/"), token: token, http: &http.Client{}}
+}
+
+// WithCA makes the client trust the certificate authorities in a PEM file
+// (an engine serving HTTPS with a private CA), besides the system's.
+func (c *Client) WithCA(pemFile string) (*Client, error) {
+	data, err := os.ReadFile(pemFile)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(data) {
+		return nil, fmt.Errorf("%s: no PEM certificates", pemFile)
+	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	h := *c.http
+	h.Transport = tr
+	c.http = &h
+	return c, nil
 }
 
 // WithHTTPClient replaces the underlying HTTP client (for timeouts, transports).
