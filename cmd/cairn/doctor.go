@@ -54,8 +54,8 @@ func cmdDoctor(ctx context.Context, c *client.Client, args []string) (int, error
 		var apiErr *client.Error
 		if errors.As(err, &apiErr) && apiErr.Code == "unauthorized" {
 			bad("the engine refused the token (fix: `cairn up` writes the right one to %s)", client.ConfigPath())
-		} else if dockerReady(ctx) != nil {
-			bad("no engine answers, and Docker is not available: %v (fix: start Docker, then `cairn up`)", dockerReady(ctx))
+		} else if derr := dockerReady(ctx); derr != nil {
+			bad("no engine answers, and Docker is not available: %v (fix: start Docker, then `cairn up`)", derr)
 		} else {
 			bad("no engine answers at %s (fix: `cairn up`)", cfg.Endpoint)
 		}

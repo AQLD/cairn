@@ -100,6 +100,7 @@ In a project set up with "cairn setup --project", "." names its workspace: cairn
 environment:
   CAIRN_ENDPOINT  engine URL (default: from the config cairn up writes, else http://127.0.0.1:7420)
   CAIRN_TOKEN     API token
+  CAIRN_CA_CERT   PEM file of CAs to trust for an https endpoint (a private CA)
   CAIRN_CONFIG    config file (default ~/.config/cairn/config.json)
 `
 

@@ -11,6 +11,7 @@ import posixpath
 import random
 import shutil
 import socket
+import ssl
 import stat
 import tarfile
 import tempfile
@@ -148,8 +149,10 @@ class Client:
     """
 
     def __init__(self, endpoint: Optional[str] = None, token: Optional[str] = None, *,
-                 timeout: float = 60.0, retries: int = 4):
+                 timeout: float = 60.0, retries: int = 4, ca_cert: Optional[str] = None):
         env_token = os.environ.get("CAIRN_TOKEN", "")
+        if ca_cert is None:
+            ca_cert = os.environ.get("CAIRN_CA_CERT", "")
         if not endpoint:
             endpoint = os.environ.get("CAIRN_ENDPOINT", "")
         if not endpoint:
@@ -157,6 +160,8 @@ class Client:
             cfg = _read_config()
             file_endpoint = cfg.get("endpoint") if isinstance(cfg.get("endpoint"), str) else ""
             endpoint = file_endpoint or "http://127.0.0.1:7420"
+            if not ca_cert and file_endpoint and isinstance(cfg.get("ca_cert"), str):
+                ca_cert = cfg["ca_cert"]
             if token is None and not env_token and file_endpoint:
                 file_token = cfg.get("token", "")
                 token = file_token if isinstance(file_token, str) else ""
@@ -164,6 +169,11 @@ class Client:
         self.token = token if token is not None else env_token
         self.timeout = timeout
         self.retries = retries
+        # an https engine with a private CA: trust it besides the system's
+        self._ssl = None
+        if ca_cert:
+            self._ssl = ssl.create_default_context()
+            self._ssl.load_verify_locations(cafile=ca_cert)
 
     def __repr__(self) -> str:
         return f"cairn.Client({self.endpoint!r})"
@@ -564,7 +574,7 @@ class Client:
             payload = bytes(data) if isinstance(data, _JSONBody) else data
             req = urllib.request.Request(self.endpoint + path, data=payload, method=method, headers=headers)
             try:
-                return urllib.request.urlopen(req, timeout=timeout)
+                return urllib.request.urlopen(req, timeout=timeout, context=self._ssl)
             except urllib.error.HTTPError as e:
                 err = _http_error(e)
                 if isinstance(err, TooManyRequests) and attempt <= self.retries:

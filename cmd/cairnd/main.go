@@ -43,6 +43,8 @@ func run() error {
 	runscPath := flag.String("runsc", "runsc", "path to the runsc binary")
 	initPath := flag.String("init", "", "path to cairn-init, process 1 of every runsc workspace (default: next to cairnd, then PATH)")
 	token := flag.String("token", os.Getenv("CAIRN_TOKEN"), "API token required on every request (env CAIRN_TOKEN)")
+	tlsCert := flag.String("tls-cert", os.Getenv("CAIRN_TLS_CERT"), "serve the API over HTTPS with this certificate (PEM, chain included; reloaded when it changes; env CAIRN_TLS_CERT)")
+	tlsKey := flag.String("tls-key", os.Getenv("CAIRN_TLS_KEY"), "private key for --tls-cert (PEM; env CAIRN_TLS_KEY)")
 	retention := flag.Duration("retention", engine.DefaultRetention, "how long deleted saves can be undeleted before they are purged")
 	keepSaves := flag.Int("keep-saves", engine.DefaultKeepSaves, "pruning keeps each workspace's newest N saves (0: no count limit)")
 	keepSavesFor := flag.Duration("keep-saves-for", engine.DefaultKeepSavesFor, "pruning keeps saves younger than this (0: no age limit); with both 0, nothing is pruned")
@@ -92,6 +94,16 @@ func run() error {
 	}
 	if ip := net.ParseIP(host); (ip == nil || !ip.IsLoopback()) && host != "localhost" && *token == "" {
 		return errors.New("refusing to listen beyond localhost without --token: the API runs commands")
+	}
+
+	var certs *certFiles
+	if (*tlsCert == "") != (*tlsKey == "") {
+		return errors.New("--tls-cert and --tls-key go together")
+	}
+	if *tlsCert != "" {
+		if certs, err = newCertFiles(*tlsCert, *tlsKey); err != nil {
+			return err
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -210,13 +222,19 @@ func run() error {
 	}
 	srv.RegisterOnShutdown(handler.StopStreams) // followed activity logs end with the server
 	errc := make(chan error, 1)
-	go func() { errc <- srv.ListenAndServe() }()
+	scheme := "http"
+	if certs != nil {
+		srv.TLSConfig, scheme = certs.config(), "https"
+		go func() { errc <- srv.ListenAndServeTLS("", "") }()
+	} else {
+		go func() { errc <- srv.ListenAndServe() }()
+	}
 	// pulled after the API is up: a first pull can take a while, and clients
 	// (cairn up) watch for the template to appear
 	for _, p := range pulls {
 		go pullTemplate(ctx, eng, log, p.name, p.path)
 	}
-	log.Info("cairnd listening", "addr", *listen, "runtime", r.Name(), "data", *data)
+	log.Info("cairnd listening", "addr", *listen, "scheme", scheme, "runtime", r.Name(), "data", *data)
 
 	select {
 	case err := <-errc:

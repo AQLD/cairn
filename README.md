@@ -91,10 +91,12 @@ For working on Cairn itself there is also a `host` runtime (`make run`) that run
 - Old saves pruned by policy (the newest 20 and anything under 7 days kept), pinned saves kept for good (`cairn pin`)
 - A warm pool for instant creates (`cairnd --warm N`), and workspaces that share their template read-only (`cairnd --shared-templates`, opt-in)
 - A volume that fills never loses a workspace's write: below a reserve, writes wait until there is room
+- Outbound allow-lists per workspace (`cairn create --allow pypi.org --allow '*.github.com'`): only those names and ranges are reachable
+- The API over HTTPS (`cairnd --tls-cert --tls-key`, renewed certificates picked up without a restart; clients trust a private CA with `CAIRN_CA_CERT`)
 - REST API, CLI, MCP server and Python SDK; `cairn setup` connects Claude Code, Codex, pi and Cursor
 - Runs on a laptop with Docker (`cairn up`), on a Linux server, or on Kubernetes ([deploy/helm](deploy/helm))
 
-Not yet: usage limits per user and project, an outbound allow-list, a TypeScript SDK. [ROADMAP.md](ROADMAP.md) has the order.
+Not yet: usage limits per user and project, a TypeScript SDK. [ROADMAP.md](ROADMAP.md) has the order.
 
 ## How it is tested
 
