@@ -66,6 +66,7 @@ func (e *Engine) CreateKey(ctx context.Context, name, scope string) (Key, error)
 		return Key{}, err
 	}
 	e.log.Info("API key created", "key", k.ID, "name", name, "scope", scope)
+	e.note(ctx, "", "key_create", fmt.Sprintf("key %s (%s) created, scope %s", k.ID, name, scope), nil, map[string]any{"new_key": k.ID, "scope": scope})
 	out := publicKey(k)
 	out.Token = token
 	return out, nil
@@ -90,6 +91,7 @@ func (e *Engine) RevokeKey(ctx context.Context, id string) error {
 		return err
 	}
 	e.log.Info("API key revoked", "key", id)
+	e.note(ctx, "", "key_revoke", "key "+id+" revoked", nil, map[string]any{"revoked_key": id})
 	return nil
 }
 

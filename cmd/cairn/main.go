@@ -59,6 +59,7 @@ commands:
                                           create a workspace (from a template)
   secret set NAME --host HOST...          store a secret (value read from stdin; sent only to those hosts)
   secret ls | secret rm NAME              list (never values) or delete secrets
+  audit [--key ID] [--kind K] [--last N]  who did what, across workspaces (admin)
   key create NAME [--scope read|write|admin]  an API key for one caller (token shown once)
   key ls | key rm ID                      list or revoke API keys
   template import NAME ROOTFS.tar         import a root filesystem tar as a template
@@ -413,6 +414,32 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 		default:
 			return 2, errors.New("usage: cairn secret set NAME --host HOST... (value on stdin) | secret ls | secret rm NAME")
 		}
+
+	case "audit":
+		fs := flag.NewFlagSet("audit", flag.ContinueOnError)
+		key := fs.String("key", "", "only what this key did (an ID from cairn key ls, or operator)")
+		kind := fs.String("kind", "", "only this kind of action (exec, save, key_create, secret_set, …)")
+		last := fs.Int("last", 50, "the newest N actions")
+		if err := fs.Parse(args); err != nil {
+			return 2, err
+		}
+		evs, err := c.Audit(ctx, *key, client.EventQuery{Kind: *kind, Last: *last})
+		if err != nil {
+			return 1, err
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "TIME\tKEY\tWORKSPACE\tWHAT")
+		for _, ev := range evs {
+			who, ws := ev.Key, ev.WorkspaceID
+			if who == "" {
+				who = "-"
+			}
+			if ws == "" {
+				ws = "-"
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", ev.Time.Local().Format(time.DateTime), who, ws, ev.Summary)
+		}
+		tw.Flush()
 
 	case "key":
 		switch {

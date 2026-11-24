@@ -133,7 +133,12 @@ var Catalog = []Scenario{
 					{ID: "G5.7.3", Title: "A read key can look but not change anything", Proves: "With a read key, listing and reading work; creating, running, writing, saving and deleting are forbidden and change nothing.", Milestone: E4, Needs: []Need{NeedInProcess}},
 					{ID: "G5.7.4", Title: "Only admin keys manage keys, secrets and templates", Proves: "A write key uses workspaces fully but cannot create keys, set secrets or change templates; an admin key can.", Milestone: E4, Needs: []Need{NeedInProcess}},
 				}},
-			{ID: "G5.8", Title: "Every API action is recorded with the key that made it", Proves: "An operator can answer who ran what, on which workspace, and when.", Milestone: E4},
+			{ID: "G5.8", Title: "Every API action is recorded with the key that made it", Proves: "An operator can answer who ran what, on which workspace, and when.", Milestone: E4,
+				Children: []Scenario{
+					{ID: "G5.8.1", Title: "Each action in a workspace names the key that made it", Proves: "Commands, file writes, saves and deletes made through two keys and the operator's token are each recorded with the right key.", Milestone: E4, Needs: []Need{NeedInProcess}},
+					{ID: "G5.8.2", Title: "The audit answers who did what across workspaces, engine actions included", Proves: "GET /v1/audit lists one key's actions across its workspaces, and records key and secret changes by who made them; only admins may read it.", Milestone: E4, Needs: []Need{NeedInProcess}},
+					{ID: "G5.8.3", Title: "The record outlives restarts and deleted workspaces", Proves: "After an engine restart, and after a workspace is deleted, its actions and their keys are still in the audit.", Milestone: E4, Needs: []Need{NeedInProcess}},
+				}},
 			{ID: "G5.9", Title: "Secrets reach a workspace without landing on its disk or in its saves", Proves: "Credentials an agent uses cannot be read back from a save or a copy.", Milestone: E4, Needs: []Need{NeedNetworkControl},
 				Children: []Scenario{
 					{ID: "G5.9.1", Title: "A secret bound to a host is used on requests to it", Proves: "The server receives the value; the workspace sees only a placeholder (environment and /proc/self/environ).", Milestone: E4, Needs: []Need{NeedNetworkControl, NeedInProcess}},
@@ -421,7 +426,7 @@ var Catalog = []Scenario{
 			{ID: "G15.1", Title: "Calls internal APIs with secrets it cannot read back or leak", Proves: "A workflow workspace calls an internal API with a key it only holds a placeholder for; it cannot read the key back from anything it can see, nor send it to another host.", Milestone: E4, Uses: []string{"G5.9"}, Needs: []Need{NeedNetworkControl, NeedInProcess}},
 			{ID: "G15.2", Title: "Reaches only the internal hosts it is allowed", Proves: "A workflow workspace limited to an internal range reaches the allowed internal host and not another one, nor cloud metadata.", Milestone: E4, Uses: []string{"G5.4", "G8.6"}, Needs: []Need{NeedNetworkControl, NeedInProcess}},
 			{ID: "G15.3", Title: "Waits for approval before a risky step at no compute cost", Proves: "A workflow waiting for a decision is saved with no sandbox left running; after the person approves, the same process applies the change, with no step repeated.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}, Uses: []string{"G4.1", "G4.2"}},
-			{ID: "G15.4", Title: "Every command is recorded with the key that ran it", Milestone: E4, Uses: []string{"G5.7", "G5.8"}},
+			{ID: "G15.4", Title: "Every command is recorded with the key that ran it", Proves: "Two workflow runs with their own keys share an engine; the audit tells which run ran each command, and a revoked run's key leaves its history intact.", Milestone: E4, Uses: []string{"G5.7", "G5.8"}, Needs: []Need{NeedInProcess}},
 			{ID: "G15.5", Title: "A bad change inside the workspace is undone by rewinding", Proves: "A migration that deletes rows is undone by resuming the save made before it: the workflow process holding the database open sees every row again and the database passes its integrity check.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}, Uses: []string{"G18.3"}},
 			{ID: "G15.6", Title: "A scheduled agent carries on from yesterday's state", Proves: "An agent saved overnight keeps its place in memory: after the pause the same process handles only the new items, each once, and sees the time that passed.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}, Uses: []string{"G1.3", "G4.2", "G1.8.1", "G1.8.2"}},
 		},

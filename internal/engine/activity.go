@@ -50,6 +50,12 @@ func (e *Engine) note(ctx context.Context, ws, kind, summary string, err error, 
 		ev.Data = redact.Any(data).(map[string]any)
 	}
 	ev.RequestID, _ = ctx.Value(requestIDKey{}).(string)
+	if c, ok := CallerOf(ctx); ok {
+		ev.Key = c.KeyID
+		if ev.Key == "" {
+			ev.Key = OperatorKey
+		}
+	}
 	if err != nil {
 		// a request for a workspace that does not exist leaves no log behind
 		if _, gerr := e.store.GetWorkspace(context.WithoutCancel(ctx), ws); errors.Is(gerr, store.ErrNotFound) {
@@ -60,6 +66,21 @@ func (e *Engine) note(ctx context.Context, ws, kind, summary string, err error, 
 		ev.Summary += " failed: " + clip(msg, 200)
 	}
 	e.events.Record(ev)
+}
+
+// OperatorKey stands for the engine's own token in the audit log.
+const OperatorKey = "operator"
+
+// Audit lists what was done across every workspace and the engine itself
+// (keys, secrets), optionally only by one key, oldest first.
+func (e *Engine) Audit(ctx context.Context, q EventQuery) ([]Event, error) {
+	if e.events == nil {
+		return nil, fmt.Errorf("%w: the activity log is not available", ErrUnsupported)
+	}
+	fctx, cancel := context.WithTimeout(ctx, time.Second)
+	e.events.Flush(fctx)
+	cancel()
+	return e.events.List(ctx, eventlog.AllWorkspaces, q)
 }
 
 // Events lists a workspace's activity, oldest first. It first waits (briefly)

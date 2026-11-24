@@ -20,6 +20,7 @@ type Event struct {
 	Time        time.Time      `json:"time"`
 	Kind        string         `json:"kind"` // exec, file_write, file_read, save, resume, copy, create, delete, pause, wake, session_start, session_run, session_stop
 	RequestID   string         `json:"request_id,omitempty"`
+	Key         string         `json:"key,omitempty"`   // who acted: an API key's ID, or "operator"
 	Summary     string         `json:"summary"`         // one readable line
 	Error       string         `json:"error,omitempty"` // the operation failed
 	Data        map[string]any `json:"data,omitempty"`  // kind-specific details (exit_code, stdout_tail, save, …)
@@ -105,4 +106,18 @@ func (c *Client) FollowEvents(ctx context.Context, workspaceID string, q EventQu
 		return err
 	}
 	return errors.New("the engine ended the event stream")
+}
+
+// Audit lists what was done across every workspace and the engine itself
+// (keys, secrets), oldest first; key, if set, keeps one caller's actions.
+// Needs an admin token.
+func (c *Client) Audit(ctx context.Context, key string, q EventQuery) ([]Event, error) {
+	v := q.values()
+	if key != "" {
+		v.Set("key", key)
+	}
+	var out struct {
+		Events []Event `json:"events"`
+	}
+	return out.Events, c.do(ctx, http.MethodGet, "/v1/audit?"+v.Encode(), nil, &out)
 }
