@@ -93,6 +93,8 @@ func startTLSEngine(e *Env) *tlsEngine {
 	te.proc = exec.Command(buildCairnd(e), append(cairndRuntimeArgs(testInit(e.T)), "--data", filepath.Join(dir, "data"), "--listen", te.addr,
 		"--pause-on-shutdown=false", "--tls-cert", te.certFile, "--tls-key", te.keyFile)...)
 	e.Must(te.proc.Start())
+	data := filepath.Join(dir, "data")
+	e.T.Cleanup(func() { unmountAll(data) }) // runs after the engine stops, before TempDir's removal
 	e.T.Cleanup(func() {
 		_ = te.proc.Process.Signal(os.Interrupt)
 		done := make(chan struct{})
@@ -166,6 +168,7 @@ func init() {
 		// a key that is not the certificate's: refused at start
 		bad := filepath.Join(te.dir, "bad")
 		e.Must(os.Mkdir(bad, 0o700))
+		e.T.Cleanup(func() { unmountAll(filepath.Join(bad, "data")) })
 		other.issue(e, filepath.Join(bad, "tls.crt"), filepath.Join(bad, "unused.key"))
 		out, err := exec.Command(buildCairnd(e), append(cairndRuntimeArgs(testInit(e.T)), "--data", filepath.Join(bad, "data"), "--listen", "127.0.0.1:0",
 			"--tls-cert", filepath.Join(bad, "tls.crt"), "--tls-key", te.keyFile)...).CombinedOutput()
