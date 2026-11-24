@@ -59,6 +59,7 @@ type Runsc struct {
 	// set, replaces the host's resolvers for allowed names (tests).
 	guards   map[string]*egressGuard
 	Upstream []string
+	proxies  map[string]*proxyServer // per workspace ID (Spec.Proxy)
 }
 
 // NewRunsc returns the gVisor runtime. stateDir must be on local disk and
@@ -580,6 +581,17 @@ func sandboxEnv(spec Spec, extra map[string]string) []string {
 		"HOSTNAME":           spec.Hostname,
 		"CAIRN_WORKSPACE_ID": spec.ID,
 	}
+	for k, v := range spec.Env {
+		env[k] = v
+	}
+	if spec.Proxy != nil && spec.Network {
+		hostIP, _ := subnet(spec)
+		p := fmt.Sprintf("http://%s:%d", hostIP, ProxyPort)
+		for _, k := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"} {
+			env[k] = p
+		}
+		env["NO_PROXY"], env["no_proxy"] = "localhost,127.0.0.1,::1", "localhost,127.0.0.1,::1"
+	}
 	for k, v := range extra {
 		env[k] = v
 	}
@@ -645,6 +657,12 @@ func (r *Runsc) writeBundle(spec Spec) error {
 		"destination": initInSandbox, "type": "bind", "source": initFile(spec),
 		"options": []string{"bind", "ro"},
 	})
+	if spec.MountDir != "" {
+		mounts = append(mounts, map[string]any{
+			"destination": "/run/cairn", "type": "bind", "source": spec.MountDir,
+			"options": []string{"rbind", "ro", "nosuid", "nodev"},
+		})
+	}
 	if spec.Network && len(spec.Egress) > 0 {
 		// names resolve only through the workspace's forwarder (egress.go); the
 		// workspace's own resolv.conf stays as it is, under this one
@@ -862,6 +880,21 @@ func (r *Runsc) firewallLocked(spec Spec) error {
 			return err
 		}
 	}
+	if spec.Proxy != nil {
+		// the proxy is the only way out on the web ports (its own traffic
+		// leaves from the host, not through FORWARD): first in their chains,
+		// with the host DROP just put back
+		for _, rule := range proxyRules(spec) {
+			for sh(append([]string{"iptables", "-D"}, rule...)...) == nil {
+			}
+			if err := sh(append([]string{"iptables", "-I", rule[0], "1"}, rule[1:]...)...); err != nil {
+				return err
+			}
+		}
+		if err := r.serveProxyLocked(spec); err != nil {
+			return err
+		}
+	}
 	if guard != nil {
 		// its DNS forwarder is the one thing on the host it may reach: above the
 		// host DROP just put back first
@@ -949,6 +982,13 @@ func (r *Runsc) netDown(spec Spec) {
 	}
 	for _, b := range blockRules(hostIf) {
 		rules = append(rules, append([]string{"-D"}, b...))
+	}
+	for _, d := range proxyRules(spec) {
+		rules = append(rules, append([]string{"-D"}, d...))
+	}
+	if p := r.proxies[spec.ID]; p != nil {
+		p.srv.Close()
+		delete(r.proxies, spec.ID)
 	}
 	if g := r.guards[spec.ID]; g != nil || len(spec.Egress) > 0 {
 		chain := egressChain(spec)

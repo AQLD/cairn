@@ -9,12 +9,14 @@ package engine
 import (
 	"context"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -92,6 +94,9 @@ type Config struct {
 	// SecretsKey (32 bytes, kept outside DataDir) seals secret values in the
 	// state store; without it the engine refuses secrets.
 	SecretsKey []byte
+	// ProxyRoots, if set, replaces the host's roots when workspace proxies
+	// verify upstream servers (tests).
+	ProxyRoots *x509.CertPool
 	// NoDiskImages keeps new workspaces in plain folders, with no disk limit.
 	NoDiskImages bool
 	// SharedTemplates makes workspaces share one read-only copy of their
@@ -127,12 +132,14 @@ type Config struct {
 }
 
 type Engine struct {
-	cfg     Config
-	secrets *secrets.Box // nil: no key, secrets refused
-	log     *slog.Logger
-	store   *store.Store
-	events  *eventlog.Log // activity log (activity.go)
-	bases   baseState     // bases.go
+	cfg       Config
+	secrets   *secrets.Box // nil: no key, secrets refused
+	proxyOnce sync.Once
+	proxyTr   *http.Transport
+	log       *slog.Logger
+	store     *store.Store
+	events    *eventlog.Log // activity log (activity.go)
+	bases     baseState     // bases.go
 
 	mu           sync.Mutex
 	diskErr      error       // why new workspaces get no disk image; nil if they do
@@ -162,6 +169,10 @@ type Spec struct {
 	Template string         `json:"template,omitempty"`
 	// Egress is the outbound allow-list (empty: no limit beyond Network).
 	Egress []string `json:"egress,omitempty"`
+	// Secrets the workspace uses, by name, and the placeholder it holds for
+	// each (docs/design/secrets.md); never values.
+	Secrets      []string          `json:"secrets,omitempty"`
+	Placeholders map[string]string `json:"placeholders,omitempty"`
 	// DiskImage: the files live in an image of Limits.DiskMB (see volume).
 	// Decided at creation; workspaces made before disk limits have none.
 	DiskImage bool `json:"disk_image,omitempty"`
@@ -175,6 +186,7 @@ type Workspace struct {
 	Limits     runtime.Limits       `json:"limits"`
 	Network    bool                 `json:"network"`
 	Egress     []string             `json:"egress,omitempty"`
+	Secrets    []string             `json:"secrets,omitempty"`
 	Template   string               `json:"template,omitempty"`
 	SourceSave string               `json:"source_save,omitempty"`
 	BaseSave   string               `json:"base_save,omitempty"` // the save its state comes from: last saved, resumed or copied
@@ -436,6 +448,9 @@ type CreateRequest struct {
 	// Egress limits outbound traffic to these names ("pypi.org",
 	// "*.github.com") and IPv4 ranges; it switches the network on.
 	Egress []string `json:"egress,omitempty"`
+	// Secrets the workspace may use, by name (see SetSecret); it switches
+	// the network on.
+	Secrets []string `json:"secrets,omitempty"`
 	// RequestKey makes the request idempotent: a retry with the same key
 	// returns the workspace the first request created instead of a new one.
 	RequestKey string `json:"-"`
@@ -450,6 +465,20 @@ func (e *Engine) createWorkspace(ctx context.Context, req CreateRequest) (*Works
 	}
 	if req.Limits.DiskMB != 0 && e.diskErr != nil {
 		e.log.Warn("workspace disk size is not enforced", "reason", e.diskErr.Error())
+	}
+	if len(req.Secrets) > 0 {
+		if err := e.needSecrets(); err != nil {
+			return nil, err
+		}
+		if !e.cfg.Runtime.Capabilities().NetworkControl {
+			return nil, fmt.Errorf("%w: runtime %s cannot keep secrets out of workspaces (no network control)", ErrUnsupported, e.cfg.Runtime.Name())
+		}
+		for _, name := range req.Secrets {
+			if _, err := e.store.GetSecret(ctx, name); err != nil || !validSecretName(name) {
+				return nil, fmt.Errorf("%w: no secret %q", ErrInvalid, name)
+			}
+		}
+		req.Network = true
 	}
 	if len(req.Egress) > 0 {
 		if _, err := runtime.ParseEgress(req.Egress); err != nil {
@@ -481,7 +510,13 @@ func (e *Engine) createWorkspace(ctx context.Context, req CreateRequest) (*Works
 		}
 		templateSize = t.Size
 	}
-	spec := Spec{Limits: req.Limits, Network: req.Network, Template: template, Egress: req.Egress}
+	spec := Spec{Limits: req.Limits, Network: req.Network, Template: template, Egress: req.Egress, Secrets: req.Secrets}
+	if len(spec.Secrets) > 0 {
+		spec.Placeholders = map[string]string{}
+		for _, name := range spec.Secrets {
+			spec.Placeholders[name] = newPlaceholder()
+		}
+	}
 	e.diskFor(&spec)
 	// a warm workspace made with exactly this spec, if the pool has one
 	if w, err := e.claimWarm(ctx, spec, req.Name, req.RequestKey); errors.Is(err, store.ErrDuplicateKey) {
@@ -2015,7 +2050,15 @@ func (e *Engine) runtimeSpec(w *store.Workspace) (runtime.Spec, error) {
 			return runtime.Spec{}, err
 		}
 	}
-	return runtime.Spec{ID: w.ID, Hostname: w.ID, RootDir: e.rootDir(w.ID), Limits: spec.Limits, Network: spec.Network, Egress: spec.Egress}, nil
+	rs := runtime.Spec{ID: w.ID, Hostname: w.ID, RootDir: e.rootDir(w.ID), Limits: spec.Limits, Network: spec.Network, Egress: spec.Egress}
+	if len(spec.Secrets) > 0 {
+		h, err := e.proxyHandler(w.ID, spec)
+		if err != nil {
+			return runtime.Spec{}, err
+		}
+		rs.Proxy, rs.Env, rs.MountDir = h, secretEnv(spec), filepath.Join(e.proxyDir(w.ID), "mount")
+	}
+	return rs, nil
 }
 
 func (e *Engine) workspaceDir(id string) string {
@@ -2047,7 +2090,7 @@ func toWorkspace(w *store.Workspace) (*Workspace, error) {
 		}
 	}
 	return &Workspace{
-		ID: w.ID, Name: w.Name, State: w.State, Limits: spec.Limits, Network: spec.Network, Egress: spec.Egress,
+		ID: w.ID, Name: w.Name, State: w.State, Limits: spec.Limits, Network: spec.Network, Egress: spec.Egress, Secrets: spec.Secrets,
 		Template: spec.Template, SourceSave: w.SourceSave, BaseSave: w.BaseSave, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
 	}, nil
 }

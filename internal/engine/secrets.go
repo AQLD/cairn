@@ -132,6 +132,19 @@ func (e *Engine) DeleteSecret(ctx context.Context, name string) error {
 	return nil
 }
 
+// secretValue opens a secret's value and its hosts, for the proxy only.
+func (e *Engine) secretValue(ctx context.Context, name string) ([]byte, []string, error) {
+	if err := e.needSecrets(); err != nil {
+		return nil, nil, err
+	}
+	s, err := e.store.GetSecret(ctx, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	v, err := e.secrets.Open(name, s.Sealed)
+	return v, s.Hosts, err
+}
+
 func publicSecret(s store.Secret) Secret {
 	return Secret{Name: s.Name, Hosts: s.Hosts, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt}
 }

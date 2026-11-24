@@ -50,12 +50,18 @@ func newTestCA(e *Env, dir, name string) *testCA {
 // issue writes a certificate for 127.0.0.1 signed by the CA, and its key.
 func (ca *testCA) issue(e *Env, certFile, keyFile string) {
 	e.T.Helper()
+	ca.issueFor(e, certFile, keyFile, "127.0.0.1")
+}
+
+// issueFor writes a certificate for the given addresses.
+func (ca *testCA) issueFor(e *Env, certFile, keyFile string, ips ...string) {
+	e.T.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	e.Must(err)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: "cairnd"},
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
-		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}, DNSNames: []string{"localhost"},
+		IPAddresses: parseIPs(ips), DNSNames: []string{"localhost"},
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, &key.PublicKey, ca.key)
@@ -240,4 +246,12 @@ func sdkPath(e *Env) string {
 	p, err := filepath.Abs("../sdk/python")
 	e.Must(err)
 	return p
+}
+
+func parseIPs(ips []string) []net.IP {
+	var out []net.IP
+	for _, s := range ips {
+		out = append(out, net.ParseIP(s))
+	}
+	return out
 }
