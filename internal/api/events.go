@@ -9,16 +9,6 @@ import (
 	"github.com/AQLD/cairn/internal/engine"
 )
 
-// GET /v1/workspaces/{id}/events: the workspace's activity log, oldest first.
-//
-//	?after=ID    only events after this one (a cursor: pass the last ID seen)
-//	?limit=N     at most N (default 100, at most 1000)
-//	?last=N      the newest N instead of the oldest after the cursor
-//	?kind=K      only this kind ("exec"; "session_*" for a prefix)
-//	?follow=1    stream: newline-delimited JSON events, the existing ones
-//	             (from after/last) then new ones as they happen, until the
-//	             client disconnects or the engine shuts down
-//
 // audit lists what was done across workspaces and the engine (admin only),
 // optionally by one key: GET /v1/audit?key=key_…&kind=&after=&limit=&last=.
 func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
@@ -64,15 +54,47 @@ func eventQuery(w http.ResponseWriter, r *http.Request) (engine.EventQuery, bool
 	return eq, true
 }
 
+// GET /v1/workspaces/{id}/events: the workspace's activity log, oldest first.
+//
+//	?after=ID    only events after this one (a cursor: pass the last ID seen)
+//	?limit=N     at most N (default 100, at most 1000)
+//	?last=N      the newest N instead of the oldest after the cursor
+//	?kind=K      only this kind ("exec"; "session_*" for a prefix)
+//	?follow=1    stream: newline-delimited JSON events, the existing ones
+//	             (from after/last) then new ones as they happen, until the
+//	             client disconnects or the engine shuts down
 func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.events(w, r, func(eq engine.EventQuery) ([]engine.Event, int64, error) {
+		evs, err := s.eng.Events(r.Context(), id, eq)
+		cursor := eq.After
+		if len(evs) > 0 {
+			cursor = evs[len(evs)-1].ID
+		}
+		return evs, cursor, err
+	})
+}
+
+// GET /v1/events: the same across every workspace the caller may see, and
+// the engine's own events (disk pressure; key and secret changes for admins),
+// with the same parameters. With ?follow=1 a client hears when a workspace
+// pauses, wakes, hits a limit or finishes a command.
+func (s *Server) allEvents(w http.ResponseWriter, r *http.Request) {
+	s.events(w, r, func(eq engine.EventQuery) ([]engine.Event, int64, error) {
+		return s.eng.AllEvents(r.Context(), eq)
+	})
+}
+
+// events answers a list or, with ?follow=1, a stream. list returns events
+// and the cursor to continue from (past any the caller may not see).
+func (s *Server) events(w http.ResponseWriter, r *http.Request, list func(engine.EventQuery) ([]engine.Event, int64, error)) {
 	eq, ok := eventQuery(w, r)
 	if !ok {
 		return
 	}
 	q := r.URL.Query()
-	id := r.PathValue("id")
 	seen := s.eng.EventsLast() // before listing, so nothing slips between
-	evs, err := s.eng.Events(r.Context(), id, eq)
+	evs, cursor, err := list(eq)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -92,7 +114,6 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 			if enc.Encode(ev) != nil {
 				return false
 			}
-			eq.After = ev.ID
 		}
 		if err := rc.Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
 			return false
@@ -102,33 +123,29 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request) {
 	if !send(evs) {
 		return
 	}
-	eq.Tail = false
-	full := len(evs) == pageSize(eq.Limit) && q.Get("last") == ""
+	// a tail of the newest events continues after the newest one
+	if eq.Tail && len(evs) > 0 {
+		cursor = max(cursor, evs[len(evs)-1].ID)
+	}
+	eq.After, eq.Tail = cursor, false
+	full := cursor > 0 && len(evs) == pageSize(eq.Limit) && q.Get("last") == ""
 	for {
-		if full { // more were waiting than one page: no need to wait
-			evs, err := s.eng.Events(r.Context(), id, eq)
-			if err != nil || !send(evs) {
+		if !full {
+			select {
+			case <-r.Context().Done():
 				return
+			case <-s.stopping():
+				return
+			case <-s.eng.EventsChanged(seen):
 			}
-			full = len(evs) == pageSize(eq.Limit)
-			continue
+			seen = s.eng.EventsLast()
 		}
-		select {
-		case <-r.Context().Done():
-			return
-		case <-s.stopping():
-			return
-		case <-s.eng.EventsChanged(seen):
-		}
-		seen = s.eng.EventsLast()
-		evs, err := s.eng.Events(r.Context(), id, eq)
-		if err != nil {
+		evs, cursor, err := list(eq)
+		if err != nil || !send(evs) {
 			return // the engine closed its log, or the client went away
 		}
-		if !send(evs) {
-			return
-		}
-		full = len(evs) == pageSize(eq.Limit)
+		full = cursor > eq.After && cursor < seen // more were waiting than one page
+		eq.After = cursor
 	}
 }
 

@@ -182,6 +182,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /v1/workspaces/{id}", s.deleteWorkspace)
 	s.mux.HandleFunc("POST /v1/workspaces/{id}/pause", s.pauseWorkspace)
 	s.mux.HandleFunc("GET /v1/workspaces/{id}/events", s.listEvents)
+	s.mux.HandleFunc("GET /v1/events", s.allEvents)
 	s.mux.HandleFunc("POST /v1/workspaces/{id}/exec", s.exec)
 	s.mux.HandleFunc("PUT /v1/workspaces/{id}/files", s.writeFile)
 	s.mux.HandleFunc("GET /v1/workspaces/{id}/files", s.readFile)

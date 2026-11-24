@@ -20,6 +20,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -704,8 +705,18 @@ func (e *Engine) Exec(ctx context.Context, id string, req ExecRequest) (ExecResu
 		summary += " → " + ended(res.ExitCode, res.TimedOut) + " in " + seconds(took)
 	}
 	e.note(ctx, id, "exec", summary, err, data)
+	// the sandbox's own memory limit stopped a process: say so on its own,
+	// so clients that watch for limits need not read every command's output
+	if m := oomNote.FindString(stderr.String()); m != "" {
+		e.note(ctx, id, "limit", "memory limit: "+strings.TrimPrefix(m, "cairn: "), nil,
+			map[string]any{"limit": "memory", "command": boundedArgs(redact.Args(orig.Argv))})
+	}
 	return res, err
 }
+
+// oomNote is what cairn-init writes after a command when the workspace's
+// memory limit killed a process (cmd/cairn-init: watchMemory).
+var oomNote = regexp.MustCompile(`cairn: out of memory: killed process [^\n]*`)
 
 // teeTo also writes a command's output to t (w may be nil: output discarded).
 func teeTo(w io.Writer, t *tail) io.Writer {

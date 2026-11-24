@@ -67,10 +67,29 @@ func (c *Client) Events(ctx context.Context, workspaceID string, q EventQuery) (
 // it happens, until ctx ends (it then returns nil), fn returns an error, or
 // the engine ends the stream (it shuts down: an error).
 func (c *Client) FollowEvents(ctx context.Context, workspaceID string, q EventQuery, fn func(Event) error) error {
+	return c.follow(ctx, "/v1/workspaces/"+url.PathEscape(workspaceID)+"/events", q, fn)
+}
+
+// AllEvents lists events across every workspace the caller may see and the
+// engine's own (disk pressure), oldest first.
+func (c *Client) AllEvents(ctx context.Context, q EventQuery) ([]Event, error) {
+	var out struct {
+		Events []Event `json:"events"`
+	}
+	return out.Events, c.do(ctx, http.MethodGet, "/v1/events?"+q.values().Encode(), nil, &out)
+}
+
+// FollowAllEvents calls fn for every event across the workspaces the caller
+// may see, as they happen: pauses, wakes, limits hit, commands finished.
+// It returns when ctx ends, fn returns an error, or the engine ends the stream.
+func (c *Client) FollowAllEvents(ctx context.Context, q EventQuery, fn func(Event) error) error {
+	return c.follow(ctx, "/v1/events", q, fn)
+}
+
+func (c *Client) follow(ctx context.Context, path string, q EventQuery, fn func(Event) error) error {
 	v := q.values()
 	v.Set("follow", "1")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.base+"/v1/workspaces/"+url.PathEscape(workspaceID)+"/events?"+v.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path+"?"+v.Encode(), nil)
 	if err != nil {
 		return err
 	}
