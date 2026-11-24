@@ -315,7 +315,12 @@ var Catalog = []Scenario{
 			{ID: "G10.5", Title: "72 hours of mixed load shows no leaks", Proves: "No memory, file-handle or disk leaks.", Milestone: E4, Needs: []Need{NeedLinuxBench}},
 			{ID: "G10.6", Title: "Upgrading the engine keeps all workspaces and saves", Proves: "State and save formats are read by newer engines.", Milestone: E2, Needs: []Need{NeedInProcess}},
 			{ID: "G10.7", Title: "Deleting workspaces leaves nothing behind on the host", Proves: "Every operation cleans up its mounts, devices, network, cgroups and sandboxes.", Milestone: E1, Needs: []Need{NeedInProcess}},
-			{ID: "G10.8", Title: "Every release is signed and ships a bill of materials", Proves: "An operator can verify what they install.", Milestone: E3},
+			{ID: "G10.8", Title: "Every release is signed and ships a bill of materials", Proves: "An operator can verify what they install.", Milestone: E3,
+				Children: []Scenario{
+					{ID: "G10.8.1", Title: "A release build ships a bill of materials of exactly what it links", Proves: "deploy/release.sh makes, per platform, an archive and a CycloneDX bill of materials listing every module in its binaries at the version built (and Go), with SHA256SUMS over both.", Milestone: E3},
+					{ID: "G10.8.2", Title: "The installer refuses a release whose signature does not check", Proves: "With cosign present, install.sh refuses a replaced SHA256SUMS (signature mismatch) and a release stripped of its signature; with CAIRN_REQUIRE_SIGNATURE=1 it refuses without cosign; it installs a correctly signed one.", Milestone: E3},
+					{ID: "G10.8.3", Title: "A published release verifies against the release workflow's identity", Proves: "cosign verify-blob accepts a published release's SHA256SUMS with the AQLD/cairn release workflow's identity, and every archive matches it.", Milestone: E3},
+				}},
 			{ID: "G10.9", Title: "An operator can produce a diagnostics bundle that holds no workspace contents", Proves: "Problems can be investigated without access to the operator's network or data.", Milestone: E3,
 				Children: []Scenario{
 					{ID: "G10.9.1", Title: "The bundle says what is needed to investigate", Proves: "It holds the engine's version and runtime, the host, the configuration, counts, each workspace and save by ID, state and size, recent activity counts and health checks, all readable JSON.", Milestone: E3, Needs: []Need{NeedInProcess}},

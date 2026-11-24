@@ -1,14 +1,18 @@
 name: release
 
 # On a version tag: the cairn CLI for macOS and Linux, and cairnd + cairn-init
-# for Linux, with SHA-256 sums, attached to a GitHub release. (Signing and a
-# bill of materials are G10.8.)
+# for Linux (deploy/release.sh), each with a CycloneDX bill of materials, and
+# SHA256SUMS over everything, signed keylessly with Sigstore (the signature is
+# this workflow's GitHub identity, recorded in the public transparency log).
+# install.sh checks the signature when cosign is installed; docs/install.md
+# shows how to check by hand.
 on:
   push:
     tags: ["v*"]
 
 permissions:
   contents: write
+  id-token: write # Sigstore keyless signing
 
 jobs:
   binaries:
@@ -19,22 +23,10 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build
-        shell: bash
-        run: |
-          set -euo pipefail
-          ver=${GITHUB_REF_NAME}
-          mkdir -p dist
-          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
-            os=${target%/*} arch=${target#*/}
-            dir=cairn_${ver}_${os}_${arch}
-            mkdir -p "$dir"
-            cmds=./cmd/cairn
-            [[ $os == linux ]] && cmds="./cmd/cairn ./cmd/cairnd ./cmd/cairn-init"
-            GOOS=$os GOARCH=$arch CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=$ver" -o "$dir/" $cmds
-            cp LICENSE README.md "$dir/"
-            tar -czf "dist/$dir.tar.gz" "$dir"
-          done
-          (cd dist && sha256sum *.tar.gz > SHA256SUMS)
+        run: deploy/release.sh "$GITHUB_REF_NAME" dist
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign
+        run: cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}

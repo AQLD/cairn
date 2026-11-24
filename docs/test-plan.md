@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 31 | 1 | 1 |
-| E3 | 111 | 10 | 2 |
+| E3 | 114 | 9 | 2 |
 | E4 | 37 | 13 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -359,7 +359,10 @@ An operator can install, observe and upgrade Cairn without surprises. Gate: **E4
 - ⏳ **G10.5** 72 hours of mixed load shows no leaks · E4 · needs linux_bench
 - ✅ **G10.6** Upgrading the engine keeps all workspaces and saves · E2 · needs in_process
 - ✅ **G10.7** Deleting workspaces leaves nothing behind on the host · E1 · needs in_process
-- ⏳ **G10.8** Every release is signed and ships a bill of materials · E3
+- 📂 **G10.8** Every release is signed and ships a bill of materials · E3
+  - ✅ **G10.8.1** A release build ships a bill of materials of exactly what it links · E3
+  - ✅ **G10.8.2** The installer refuses a release whose signature does not check · E3
+  - ✅ **G10.8.3** A published release verifies against the release workflow's identity · E3
 - 📂 **G10.9** An operator can produce a diagnostics bundle that holds no workspace contents · E3
   - ✅ **G10.9.1** The bundle says what is needed to investigate · E3 · needs in_process
   - ✅ **G10.9.2** The bundle holds nothing from inside workspaces · E3 · needs in_process
