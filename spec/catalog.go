@@ -449,7 +449,7 @@ var Catalog = []Scenario{
 			{ID: "G16.1", Title: "Each user's workspace is walled off from every other", Milestone: E4, Uses: []string{"G3.1", "G8"}},
 			{ID: "G16.2", Title: "Users and the product have quotas, and hitting one saves the work", Milestone: E4, Uses: []string{"G3.3", "G3.4"}},
 			{ID: "G16.3", Title: "Idle workspaces cost only storage and wake on the next request", Milestone: E4, Uses: []string{"G4.4", "G9.8"}},
-			{ID: "G16.4", Title: "The product hears when a workspace pauses, wakes or hits a limit", Milestone: E4, Uses: []string{"G19.6"}},
+			{ID: "G16.4", Title: "The product hears when a workspace pauses, wakes or hits a limit", Proves: "A product following the engine's events learns that a user's workspace paused, woke and hit its memory limit, each by workspace ID, without polling.", Milestone: E4, Uses: []string{"G19.6"}, Needs: []Need{NeedFullSave, NeedResourceLimits}},
 			{ID: "G16.5", Title: "A user opens the app their agent built through a preview link", Milestone: Later, Uses: []string{"G19.4"}},
 			{ID: "G16.6", Title: "Thousands of mostly idle users are served by a few servers", Milestone: E5, Uses: []string{"G9.7", "G7.8"}},
 		},
@@ -519,7 +519,13 @@ var Catalog = []Scenario{
 					{ID: "G19.5.1", Title: "A file of several gigabytes goes in and comes out byte for byte", Proves: "Uploads and downloads are streamed both ways, never held in memory, past the old 1 GiB cap (CAIRN_BIGFILE_MB to choose the size).", Milestone: E3},
 					{ID: "G19.5.2", Title: "An upload that would use up the engine's headroom is refused and leaves nothing behind", Proves: "A workspace without its own disk cannot fill the volume the engine needs for saves and state.", Milestone: E3, Needs: []Need{NeedInProcess}},
 				}},
-			{ID: "G19.6", Title: "Clients hear when a workspace pauses, wakes, hits a limit or finishes a command", Milestone: E4},
+			{ID: "G19.6", Title: "Clients hear when a workspace pauses, wakes, hits a limit or finishes a command", Milestone: E4,
+				Children: []Scenario{
+					{ID: "G19.6.1", Title: "One stream carries every workspace's events as they happen", Proves: "A client following /v1/events hears commands finish in two workspaces, with exit codes, in order, without polling; one already listening hears only what happens after it started.", Milestone: E4},
+					{ID: "G19.6.2", Title: "Clients hear a workspace pause and wake", Proves: "Pausing a workspace and its next command waking it each arrive on the stream as they happen.", Milestone: E4, Needs: []Need{NeedFullSave}},
+					{ID: "G19.6.3", Title: "Clients hear when a workspace hits its memory limit", Proves: "A process killed by the workspace's memory limit produces a limit event naming the limit and the command, apart from the command's own event.", Milestone: E4, Needs: []Need{NeedResourceLimits}},
+					{ID: "G19.6.4", Title: "An own key's stream holds only its own workspaces", Proves: "Following /v1/events with an own key shows its workspaces' events and none of another key's, nor key or secret changes; the stream keeps up past events it may not see.", Milestone: E4, Needs: []Need{NeedInProcess}},
+				}},
 		},
 	},
 }

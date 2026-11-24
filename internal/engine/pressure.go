@@ -14,6 +14,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/AQLD/cairn/internal/disk"
@@ -54,11 +55,15 @@ func (e *Engine) checkPressure(ctx context.Context) {
 	switch {
 	case !e.pressured.Load() && free < reserve:
 		e.pressured.Store(true)
+		e.note(ctx, "", "disk_pressure", fmt.Sprintf("the volume holding workspaces is nearly full (%d MB free): workspace writes wait", free>>20), nil,
+			map[string]any{"pressured": true, "free_bytes": free})
 		e.log.Error("the volume holding workspaces is nearly full: workspace writes wait until there is room",
 			"free_mb", free>>20, "reserve_mb", reserve>>20)
 		e.setDisksReadOnly(ctx, true)
 	case e.pressured.Load() && free >= reserve+reserve/4:
 		e.pressured.Store(false)
+		e.note(ctx, "", "disk_pressure", fmt.Sprintf("room on the volume again (%d MB free): workspace writes go through", free>>20), nil,
+			map[string]any{"pressured": false, "free_bytes": free})
 		e.log.Info("room on the volume again: workspace writes go through", "free_mb", free>>20)
 		e.setDisksReadOnly(ctx, false)
 	case e.pressured.Load():

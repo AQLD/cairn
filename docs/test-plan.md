@@ -10,7 +10,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E1 | 55 | 0 | 4 |
 | E2 | 31 | 1 | 1 |
 | E3 | 114 | 9 | 2 |
-| E4 | 37 | 13 | 1 |
+| E4 | 42 | 11 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
 
@@ -27,7 +27,7 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 | [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 3 of 6 | 5 of 6 | 1 |
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 4 of 5 | 5 of 5 | 0 |
 | [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 6 of 6 | 6 of 6 | 0 |
-| [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 0 of 6 | 2 of 6 | 5 |
+| [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 1 of 6 | 3 of 6 | 4 |
 | [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 3 of 6 | 4 of 6 | 2 |
 
 ## G11 A coding agent ships a change over several days
@@ -95,7 +95,7 @@ A product gives each of its users a walled-off computer with limits, that costs 
 - ⏳ **G16.1** Each user's workspace is walled off from every other · E4 · uses G3.1 ✅, G8 ✅
 - ⏳ **G16.2** Users and the product have quotas, and hitting one saves the work · E4 · uses G3.3 ⏳, G3.4 ⏳
 - ⏳ **G16.3** Idle workspaces cost only storage and wake on the next request · E4 · uses G4.4 ✅, G9.8 ✅
-- ⏳ **G16.4** The product hears when a workspace pauses, wakes or hits a limit · E4 · uses G19.6 ⏳
+- ✅ **G16.4** The product hears when a workspace pauses, wakes or hits a limit · E4 · needs full_save, resource_limits · uses G19.6 ✅
 - ⏳ **G16.5** A user opens the app their agent built through a preview link · later · uses G19.4 ⏳
 - ⏳ **G16.6** Thousands of mostly idle users are served by a few servers · E5 · uses G9.7 ✅, G7.8 ⏳
 
@@ -436,5 +436,9 @@ Agents keep live sessions, people can look in and take over, and products hear a
 - 📂 **G19.5** Files of several gigabytes move in and out as streams · E3
   - ✅ **G19.5.1** A file of several gigabytes goes in and comes out byte for byte · E3
   - ✅ **G19.5.2** An upload that would use up the engine's headroom is refused and leaves nothing behind · E3 · needs in_process
-- ⏳ **G19.6** Clients hear when a workspace pauses, wakes, hits a limit or finishes a command · E4
+- 📂 **G19.6** Clients hear when a workspace pauses, wakes, hits a limit or finishes a command · E4
+  - ✅ **G19.6.1** One stream carries every workspace's events as they happen · E4
+  - ✅ **G19.6.2** Clients hear a workspace pause and wake · E4 · needs full_save
+  - ✅ **G19.6.3** Clients hear when a workspace hits its memory limit · E4 · needs resource_limits
+  - ✅ **G19.6.4** An own key's stream holds only its own workspaces · E4 · needs in_process
 

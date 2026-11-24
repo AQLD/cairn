@@ -83,6 +83,44 @@ func (e *Engine) Audit(ctx context.Context, q EventQuery) ([]Event, error) {
 	return e.events.List(ctx, eventlog.AllWorkspaces, q)
 }
 
+// AllEvents lists events across the workspaces the caller may see and the
+// engine's own (disk pressure; key and secret changes for admins only),
+// oldest first. It returns how far it read (the cursor to continue from),
+// which may be past the last event returned when some were not the
+// caller's.
+func (e *Engine) AllEvents(ctx context.Context, q EventQuery) ([]Event, int64, error) {
+	evs, err := e.Audit(ctx, q)
+	if err != nil {
+		return nil, q.After, err
+	}
+	c, ok := CallerOf(ctx)
+	cursor := q.After
+	out := evs[:0]
+	owners := map[string]string{}
+	for _, ev := range evs {
+		cursor = ev.ID
+		switch {
+		case ev.Workspace == "" && (strings.HasPrefix(ev.Kind, "key_") || strings.HasPrefix(ev.Kind, "secret_")):
+			if ok && c.Scope != ScopeAdmin {
+				continue
+			}
+		case ev.Workspace != "" && ok && c.Own:
+			o, seen := owners[ev.Workspace]
+			if !seen {
+				if w, err := e.store.GetWorkspace(ctx, ev.Workspace); err == nil {
+					o = w.Owner
+				}
+				owners[ev.Workspace] = o
+			}
+			if !c.Mine(o) {
+				continue
+			}
+		}
+		out = append(out, ev)
+	}
+	return out, cursor, nil
+}
+
 // Events lists a workspace's activity, oldest first. It first waits (briefly)
 // for events still being written, so a caller sees every operation that
 // finished before it asked. A deleted workspace's log is kept for the
