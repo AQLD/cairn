@@ -59,7 +59,9 @@ func init() {
 		dest := filepath.Join(e.T.TempDir(), "bin")
 		install := func(version string) (string, error) {
 			cmd := exec.CommandContext(e.Ctx, "sh", "../install.sh")
-			cmd.Env = append(os.Environ(), "CAIRN_VERSION="+version, "CAIRN_DOWNLOAD_BASE="+srv.URL+"/"+version,
+			// these test releases are unsigned (G10.8.2 covers signatures): keep
+			// a cosign on this machine out of the way
+			cmd.Env = append(envWithPath(withoutCommand("cosign")), "CAIRN_VERSION="+version, "CAIRN_DOWNLOAD_BASE="+srv.URL+"/"+version,
 				"CAIRN_INSTALL="+dest, "HOME="+e.T.TempDir())
 			out, err := cmd.CombinedOutput()
 			return string(out), err
@@ -105,4 +107,26 @@ func init() {
 			e.T.Fatalf("missing release: %v\n%s", err, out)
 		}
 	})
+}
+
+// withoutCommand is PATH without the folders holding a command.
+func withoutCommand(name string) string {
+	var keep []string
+	for _, d := range filepath.SplitList(os.Getenv("PATH")) {
+		if _, err := os.Stat(filepath.Join(d, name)); err != nil {
+			keep = append(keep, d)
+		}
+	}
+	return strings.Join(keep, string(os.PathListSeparator))
+}
+
+// envWithPath is the environment with PATH replaced.
+func envWithPath(path string) []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "PATH=") {
+			env = append(env, kv)
+		}
+	}
+	return append(env, "PATH="+path)
 }

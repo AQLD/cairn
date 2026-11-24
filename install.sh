@@ -1,6 +1,7 @@
 #!/bin/sh
 # Installs the cairn CLI from the latest GitHub release (or CAIRN_VERSION),
-# checking its SHA-256 against the release's SHA256SUMS.
+# checking its SHA-256 against the release's SHA256SUMS, and SHA256SUMS's
+# Sigstore signature when cosign is installed.
 #
 #   curl -fsSL https://raw.githubusercontent.com/AQLD/cairn/main/install.sh | sh
 #
@@ -12,6 +13,9 @@
 #                 else ~/.local/bin)
 # CAIRN_DOWNLOAD_BASE  where release files are (default: the GitHub release
 #                 for the version; a mirror for offline networks)
+# CAIRN_REQUIRE_SIGNATURE=1  refuse to install without checking the signature
+# CAIRN_COSIGN_KEY  a public key to check the signature with, instead of the
+#                 release workflow's identity (a mirror that signs itself)
 set -eu
 
 repo=AQLD/cairn
@@ -54,6 +58,37 @@ trap 'rm -rf "$tmp"' EXIT
 say "downloading cairn $version for $os/$arch"
 curl -fsSL -o "$tmp/$name.tar.gz" "$base/$name.tar.gz" || die "could not download $base/$name.tar.gz"
 curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" || die "could not download SHA256SUMS"
+
+# SHA256SUMS is what everything else is checked against: check it first
+signed=1
+curl -fsSL -o "$tmp/SHA256SUMS.sigstore.json" "$base/SHA256SUMS.sigstore.json" 2>/dev/null || signed=0
+if [ "$signed" = 0 ]; then
+	# only releases from before signing began may lack a signature: for any
+	# other, a missing one is an attack (stripping it to skip the check)
+	case $version in
+	v0.1.0 | v0.2.0) ;;
+	*) if command -v cosign >/dev/null 2>&1 || [ "${CAIRN_REQUIRE_SIGNATURE:-}" = 1 ]; then
+		die "$version has no signature (SHA256SUMS.sigstore.json); refusing to install it"
+	fi ;;
+	esac
+	[ "${CAIRN_REQUIRE_SIGNATURE:-}" = 1 ] && die "$version is not signed, and CAIRN_REQUIRE_SIGNATURE=1"
+	say "note: $version is not signed; the download is checked against SHA256SUMS"
+elif command -v cosign >/dev/null 2>&1; then
+	if [ -n "${CAIRN_COSIGN_KEY:-}" ]; then
+		cosign verify-blob --key "$CAIRN_COSIGN_KEY" --bundle "$tmp/SHA256SUMS.sigstore.json" "$tmp/SHA256SUMS" >/dev/null 2>&1 ||
+			die "SHA256SUMS signature does not verify with $CAIRN_COSIGN_KEY"
+	else
+		cosign verify-blob --bundle "$tmp/SHA256SUMS.sigstore.json" \
+			--certificate-identity "https://github.com/$repo/.github/workflows/release.yml@refs/tags/$version" \
+			--certificate-oidc-issuer https://token.actions.githubusercontent.com "$tmp/SHA256SUMS" >/dev/null 2>&1 ||
+			die "SHA256SUMS signature does not verify: not signed by $repo's release workflow for $version"
+	fi
+	say "signature checked"
+elif [ "${CAIRN_REQUIRE_SIGNATURE:-}" = 1 ]; then
+	die "CAIRN_REQUIRE_SIGNATURE=1 but cosign is not installed (https://docs.sigstore.dev/cosign/system_config/installation/)"
+else
+	say "note: signature not checked (install cosign to check it); the download is checked against SHA256SUMS"
+fi
 
 want=$(grep " $name.tar.gz\$" "$tmp/SHA256SUMS" | cut -d' ' -f1)
 [ -n "$want" ] || die "$name.tar.gz is not in SHA256SUMS"

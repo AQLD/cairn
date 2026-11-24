@@ -95,6 +95,7 @@ For working on Cairn itself there is also a `host` runtime (`make run`) that run
 - Secrets a workspace uses but never holds (`cairn secret set GITHUB_TOKEN --host github.com`, then `secrets` on create): it gets a placeholder, swapped for the value only on requests to the secret's hosts, so no disk, save or copy carries it
 - The API over HTTPS (`cairnd --tls-cert --tls-key`, renewed certificates picked up without a restart; clients trust a private CA with `CAIRN_CA_CERT`)
 - REST API, CLI, MCP server and Python SDK; `cairn setup` connects Claude Code, Codex, pi and Cursor
+- Signed releases with a bill of materials ([docs/verify.md](docs/verify.md))
 - Runs on a laptop with Docker (`cairn up`), on a Linux server, or on Kubernetes ([deploy/helm](deploy/helm))
 
 Not yet: usage limits per user and project, a TypeScript SDK. [ROADMAP.md](ROADMAP.md) has the order.
