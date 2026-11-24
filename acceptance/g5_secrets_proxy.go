@@ -25,11 +25,34 @@ import (
 
 const tlsEchoServer = `
 import hashlib, http.server, json, ssl, sys
+import os
 cert, key, addr, log = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+repo, want = (sys.argv[5], sys.argv[6]) if len(sys.argv) > 6 else (None, None)
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         with open(log, "a") as f:
             f.write(repr(dict(self.headers)) + "\n")
+        if repo and self.path.startswith("/repo.git/"):
+            # a private repository over git's dumb HTTP: only with the credential
+            got = hashlib.sha256(self.headers.get("Authorization", "").encode()).hexdigest()
+            if got != want:
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="repo"')
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            p = os.path.normpath(os.path.join(repo, self.path[len("/repo.git/"):].split("?")[0]))
+            if not p.startswith(repo) or not os.path.isfile(p):
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            body = open(p, "rb").read()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         out = {k.lower(): hashlib.sha256(v.encode()).hexdigest() for k, v in self.headers.items()
                if k.lower() in ("authorization", "x-api-key")}
         body = json.dumps(out).encode()
@@ -49,9 +72,40 @@ type secretWorld struct {
 	*egressNet
 	logs     map[string]string // address → file of the headers it received
 	hostOnly string            // an HTTPS server on the host's loopback, trusted by the proxy
+	repo     string            // a bare git repository the servers share, if any
 }
 
-func newSecretWorld(e *Env) *secretWorld {
+// makeBareRepo makes a bare repository with one commit, ready for git's
+// dumb HTTP protocol.
+func makeBareRepo(e *Env, dir string) string {
+	e.T.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		e.T.Skip("needs git on the host to make the test repository")
+	}
+	work, bare := filepath.Join(dir, "work"), filepath.Join(dir, "repo.git")
+	git := func(d string, args ...string) {
+		e.T.Helper()
+		cmd := exec.Command("git", append([]string{"-C", d}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			e.T.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	e.Must(os.MkdirAll(work, 0o755))
+	git(work, "init", "-q", "-b", "main")
+	e.Must(os.WriteFile(filepath.Join(work, "README.md"), []byte("private code\n"), 0o644))
+	git(work, "add", ".")
+	git(work, "commit", "-q", "-m", "first")
+	git(dir, "clone", "-q", "--bare", work, bare)
+	git(bare, "update-server-info")
+	return bare
+}
+
+func newSecretWorld(e *Env) *secretWorld { return newSecretWorldRepo(e, "") }
+
+// newSecretWorldRepo also serves a private git repository at
+// https://ALLOWED:8443/repo.git/, readable only with Basic x:value.
+func newSecretWorldRepo(e *Env, value string) *secretWorld {
 	e.T.Helper()
 	world := newEgressNet(e)
 	dir := e.T.TempDir()
@@ -61,6 +115,9 @@ func newSecretWorld(e *Env) *secretWorld {
 	script := filepath.Join(dir, "echo.py")
 	e.Must(os.WriteFile(script, []byte(tlsEchoServer), 0o644))
 	sw := &secretWorld{egressNet: world, logs: map[string]string{}}
+	if value != "" {
+		sw.repo = makeBareRepo(e, dir)
+	}
 	// a service on the host itself, which no workspace may reach through the proxy
 	lc, lk := filepath.Join(dir, "lo.crt"), filepath.Join(dir, "lo.key")
 	ca.issueFor(e, lc, lk, "127.0.0.1")
@@ -76,7 +133,11 @@ func newSecretWorld(e *Env) *secretWorld {
 		log := filepath.Join(dir, ip+".log")
 		e.Must(os.WriteFile(log, nil, 0o644))
 		sw.logs[ip] = log
-		srv := exec.Command("ip", "netns", "exec", world.ns, "python3", script, certFile, keyFile, ip, log)
+		args := []string{"netns", "exec", world.ns, "python3", script, certFile, keyFile, ip, log}
+		if value != "" {
+			args = append(args, sw.repo, sha("Basic "+b64("x:"+value)))
+		}
+		srv := exec.Command("ip", args...)
 		e.Must(srv.Start())
 		e.T.Cleanup(func() { _ = srv.Process.Kill(); _ = srv.Wait() })
 	}
