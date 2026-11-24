@@ -1821,7 +1821,16 @@ func (e *Engine) copy(ctx context.Context, saveID string, count int, requestKey 
 			}
 		}
 		id := newID("ws")
-		w, err := e.insertWorkspace(ctx, id, fmt.Sprintf("%s-copy-%d", srcName, i+1), spec, saveID, key)
+		cs := spec
+		if len(cs.Secrets) > 0 {
+			// its own placeholders: one copied out of another workspace (or held
+			// in the memory of a process restored from the save) means nothing here
+			cs.Placeholders = map[string]string{}
+			for _, name := range cs.Secrets {
+				cs.Placeholders[name] = newPlaceholder()
+			}
+		}
+		w, err := e.insertWorkspace(ctx, id, fmt.Sprintf("%s-copy-%d", srcName, i+1), cs, saveID, key)
 		if err != nil {
 			return out, err
 		}
@@ -1832,7 +1841,7 @@ func (e *Engine) copy(ctx context.Context, saveID string, count int, requestKey 
 		if err := os.MkdirAll(e.workspaceDir(id), 0o700); err != nil {
 			return out, err
 		}
-		if err := e.restoreInto(ctx, rs, spec, saveID, m, failpoint.CopyBeforeRunning); err != nil {
+		if err := e.restoreInto(ctx, rs, cs, saveID, m, failpoint.CopyBeforeRunning); err != nil {
 			return out, err
 		}
 		if err := e.store.SetWorkspaceState(ctx, id, store.Running); err != nil {

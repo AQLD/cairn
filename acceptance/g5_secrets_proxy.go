@@ -1,10 +1,12 @@
 package acceptance
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -223,6 +225,116 @@ func init() {
 		}
 		if connect("443") {
 			e.T.Fatal("a direct connection on port 443 got through, around the proxy")
+		}
+	})
+}
+
+// scanFor reports the first file under dir that holds any needle, reading
+// in chunks (disk images are large and sparse).
+func scanFor(e *Env, dir string, needles ...string) string {
+	e.T.Helper()
+	longest := 0
+	for _, n := range needles {
+		longest = max(longest, len(n))
+	}
+	found := ""
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || found != "" || !d.Type().IsRegular() {
+			return nil
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			return nil
+		}
+		defer f.Close()
+		buf := make([]byte, 4<<20)
+		carry := 0
+		for {
+			n, err := f.Read(buf[carry:])
+			chunk := buf[:carry+n]
+			for _, nd := range needles {
+				if bytes.Contains(chunk, []byte(nd)) {
+					found = p
+					return nil
+				}
+			}
+			if err != nil {
+				return nil
+			}
+			carry = min(longest, len(chunk))
+			copy(buf, chunk[len(chunk)-carry:])
+		}
+	})
+	return found
+}
+
+func init() {
+	register("G5.9.2", func(e *Env) {
+		w := newSecretWorld(e)
+		value := secretValue()
+		_, err := e.C.SetSecret(e.Ctx, "API_TOKEN", value, []string{w.allowedIP})
+		e.Must(err)
+		ws, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "saved", Secrets: []string{"API_TOKEN"}, Limits: client.Limits{DiskMB: 512}})
+		e.Must(err)
+		// a process holding a known string in memory: a scan that cannot find it
+		// in a full save proves nothing about the value
+		canary := "canary-" + secretValue()
+		e.Sh(ws.ID, "CANARY="+canary+" nohup sh -c 'while :; do sleep 1; done' >/dev/null 2>&1 &")
+		// the secret in use: requests carry it, an agent's tools keep their token
+		e.Sh(ws.ID, "printf 'machine x password %s\\n' \"$API_TOKEN\" > ~/.netrc")
+		for i := 0; i < 3; i++ {
+			if out, ok := call(e, ws.ID, "https://"+w.allowedIP+":8443/", map[string]string{"Authorization": "Bearer $API_TOKEN"}); !ok {
+				e.T.Fatalf("request with the secret failed: %s", out)
+			}
+		}
+		e.Save(ws.ID)
+		full, err := e.C.Save(e.Ctx, ws.ID, client.FullSave)
+		e.Must(err)
+		copies, err := e.C.Copy(e.Ctx, full.ID, 1)
+		e.Must(err)
+		e.Resume(full.ID)
+		if p := scanFor(e, filepath.Join(e.DataDir, "saves"), canary); p == "" {
+			e.T.Fatal("the scan cannot see process memory in a full save (compressed image?): it would prove nothing")
+		}
+		needles := []string{value, b64(value), b64("Bearer " + value)}
+		for what, dir := range map[string]string{"saves": filepath.Join(e.DataDir, "saves"), "workspaces (the copy's disk included)": filepath.Join(e.DataDir, "workspaces")} {
+			if p := scanFor(e, dir, needles...); p != "" {
+				e.T.Fatalf("%s: %s holds the secret's value", what, p)
+			}
+		}
+		// and the copy still uses the secret
+		if out, ok := call(e, copies[0].ID, "https://"+w.allowedIP+":8443/", map[string]string{"Authorization": "Bearer $API_TOKEN"}); !ok || !strings.Contains(out, sha("Bearer "+value)) {
+			e.T.Fatalf("the copy cannot use the secret: %s", out)
+		}
+	})
+
+	register("G5.9.8", func(e *Env) {
+		w := newSecretWorld(e)
+		value := secretValue()
+		_, err := e.C.SetSecret(e.Ctx, "API_TOKEN", value, []string{w.allowedIP})
+		e.Must(err)
+		ws, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "source", Secrets: []string{"API_TOKEN"}})
+		e.Must(err)
+		srcPH := strings.TrimSpace(e.Sh(ws.ID, "printf %s \"$API_TOKEN\""))
+		sv := e.Save(ws.ID)
+		copies, err := e.C.Copy(e.Ctx, sv.ID, 2)
+		e.Must(err)
+		seen := map[string]bool{srcPH: true}
+		for _, c := range copies {
+			Equal(e, "copy lists its secrets", strings.Join(c.Secrets, ","), "API_TOKEN")
+			ph := strings.TrimSpace(e.Sh(c.ID, "printf %s \"$API_TOKEN\""))
+			if !strings.HasPrefix(ph, "cairn-secret-") || seen[ph] {
+				e.T.Fatalf("copy %s holds placeholder %q: not its own", c.ID, ph)
+			}
+			seen[ph] = true
+			if out, ok := call(e, c.ID, "https://"+w.allowedIP+":8443/", map[string]string{"Authorization": "Bearer $API_TOKEN"}); !ok || !strings.Contains(out, sha("Bearer "+value)) {
+				e.T.Fatalf("copy %s: its placeholder does not work: %s", c.ID, out)
+			}
+			// the source's placeholder, carried into the copy, swaps for nothing
+			out, ok := call(e, c.ID, "https://"+w.allowedIP+":8443/", map[string]string{"Authorization": "Bearer " + srcPH})
+			if !ok || strings.Contains(out, sha("Bearer "+value)) {
+				e.T.Fatalf("copy %s: the source's placeholder was swapped for the value: %s", c.ID, out)
+			}
 		}
 	})
 }
