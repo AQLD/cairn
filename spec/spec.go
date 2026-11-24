@@ -42,6 +42,7 @@ const (
 	NeedDiskLimits      Need = "disk_limits"
 	NeedNetworkControl  Need = "network_control"
 	NeedPersistent      Need = "persistent_processes"
+	NeedTerminal        Need = "terminal"         // interactive terminals (a pty in the sandbox)
 	NeedSharedTemplates Need = "shared_templates" // workspaces overlay one shared copy of their template (Linux, root, overlayfs)
 
 	// Test environment features.

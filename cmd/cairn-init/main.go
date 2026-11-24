@@ -19,6 +19,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,11 +34,17 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 const socketName = "@cairn-init"
 
 func main() {
+	if len(os.Args) > 4 && os.Args[1] == "terminal" && os.Args[4] == "--" {
+		rows, _ := strconv.Atoi(os.Args[2])
+		cols, _ := strconv.Atoi(os.Args[3])
+		os.Exit(terminalClient(uint16(rows), uint16(cols), os.Args[5:]))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "exec" {
 		args := os.Args[2:]
 		if len(args) > 0 && args[0] == "--" {
@@ -57,6 +64,15 @@ type request struct {
 	Argv []string `json:"argv"`
 	Env  []string `json:"env"`
 	Dir  string   `json:"dir"`
+	// TTY, if set, runs the command on a new terminal of this size: its
+	// stdin, stdout and stderr are the terminal, and the client gets the
+	// terminal's other side (one file) instead of three pipes.
+	TTY *winsize `json:"tty,omitempty"`
+}
+
+type winsize struct {
+	Rows uint16 `json:"rows"`
+	Cols uint16 `json:"cols"`
 }
 
 // reply answers a request: the command's pid, or why it did not start (with the
@@ -105,6 +121,12 @@ func (r *reaper) loop(sigchld <-chan os.Signal) {
 // start runs a command and registers for its exit. The lock is held across the
 // fork so the reaper cannot collect the child before it is registered.
 func (r *reaper) start(req request, files []uintptr) (int, chan syscall.WaitStatus, error) {
+	sys := &syscall.SysProcAttr{Setpgid: true}
+	if req.TTY != nil {
+		// its own session, with the terminal as its controlling one (a shell's
+		// job control and ^C need that); a session leader is its own group
+		sys = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	}
 	argv0, err := lookPath(req.Argv[0], req.Env, req.Dir)
 	if err != nil {
 		return 0, nil, err
@@ -115,7 +137,7 @@ func (r *reaper) start(req request, files []uintptr) (int, chan syscall.WaitStat
 		Dir:   req.Dir,
 		Env:   req.Env,
 		Files: files,
-		Sys:   &syscall.SysProcAttr{Setpgid: true},
+		Sys:   sys,
 	})
 	if err != nil {
 		return 0, nil, err
@@ -176,14 +198,22 @@ func handle(r *reaper, conn *net.UnixConn) {
 	}
 
 	// Pipes live inside the sandbox: the command's ends go to the command, ours
-	// go to the client.
+	// go to the client. A terminal is one file for both.
 	var ours, theirs []*os.File
 	defer func() {
 		for _, f := range append(ours, theirs...) {
 			f.Close()
 		}
 	}()
-	for i := 0; i < 3; i++ {
+	if req.TTY != nil {
+		master, slave, err := openPTY(*req.TTY)
+		if err != nil {
+			_ = send(conn, reply{Error: "terminal: " + err.Error(), Code: 126}, nil)
+			return
+		}
+		ours, theirs = []*os.File{master}, []*os.File{slave, slave, slave}
+	}
+	for i := 0; i < 3 && req.TTY == nil; i++ {
 		pr, pw, err := os.Pipe()
 		if err != nil {
 			_ = send(conn, reply{Error: err.Error(), Code: 126}, nil)
@@ -204,8 +234,12 @@ func handle(r *reaper, conn *net.UnixConn) {
 		_ = send(conn, reply{Error: err.Error(), Code: code}, nil)
 		return
 	}
+	closed := map[*os.File]bool{}
 	for _, f := range theirs {
-		f.Close()
+		if !closed[f] {
+			f.Close()
+			closed[f] = true
+		}
 	}
 	theirs = nil
 	if err := send(conn, reply{PID: pid}, ours); err != nil {
@@ -548,4 +582,154 @@ func receivedFiles(oob []byte) ([]*os.File, error) {
 		}
 	}
 	return files, nil
+}
+
+// --- terminals ------------------------------------------------------------------
+
+// openPTY makes a terminal of a size: its controlling side (master) and the
+// side a command uses (slave).
+func openPTY(ws winsize) (*os.File, *os.File, error) {
+	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|syscall.O_NOCTTY|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	var unlock int32
+	if err := ioctl(master.Fd(), syscall.TIOCSPTLCK, uintptr(unsafe.Pointer(&unlock))); err != nil {
+		master.Close()
+		return nil, nil, err
+	}
+	var n uint32
+	if err := ioctl(master.Fd(), syscall.TIOCGPTN, uintptr(unsafe.Pointer(&n))); err != nil {
+		master.Close()
+		return nil, nil, err
+	}
+	slave, err := os.OpenFile("/dev/pts/"+strconv.Itoa(int(n)), os.O_RDWR|syscall.O_NOCTTY, 0)
+	if err != nil {
+		master.Close()
+		return nil, nil, err
+	}
+	if err := setSize(master, ws); err != nil {
+		master.Close()
+		slave.Close()
+		return nil, nil, err
+	}
+	return master, slave, nil
+}
+
+func setSize(f *os.File, ws winsize) error {
+	w := struct{ Row, Col, X, Y uint16 }{ws.Rows, ws.Cols, 0, 0}
+	return ioctl(f.Fd(), syscall.TIOCSWINSZ, uintptr(unsafe.Pointer(&w)))
+}
+
+func ioctl(fd, req, arg uintptr) error {
+	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, fd, req, arg); e != 0 {
+		return e
+	}
+	return nil
+}
+
+// Frames on a terminal client's stdin: a type, a length, then the payload.
+// The engine writes them; keystrokes and resizes share the one stream.
+const (
+	frameData   = 'd' // bytes typed into the terminal
+	frameResize = 'r' // rows and columns, two big-endian uint16
+)
+
+// terminalClient runs a command on a new terminal and relays it: framed
+// input from stdin to the terminal (and resizes), the terminal's output to
+// stdout. Like exec, closing stdin or a signal ends the command.
+func terminalClient(rows, cols uint16, argv []string) int {
+	if len(argv) == 0 {
+		argv = []string{"/bin/sh", "-l"}
+		if _, err := os.Stat("/bin/bash"); err == nil {
+			argv = []string{"/bin/bash", "-l"}
+		}
+	}
+	dir := os.Getenv("HOME")
+	if dir == "" {
+		dir = "/"
+	}
+	conn, err := dial()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-init: workspace init is not running:", err)
+		return 126
+	}
+	defer conn.Close()
+	env := append(os.Environ(), "TERM=xterm-256color")
+	b, _ := json.Marshal(request{Argv: argv, Env: env, Dir: dir, TTY: &winsize{Rows: rows, Cols: cols}})
+	if _, err := conn.Write(append(b, '\n')); err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-init:", err)
+		return 126
+	}
+	buf := make([]byte, 4096)
+	oob := make([]byte, syscall.CmsgSpace(3*4))
+	n, oobn, _, _, err := conn.ReadMsgUnix(buf, oob)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "cairn-init:", err)
+		return 126
+	}
+	rd := bufio.NewReader(io.MultiReader(strings.NewReader(string(buf[:n])), conn))
+	line, err := rd.ReadBytes('\n')
+	if err != nil {
+		return 126
+	}
+	var rep reply
+	if json.Unmarshal(line, &rep) != nil {
+		return 126
+	}
+	if rep.Error != "" {
+		fmt.Fprintf(os.Stderr, "%s: %s\n", argv[0], rep.Error)
+		return rep.Code
+	}
+	files, err := receivedFiles(oob[:oobn])
+	if err != nil || len(files) != 1 {
+		fmt.Fprintln(os.Stderr, "cairn-init: did not receive the terminal")
+		return 126
+	}
+	master := files[0]
+	go func() {
+		_, _ = io.Copy(os.Stdout, master)
+	}()
+	go func() {
+		// stdin closed: the terminal was closed, which ends its command
+		defer conn.Close()
+		hdr := make([]byte, 5)
+		for {
+			if _, err := io.ReadFull(os.Stdin, hdr); err != nil {
+				return
+			}
+			size := int(binary.BigEndian.Uint32(hdr[1:]))
+			if size > 1<<20 {
+				return
+			}
+			payload := make([]byte, size)
+			if _, err := io.ReadFull(os.Stdin, payload); err != nil {
+				return
+			}
+			switch hdr[0] {
+			case frameData:
+				if _, err := master.Write(payload); err != nil {
+					return
+				}
+			case frameResize:
+				if len(payload) == 4 {
+					_ = setSize(master, winsize{Rows: binary.BigEndian.Uint16(payload), Cols: binary.BigEndian.Uint16(payload[2:])})
+				}
+			}
+		}
+	}()
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	go func() {
+		<-sigs
+		conn.Close()
+		os.Exit(143)
+	}()
+	line, err = rd.ReadBytes('\n')
+	var ex exit
+	if err != nil || json.Unmarshal(line, &ex) != nil {
+		return 129 // the terminal was closed
+	}
+	time.Sleep(50 * time.Millisecond) // the last output is still in the terminal
+	return ex.Code
 }

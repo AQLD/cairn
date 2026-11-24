@@ -272,6 +272,8 @@ func (e *Env) has(n spec.Need) (bool, string) {
 		return caps.DiskLimits, "runtime " + e.Info.Runtime + " does not cap disk usage"
 	case spec.NeedNetworkControl:
 		return caps.NetworkControl, "runtime " + e.Info.Runtime + " cannot control networking"
+	case spec.NeedTerminal:
+		return caps.Terminal, "runtime " + e.Info.Runtime + " has no terminals"
 	case spec.NeedPersistent:
 		return caps.PersistentProcesses, "runtime " + e.Info.Runtime + " does not keep processes between commands"
 	case spec.NeedSharedTemplates:

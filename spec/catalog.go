@@ -512,7 +512,13 @@ var Catalog = []Scenario{
 					{ID: "G19.1.4", Title: "Sessions are listed, run one cell at a time and deleted; a session that dies says so", Proves: "A second run while one runs is a conflict; deleting stops what the session started; a session whose process exits reports it ended and is no longer listed.", Milestone: E3, Needs: []Need{NeedPersistent}},
 				}},
 			{ID: "G19.2", Title: "A session survives pause and resume", Proves: "Python and shell sessions keep their state across a full save and resume and across a pause; a quick save, which keeps files only, brings no session back.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}},
-			{ID: "G19.3", Title: "A person can open an interactive terminal in a running workspace", Milestone: E4},
+			{ID: "G19.3", Title: "A person can open an interactive terminal in a running workspace", Milestone: E4,
+				Children: []Scenario{
+					{ID: "G19.3.1", Title: "A terminal is a real interactive shell", Proves: "Over the terminal WebSocket, a login shell runs with a terminal (isatty), echoes what is typed, runs commands, and sees the workspace's files; its exit code comes back when it exits.", Milestone: E4, Needs: []Need{NeedTerminal}},
+					{ID: "G19.3.2", Title: "The terminal follows its window's size", Proves: "The size the terminal opens with, and each resize after, is what programs in it see (stty size).", Milestone: E4, Needs: []Need{NeedTerminal}},
+					{ID: "G19.3.3", Title: "Closing a terminal ends its shell but not what was started to keep running", Proves: "After the WebSocket closes, the shell and its foreground job are gone, a nohup'd process started from it is still running, and the activity log says the terminal opened and closed without what was typed.", Milestone: E4, Needs: []Need{NeedTerminal}},
+					{ID: "G19.3.4", Title: "Terminals follow keys", Proves: "A read key cannot open a terminal (forbidden); an own key cannot open one in another key's workspace (not_found); a write key can.", Milestone: E4, Needs: []Need{NeedTerminal, NeedInProcess}},
+				}},
 			{ID: "G19.4", Title: "A port inside the workspace opens to a person through a preview link", Milestone: Later, Needs: []Need{NeedNetworkControl}},
 			{ID: "G19.5", Title: "Files of several gigabytes move in and out as streams", Milestone: E3,
 				Children: []Scenario{

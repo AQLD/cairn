@@ -17,3 +17,6 @@ __pycache__/
 *.egg-info/
 sdk/python/build/
 sdk/python/dist/
+/cairn
+/cairnd
+/cairn-init

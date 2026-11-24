@@ -10,7 +10,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E1 | 55 | 0 | 4 |
 | E2 | 31 | 1 | 1 |
 | E3 | 114 | 9 | 2 |
-| E4 | 42 | 11 | 1 |
+| E4 | 46 | 10 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
 
@@ -22,7 +22,7 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 
 | Journey | For | Steps proven | Steps unblocked | Capability scenarios still pending |
 | --- | --- | --- | --- | --- |
-| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 8 of 9 | 8 of 9 | 1 |
+| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 8 of 9 | 9 of 9 | 0 |
 | [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 6 of 6 | 6 of 6 | 0 |
 | [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 3 of 6 | 5 of 6 | 1 |
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 4 of 5 | 5 of 5 | 0 |
@@ -43,7 +43,7 @@ An agent sets up a repository, works on it across days, tries fixes in parallel 
 - ✅ **G11.4** Stops for the night at no compute cost and carries on next day with the dev server running · E3 · needs python, full_save, persistent_processes · uses G4.1 ✅, G4.2 ✅, G1.8.1 ✅, G1.8.2 ✅
 - ✅ **G11.5** Tries three fixes in parallel and keeps the one whose tests pass · E3 · needs python · uses G2.1 ✅, G2.2 ✅, G2.7 ✅
 - ✅ **G11.6** Undoes a destructive command by rewinding one step · E3 · needs python, full_save, persistent_processes · uses G18.3 ✅
-- ⏳ **G11.7** A person reviews what changed and takes over · E4 · uses G1.4 ✅, G18.4 ✅, G19.3 ⏳
+- ⏳ **G11.7** A person reviews what changed and takes over · E4 · uses G1.4 ✅, G18.4 ✅, G19.3 ✅
 
 ## G12 A data agent analyses private data across sessions
 
@@ -431,7 +431,11 @@ Agents keep live sessions, people can look in and take over, and products hear a
   - ✅ **G19.1.3** A run past its timeout is interrupted and the session carries on · E3 · needs persistent_processes
   - ✅ **G19.1.4** Sessions are listed, run one cell at a time and deleted; a session that dies says so · E3 · needs persistent_processes
 - ✅ **G19.2** A session survives pause and resume · E3 · needs full_save, persistent_processes
-- ⏳ **G19.3** A person can open an interactive terminal in a running workspace · E4
+- 📂 **G19.3** A person can open an interactive terminal in a running workspace · E4
+  - ✅ **G19.3.1** A terminal is a real interactive shell · E4 · needs terminal
+  - ✅ **G19.3.2** The terminal follows its window's size · E4 · needs terminal
+  - ✅ **G19.3.3** Closing a terminal ends its shell but not what was started to keep running · E4 · needs terminal
+  - ✅ **G19.3.4** Terminals follow keys · E4 · needs terminal, in_process
 - ⏳ **G19.4** A port inside the workspace opens to a person through a preview link · later · needs network_control
 - 📂 **G19.5** Files of several gigabytes move in and out as streams · E3
   - ✅ **G19.5.1** A file of several gigabytes goes in and comes out byte for byte · E3

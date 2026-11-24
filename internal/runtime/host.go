@@ -39,6 +39,9 @@ func (*Host) Checkpoint(context.Context, Spec, string) error { return ErrUnsuppo
 func (*Host) Restore(context.Context, Spec, string) error    { return ErrUnsupported }
 
 func (*Host) Exec(ctx context.Context, spec Spec, req ExecRequest) (ExecResult, error) {
+	if req.TTY != nil {
+		return ExecResult{}, fmt.Errorf("%w: the host runtime has no terminals", ErrUnsupported)
+	}
 	if len(req.Argv) == 0 {
 		return ExecResult{}, errors.New("empty command")
 	}
