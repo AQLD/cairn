@@ -19,7 +19,7 @@
 
 Cairn is an open-source engine that gives each AI agent a private Linux workspace. The agent can save its workspace at any moment, resume it days later on another server, or copy it to try several ideas at once. It runs on your own servers.
 
-> **Status: early development.** [v0.1.0](https://github.com/AQLD/cairn/releases/tag/v0.1.0) runs on your laptop (below) and on a single Linux server; expect breaking changes before 1.0. Workspaces run on gVisor: see [docs/compatibility.md](docs/compatibility.md) for the known differences from a regular Linux machine.
+> **Status: early development.** [The latest release](https://github.com/AQLD/cairn/releases/latest) runs on your laptop (below) and on a single Linux server; expect breaking changes before 1.0. Workspaces run on gVisor: see [docs/compatibility.md](docs/compatibility.md) for the known differences from a regular Linux machine.
 
 ## How it works
 
@@ -82,12 +82,15 @@ See [docs/agents.md](docs/agents.md) for each agent, the MCP tools and other MCP
 
 For working on Cairn itself there is also a `host` runtime (`make run`) that runs commands directly on your machine with **no isolation** and no full saves; use it only with code you trust.
 
-## What v0.1 does
+## What it does
 
 - Workspaces with CPU, memory and disk limits, started from templates or registry images
 - Run commands (including background servers), read and write files and folders, network on or off
-- Quick save (files) and full save (memory and running processes), with saves in a local folder or S3-compatible storage
-- Resume, rewind and copy from any save
+- Quick save (files) and full save (memory and running processes), with saves in a local folder or S3-compatible storage; saves of templated workspaces hold only what changed
+- Resume, rewind and copy from any save; list the files a step changed (`cairn diff`)
+- Old saves pruned by policy (the newest 20 and anything under 7 days kept), pinned saves kept for good (`cairn pin`)
+- A warm pool for instant creates (`cairnd --warm N`), and workspaces that share their template read-only (`cairnd --shared-templates`, opt-in)
+- A volume that fills never loses a workspace's write: below a reserve, writes wait until there is room
 - REST API, CLI, MCP server and Python SDK; `cairn setup` connects Claude Code, Codex, pi and Cursor
 - Runs on a laptop with Docker (`cairn up`), on a Linux server, or on Kubernetes ([deploy/helm](deploy/helm))
 
