@@ -192,6 +192,7 @@ type Workspace struct {
 	BaseSave   string               `json:"base_save,omitempty"` // the save its state comes from: last saved, resumed or copied
 	CreatedAt  time.Time            `json:"created_at"`
 	UpdatedAt  time.Time            `json:"updated_at"`
+	Owner      string               `json:"owner,omitempty"` // the API key that made it, if any
 }
 
 type Save struct {
@@ -589,7 +590,7 @@ func (e *Engine) insertWorkspace(ctx context.Context, id, name string, spec Spec
 		return nil, err
 	}
 	now := time.Now().UTC()
-	w := store.Workspace{ID: id, Name: name, State: store.Creating, Spec: raw, SourceSave: sourceSave, BaseSave: sourceSave, RequestKey: requestKey, CreatedAt: now, UpdatedAt: now}
+	w := store.Workspace{ID: id, Name: name, State: store.Creating, Spec: raw, SourceSave: sourceSave, BaseSave: sourceSave, RequestKey: requestKey, Owner: owner(ctx), CreatedAt: now, UpdatedAt: now}
 	if err := e.store.CreateWorkspace(ctx, w); err != nil {
 		return nil, err
 	}
@@ -2099,7 +2100,7 @@ func toWorkspace(w *store.Workspace) (*Workspace, error) {
 		}
 	}
 	return &Workspace{
-		ID: w.ID, Name: w.Name, State: w.State, Limits: spec.Limits, Network: spec.Network, Egress: spec.Egress, Secrets: spec.Secrets,
+		ID: w.ID, Name: w.Name, Owner: w.Owner, State: w.State, Limits: spec.Limits, Network: spec.Network, Egress: spec.Egress, Secrets: spec.Secrets,
 		Template: spec.Template, SourceSave: w.SourceSave, BaseSave: w.BaseSave, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
 	}, nil
 }

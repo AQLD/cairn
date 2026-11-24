@@ -98,15 +98,46 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusUnauthorized, "unauthorized", "missing, wrong or revoked API token")
 				return
 			}
-			caller = engine.Caller{KeyID: k.ID, Scope: k.Scope}
+			caller = engine.Caller{KeyID: k.ID, Scope: k.Scope, Own: k.Own}
 		}
 		if !allowed(caller.Scope, r) {
 			writeError(w, http.StatusForbidden, "forbidden", fmt.Sprintf("this key's scope (%s) does not allow %s %s", caller.Scope, r.Method, r.URL.Path))
 			return
 		}
+		if caller.Own && !s.owns(r, caller) {
+			// as if it did not exist: an own key cannot even learn of others' work
+			writeError(w, http.StatusNotFound, "not_found", "no such workspace or save")
+			return
+		}
 		r = r.WithContext(engine.WithCaller(r.Context(), caller))
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// owns reports whether an own key may reach the workspace or save a path
+// names. Paths naming neither are for every key its scope allows; a name
+// that does not exist is left to the handler (not_found either way).
+func (s *Server) owns(r *http.Request, c engine.Caller) bool {
+	rest, kind := "", ""
+	if v, ok := strings.CutPrefix(r.URL.Path, "/v1/workspaces/"); ok {
+		rest, kind = v, "workspace"
+	} else if v, ok := strings.CutPrefix(r.URL.Path, "/v1/saves/"); ok {
+		rest, kind = v, "save"
+	} else {
+		return true
+	}
+	id, _, _ := strings.Cut(rest, "/")
+	var owner string
+	var err error
+	if kind == "workspace" {
+		owner, err = s.eng.WorkspaceOwner(r.Context(), id)
+	} else {
+		owner, err = s.eng.SaveOwner(r.Context(), id)
+	}
+	if err != nil {
+		return true // not found (or failing): the handler says so
+	}
+	return c.Mine(owner)
 }
 
 // allowed: read keys look; write keys use workspaces; keys, secrets, the
@@ -208,6 +239,15 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.fail(w, err)
 		return
+	}
+	if c, ok := engine.CallerOf(r.Context()); ok && c.Own {
+		mine := ws[:0]
+		for _, x := range ws {
+			if c.Mine(x.Owner) {
+				mine = append(mine, x)
+			}
+		}
+		ws = mine
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"workspaces": ws})
 }
@@ -522,11 +562,12 @@ func (s *Server) createKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name  string `json:"name"`
 		Scope string `json:"scope"`
+		Own   bool   `json:"own"`
 	}
 	if !s.decode(w, r, &req) {
 		return
 	}
-	k, err := s.eng.CreateKey(r.Context(), req.Name, req.Scope)
+	k, err := s.eng.CreateKey(r.Context(), req.Name, req.Scope, req.Own)
 	if err != nil {
 		s.fail(w, err)
 		return

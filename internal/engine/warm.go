@@ -225,7 +225,7 @@ func (e *Engine) claimWarm(ctx context.Context, spec Spec, name, requestKey stri
 	if err != nil {
 		return nil, err
 	}
-	w, err := e.store.ClaimWarm(ctx, raw, name, requestKey, time.Now().UTC())
+	w, err := e.store.ClaimWarm(ctx, raw, name, requestKey, owner(ctx), time.Now().UTC())
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil
 	}

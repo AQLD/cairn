@@ -10,7 +10,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E1 | 55 | 0 | 4 |
 | E2 | 31 | 1 | 1 |
 | E3 | 109 | 11 | 2 |
-| E4 | 36 | 13 | 1 |
+| E4 | 37 | 13 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
 
@@ -213,6 +213,7 @@ Cairn runs entirely on your own servers, safely, with nothing leaving your netwo
   - ✅ **G5.7.2** A revoked key stops working at once, and only that key · E4 · needs in_process
   - ✅ **G5.7.3** A read key can look but not change anything · E4 · needs in_process
   - ✅ **G5.7.4** Only admin keys manage keys, secrets and templates · E4 · needs in_process
+  - ✅ **G5.7.5** An own key sees and uses only the workspaces it made · E4 · needs in_process
 - 📂 **G5.8** Every API action is recorded with the key that made it · E4
   - ✅ **G5.8.1** Each action in a workspace names the key that made it · E4 · needs in_process
   - ✅ **G5.8.2** The audit answers who did what across workspaces, engine actions included · E4 · needs in_process

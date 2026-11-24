@@ -229,10 +229,11 @@ class Client:
 
     # -- API keys ----------------------------------------------------------
 
-    def create_key(self, name: str, scope: str = "write") -> dict:
+    def create_key(self, name: str, scope: str = "write", *, own: bool = False) -> dict:
         """An API key for one caller (needs an admin token). The answer's
-        "token" is the only time the token is shown."""
-        return self._json("POST", "/v1/keys", {"name": name, "scope": scope})
+        "token" is the only time the token is shown. An own key sees and uses
+        only the workspaces it makes."""
+        return self._json("POST", "/v1/keys", {"name": name, "scope": scope, "own": own})
 
     def keys(self) -> list[dict]:
         """API keys, revoked ones included, never tokens."""

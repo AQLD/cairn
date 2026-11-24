@@ -59,6 +59,7 @@ type Workspace struct {
 	PausedSave string          `json:"-"`                     // the save a paused workspace wakes from
 	BaseSave   string          `json:"base_save,omitempty"`   // the save its state comes from: last saved, resumed or copied
 	RequestKey string          `json:"-"`                     // caller's idempotency key, if any
+	Owner      string          `json:"owner,omitempty"`       // the API key that made it, if any
 	CreatedAt  time.Time       `json:"created_at"`
 	UpdatedAt  time.Time       `json:"updated_at"`
 }
@@ -171,10 +172,16 @@ CREATE TABLE api_keys (
 	revoked_at INTEGER NOT NULL DEFAULT 0
 );
 `,
+	// 10: who made each workspace (an API key's ID), and keys that may use
+	// only their own workspaces
+	`
+ALTER TABLE workspaces ADD COLUMN owner TEXT NOT NULL DEFAULT '';
+ALTER TABLE api_keys ADD COLUMN own INTEGER NOT NULL DEFAULT 0;
+`,
 }
 
 const (
-	workspaceCols = `id, name, state, spec, source_save, paused_save, base_save, created_at, updated_at`
+	workspaceCols = `id, name, state, spec, source_save, paused_save, base_save, created_at, updated_at, owner`
 	saveCols      = `id, workspace_id, kind, state, size, created_at, deleted_at, auto, uploaded, parent, pinned`
 )
 
@@ -310,8 +317,8 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) CreateWorkspace(ctx context.Context, w Workspace) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO workspaces (id, name, state, spec, source_save, base_save, created_at, updated_at, request_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		w.ID, w.Name, w.State, string(w.Spec), w.SourceSave, w.BaseSave, w.CreatedAt.UnixNano(), w.UpdatedAt.UnixNano(), nullable(w.RequestKey))
+		`INSERT INTO workspaces (id, name, state, spec, source_save, base_save, created_at, updated_at, request_key, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		w.ID, w.Name, w.State, string(w.Spec), w.SourceSave, w.BaseSave, w.CreatedAt.UnixNano(), w.UpdatedAt.UnixNano(), nullable(w.RequestKey), w.Owner)
 	return duplicate(err)
 }
 
@@ -454,12 +461,12 @@ func (s *Store) WarmWorkspaces(ctx context.Context) ([]Workspace, error) {
 // becomes running under name (its own ID if name is empty) and requestKey,
 // created now. Atomic, so two creates never get the same one. ErrNotFound if
 // none is warm.
-func (s *Store) ClaimWarm(ctx context.Context, spec json.RawMessage, name, requestKey string, now time.Time) (*Workspace, error) {
+func (s *Store) ClaimWarm(ctx context.Context, spec json.RawMessage, name, requestKey, owner string, now time.Time) (*Workspace, error) {
 	row := s.db.QueryRowContext(ctx,
-		`UPDATE workspaces SET state = ?, name = CASE WHEN ? = '' THEN id ELSE ? END, request_key = ?, created_at = ?, updated_at = ?
+		`UPDATE workspaces SET state = ?, name = CASE WHEN ? = '' THEN id ELSE ? END, request_key = ?, owner = ?, created_at = ?, updated_at = ?
 		 WHERE id = (SELECT id FROM workspaces WHERE state = ? AND spec = ? ORDER BY created_at, id LIMIT 1)
 		 RETURNING `+workspaceCols,
-		Running, name, name, nullable(requestKey), now.UnixNano(), now.UnixNano(), Warm, string(spec))
+		Running, name, name, nullable(requestKey), owner, now.UnixNano(), now.UnixNano(), Warm, string(spec))
 	w, err := scanWorkspace(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -600,7 +607,7 @@ func scanWorkspace(r scanner) (*Workspace, error) {
 	var w Workspace
 	var spec string
 	var created, updated int64
-	if err := r.Scan(&w.ID, &w.Name, &w.State, &spec, &w.SourceSave, &w.PausedSave, &w.BaseSave, &created, &updated); err != nil {
+	if err := r.Scan(&w.ID, &w.Name, &w.State, &spec, &w.SourceSave, &w.PausedSave, &w.BaseSave, &created, &updated, &w.Owner); err != nil {
 		return nil, err
 	}
 	w.Spec = json.RawMessage(spec)
@@ -705,14 +712,15 @@ type APIKey struct {
 	Name      string
 	Scope     string
 	Hash      string
+	Own       bool // may use only the workspaces it made
 	CreatedAt time.Time
 	RevokedAt time.Time // zero while it works
 }
 
 // InsertAPIKey records a new key.
 func (s *Store) InsertAPIKey(ctx context.Context, k APIKey) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO api_keys (id, name, scope, hash, created_at) VALUES (?, ?, ?, ?, ?)`,
-		k.ID, k.Name, k.Scope, k.Hash, k.CreatedAt.UnixNano())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO api_keys (id, name, scope, hash, own, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		k.ID, k.Name, k.Scope, k.Hash, k.Own, k.CreatedAt.UnixNano())
 	return err
 }
 
@@ -757,7 +765,7 @@ func (s *Store) RevokeAPIKey(ctx context.Context, id string, at time.Time) error
 }
 
 func (s *Store) keys(ctx context.Context, rest string, args ...any) ([]APIKey, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, scope, hash, created_at, revoked_at FROM api_keys `+rest, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, scope, hash, own, created_at, revoked_at FROM api_keys `+rest, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -766,7 +774,7 @@ func (s *Store) keys(ctx context.Context, rest string, args ...any) ([]APIKey, e
 	for rows.Next() {
 		var k APIKey
 		var created, revoked int64
-		if err := rows.Scan(&k.ID, &k.Name, &k.Scope, &k.Hash, &created, &revoked); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.Scope, &k.Hash, &k.Own, &created, &revoked); err != nil {
 			return nil, err
 		}
 		k.CreatedAt = time.Unix(0, created)

@@ -132,6 +132,7 @@ var Catalog = []Scenario{
 					{ID: "G5.7.2", Title: "A revoked key stops working at once, and only that key", Proves: "After revocation the key's next request is unauthorized; another key and the operator's token keep working.", Milestone: E4, Needs: []Need{NeedInProcess}},
 					{ID: "G5.7.3", Title: "A read key can look but not change anything", Proves: "With a read key, listing and reading work; creating, running, writing, saving and deleting are forbidden and change nothing.", Milestone: E4, Needs: []Need{NeedInProcess}},
 					{ID: "G5.7.4", Title: "Only admin keys manage keys, secrets and templates", Proves: "A write key uses workspaces fully but cannot create keys, set secrets or change templates; an admin key can.", Milestone: E4, Needs: []Need{NeedInProcess}},
+					{ID: "G5.7.5", Title: "An own key sees and uses only the workspaces it made", Proves: "Two agents with own keys share an engine: each lists, reads, runs in, saves, copies and deletes only its own workspaces and saves; the other's look like they do not exist; copies belong to the key that made them.", Milestone: E4, Needs: []Need{NeedInProcess}},
 				}},
 			{ID: "G5.8", Title: "Every API action is recorded with the key that made it", Proves: "An operator can answer who ran what, on which workspace, and when.", Milestone: E4,
 				Children: []Scenario{

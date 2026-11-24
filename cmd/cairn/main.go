@@ -60,7 +60,7 @@ commands:
   secret set NAME --host HOST...          store a secret (value read from stdin; sent only to those hosts)
   secret ls | secret rm NAME              list (never values) or delete secrets
   audit [--key ID] [--kind K] [--last N]  who did what, across workspaces (admin)
-  key create NAME [--scope read|write|admin]  an API key for one caller (token shown once)
+  key create NAME [--scope read|write|admin] [--own]  an API key for one caller (token shown once)
   key ls | key rm ID                      list or revoke API keys
   template import NAME ROOTFS.tar         import a root filesystem tar as a template
                                           (e.g. docker export $(docker create python:3.12-slim) > python.tar)
@@ -446,10 +446,15 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 		case len(args) >= 2 && args[0] == "create":
 			fs := flag.NewFlagSet("key create", flag.ContinueOnError)
 			scope := fs.String("scope", "write", "what the key may do: read, write or admin")
+			own := fs.Bool("own", false, "the key sees and uses only the workspaces it makes")
 			if err := fs.Parse(args[2:]); err != nil {
 				return 2, err
 			}
-			k, err := c.CreateKey(ctx, args[1], *scope)
+			create := c.CreateKey
+			if *own {
+				create = c.CreateOwnKey
+			}
+			k, err := create(ctx, args[1], *scope)
 			if err != nil {
 				return 1, err
 			}
