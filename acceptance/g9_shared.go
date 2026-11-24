@@ -188,7 +188,9 @@ func init() {
 		orig := e.DataDir
 		e.T.Cleanup(func() { unmountAll(orig) })
 		e.DataDir = mnt
-		e.configure = func(c *engine.Config) { c.MinFreeBytes = 64 << 20; c.SharedTemplates = true }
+		// the guard off: this is about what a failed write reports, and a 1.5 GB
+		// volume is always under the default reserve
+		e.configure = func(c *engine.Config) { c.MinFreeBytes = 64 << 20; c.SharedTemplates = true; c.DiskReserve = -1 }
 		e.start()
 		defer func() { e.configure = nil }()
 		f, err := os.Open(tmplTar)

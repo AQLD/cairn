@@ -372,6 +372,14 @@ func (e *Engine) Close() error {
 	if e.stopPressure != nil {
 		e.stopPressure()
 		<-e.pressureDone
+		if e.pressured.Load() {
+			// A freeze is held by a running engine. Sandboxes outlive this one,
+			// and a process writing to a frozen filesystem waits in the kernel,
+			// where nothing can kill it: leave none frozen. The next engine
+			// freezes them again if the volume is still nearly full.
+			e.log.Warn("engine stopping under disk pressure: workspace disks thawed")
+			e.thawAll(context.Background())
+		}
 	}
 	if e.stopUploads != nil {
 		e.stopUploads()
@@ -611,6 +619,8 @@ func (e *Engine) deleteWorkspace(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	// a process blocked on a frozen disk cannot be stopped: thaw it first
+	e.thawWorkspace(w)
 	if err := e.cfg.Runtime.Stop(ctx, spec); err != nil {
 		return err
 	}

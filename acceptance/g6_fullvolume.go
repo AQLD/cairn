@@ -181,3 +181,79 @@ func init() {
 		Equal(e, "file from before the pressure", e.Sh(ws.ID, "cksum before.bin"), sum)
 	})
 }
+
+func init() {
+	register("G6.4.5", func(e *Env) {
+		if _, err := exec.LookPath("fallocate"); err != nil {
+			e.T.Skip("needs fallocate")
+		}
+		vol := e.T.TempDir()
+		img, mnt := filepath.Join(vol, "volume.img"), filepath.Join(vol, "data")
+		e.Must(os.Mkdir(mnt, 0o700))
+		run(e, "truncate", "-s", fmt.Sprintf("%dM", fullVolumeMB), img)
+		run(e, "mkfs.ext4", "-q", "-F", "-m", "0", img)
+		run(e, "mount", "-o", "loop", img, mnt)
+		e.T.Cleanup(func() {
+			unmountAll(mnt)
+			_ = exec.Command("umount", "-l", mnt).Run()
+		})
+		e.stop()
+		orig := e.DataDir
+		e.T.Cleanup(func() { unmountAll(orig) })
+		e.DataDir = mnt
+		const reserve = 300 << 20
+		e.configure = func(c *engine.Config) { c.MinFreeBytes = 64 << 20; c.DiskReserve = reserve }
+		e.start()
+		defer func() { e.configure = nil }()
+
+		kept, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "kept", Limits: client.Limits{DiskMB: 256}})
+		e.Must(err)
+		gone, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "deleted", Limits: client.Limits{DiskMB: 256}})
+		e.Must(err)
+		// something in the workspace to be deleted keeps writing: once its disk
+		// freezes, that writer waits in the kernel
+		e.Sh(gone.ID, "nohup sh -c 'while :; do dd if=/dev/zero of=w.bin bs=1M count=1 conv=fsync 2>/dev/null; done' >/dev/null 2>&1 &")
+		// whatever happens, never leave a frozen filesystem behind (cleanups run
+		// last-registered first: before the unmounts above)
+		e.T.Cleanup(func() {
+			for _, id := range []string{kept.ID, gone.ID} {
+				_ = exec.Command("fsfreeze", "-u", filepath.Join(mnt, "workspaces", id, "rootfs")).Run()
+			}
+		})
+		var st syscall.Statfs_t
+		e.Must(syscall.Statfs(mnt, &st))
+		free := int64(st.Bavail) * int64(st.Bsize) //nolint:unconvert
+		run(e, "fallocate", "-l", fmt.Sprint(free-reserve/2), filepath.Join(mnt, "filler"))
+		deadline := time.Now().Add(5 * time.Second)
+		for !client.IsCode(e.C.WriteFile(e.Ctx, kept.ID, "probe.txt", []byte("x")), "insufficient_storage") {
+			if time.Now().After(deadline) {
+				e.T.Fatal("the guard did not trip 5 s after the volume went under the reserve")
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		// deleting a frozen workspace completes
+		done := make(chan error, 1)
+		go func() { done <- e.C.DeleteWorkspace(e.Ctx, gone.ID) }()
+		select {
+		case err := <-done:
+			e.Must(err)
+		case <-time.After(30 * time.Second):
+			e.T.Fatal("deleting a workspace whose disk is frozen did not finish in 30 s")
+		}
+
+		// the engine stops with the volume still nearly full: nothing stays frozen
+		e.stop()
+		probe := filepath.Join(mnt, "workspaces", kept.ID, "rootfs", "after-stop.txt")
+		wrote := make(chan error, 1)
+		go func() { wrote <- os.WriteFile(probe, []byte("x"), 0o644) }()
+		select {
+		case <-wrote: // written, or failed for lack of room: either way not blocked
+		case <-time.After(10 * time.Second):
+			e.T.Fatal("a write to a workspace's disk blocks after the engine stopped: its filesystem was left frozen")
+		}
+		e.Must(os.Remove(filepath.Join(mnt, "filler")))
+		e.start()
+		Equal(e, "workspace after the pressure", e.Read(kept.ID, "after-stop.txt"), "x")
+	})
+}
