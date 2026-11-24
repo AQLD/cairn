@@ -10,7 +10,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E1 | 55 | 0 | 4 |
 | E2 | 31 | 1 | 1 |
 | E3 | 109 | 11 | 2 |
-| E4 | 23 | 20 | 1 |
+| E4 | 27 | 16 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
 
@@ -22,11 +22,11 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 
 | Journey | For | Steps proven | Steps unblocked | Capability scenarios still pending |
 | --- | --- | --- | --- | --- |
-| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 7 of 9 | 7 of 9 | 3 |
+| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 8 of 9 | 8 of 9 | 1 |
 | [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 6 of 6 | 6 of 6 | 0 |
 | [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 3 of 6 | 4 of 6 | 2 |
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 4 of 5 | 5 of 5 | 0 |
-| [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 4 of 6 | 4 of 6 | 4 |
+| [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 5 of 6 | 5 of 6 | 2 |
 | [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 0 of 6 | 2 of 6 | 5 |
 | [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 3 of 6 | 4 of 6 | 2 |
 
@@ -35,7 +35,7 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 An agent sets up a repository, works on it across days, tries fixes in parallel and hands the winner to a person. Gate: **E4**.
 
 - ✅ **G11.1** Starts from the team's toolchain image, ready to work · E3 · needs in_process, python · uses G1.10 ✅, G1.10.5 ✅, G9.1 ✅
-- ⏳ **G11.2** Fetches private code with a credential that never lands in the workspace or its saves · E4 · uses G5.9 ⏳, G5.4 ✅
+- ✅ **G11.2** Fetches private code with a credential that never lands in the workspace or its saves · E4 · needs network_control, in_process, agent_tools · uses G5.9 ✅, G5.4 ✅
 - 📂 **G11.3** Installs dependencies, runs the tests and a dev server with live output · E3
   - ✅ **G11.3.1** Installs the project's dependencies from a private package index · E3 · needs python · uses G1.6 ✅, G1.2 ✅
   - ✅ **G11.3.2** Runs the test suite with output arriving while it runs · E3 · needs python · uses G1.6.8 ✅
@@ -81,7 +81,7 @@ Many short tasks start warm with their tools loaded, use only approved sources, 
 
 An agent acts on internal systems with credentials it cannot leak, waits for approval before risky steps, and leaves a full record and a way back. Gate: **E4**.
 
-- ⏳ **G15.1** Calls internal APIs with secrets it cannot read back or leak · E4 · uses G5.9 ⏳
+- ✅ **G15.1** Calls internal APIs with secrets it cannot read back or leak · E4 · needs network_control, in_process · uses G5.9 ✅
 - ✅ **G15.2** Reaches only the internal hosts it is allowed · E4 · needs network_control, in_process · uses G5.4 ✅, G8.6 ✅
 - ✅ **G15.3** Waits for approval before a risky step at no compute cost · E3 · needs full_save, persistent_processes · uses G4.1 ✅, G4.2 ✅
 - ⏳ **G15.4** Every command is recorded with the key that ran it · E4 · uses G5.7 ⏳, G5.8 ⏳
@@ -214,9 +214,9 @@ Cairn runs entirely on your own servers, safely, with nothing leaving your netwo
   - ✅ **G5.9.1** A secret bound to a host is used on requests to it · E4 · needs network_control, in_process
   - ✅ **G5.9.2** No save or copy contains a secret's value · E4 · needs network_control, in_process
   - ✅ **G5.9.3** A placeholder sent to a host off the secret's list is refused · E4 · needs network_control, in_process
-  - ⏳ **G5.9.4** git clones private code over HTTPS with a secret · E4 · needs network_control, in_process
+  - ✅ **G5.9.4** git clones private code over HTTPS with a secret · E4 · needs network_control, in_process, agent_tools
   - ✅ **G5.9.5** A secret's value is never shown · E4 · needs in_process
-  - ⏳ **G5.9.6** Rotating or deleting a secret applies to running workspaces · E4 · needs network_control, in_process
+  - ✅ **G5.9.6** Rotating or deleting a secret applies to running workspaces · E4 · needs network_control, in_process
   - ✅ **G5.9.7** Secret values are stored only encrypted · E4 · needs in_process
   - ✅ **G5.9.8** A copy gets its own placeholders · E4 · needs network_control, in_process
   - ✅ **G5.9.9** Bypassing the proxy gets nowhere · E4 · needs network_control, in_process

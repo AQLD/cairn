@@ -133,7 +133,7 @@ var Catalog = []Scenario{
 					{ID: "G5.9.1", Title: "A secret bound to a host is used on requests to it", Proves: "The server receives the value; the workspace sees only a placeholder (environment and /proc/self/environ).", Milestone: E4, Needs: []Need{NeedNetworkControl, NeedInProcess}},
 					{ID: "G5.9.2", Title: "No save or copy contains a secret's value", Proves: "Every byte of quick and full saves and of a copy's disk is scanned for the value, raw and base64, and it is not there.", Milestone: E4, Needs: []Need{NeedNetworkControl, NeedInProcess}},
 					{ID: "G5.9.3", Title: "A placeholder sent to a host off the secret's list is refused", Proves: "The proxy refuses the request and logs it by secret name; the value never leaves the engine.", Milestone: E4, Needs: []Need{NeedNetworkControl, NeedInProcess}},
-					{ID: "G5.9.4", Title: "git clones private code over HTTPS with a secret", Proves: "git clone https://x:$TOKEN@host works and leaves no credential on the workspace's disk.", Milestone: E4, Needs: []Need{NeedNetworkControl, NeedInProcess}},
+					{ID: "G5.9.4", Title: "git clones private code over HTTPS with a secret", Proves: "git clone https://x:$TOKEN@host works and leaves no credential on the workspace's disk.", Milestone: E4, Needs: []Need{NeedNetworkControl, NeedInProcess, NeedAgentTools}},
 					{ID: "G5.9.5", Title: "A secret's value is never shown", Proves: "API responses, engine logs and the activity log never contain it; cairn secret set reads it from stdin.", Milestone: E4, Needs: []Need{NeedInProcess}},
 					{ID: "G5.9.6", Title: "Rotating or deleting a secret applies to running workspaces", Proves: "After rotation, requests carry the new value without a restart; after deletion, they fail.", Milestone: E4, Needs: []Need{NeedNetworkControl, NeedInProcess}},
 					{ID: "G5.9.7", Title: "Secret values are stored only encrypted", Proves: "The state store holds ciphertext; without --secrets-key, creating a secret is refused.", Milestone: E4, Needs: []Need{NeedInProcess}},
@@ -355,7 +355,7 @@ var Catalog = []Scenario{
 		Milestone: E4,
 		Children: []Scenario{
 			{ID: "G11.1", Title: "Starts from the team's toolchain image, ready to work", Proves: "A template pulled from the team's private registry gives a new workspace a toolchain that runs at once, with nothing to install.", Milestone: E3, Needs: []Need{NeedInProcess, NeedPython}, Uses: []string{"G1.10", "G1.10.5", "G9.1"}},
-			{ID: "G11.2", Title: "Fetches private code with a credential that never lands in the workspace or its saves", Milestone: E4, Uses: []string{"G5.9", "G5.4"}},
+			{ID: "G11.2", Title: "Fetches private code with a credential that never lands in the workspace or its saves", Proves: "A coding workspace limited to its git host clones a private repository with a secret; neither its disk nor its saves hold the credential, and the credential cannot be sent anywhere else.", Milestone: E4, Uses: []string{"G5.9", "G5.4"}, Needs: []Need{NeedNetworkControl, NeedInProcess, NeedAgentTools}},
 			{ID: "G11.3", Title: "Installs dependencies, runs the tests and a dev server with live output", Milestone: E3,
 				Children: []Scenario{
 					{ID: "G11.3.1", Title: "Installs the project's dependencies from a private package index", Proves: "Packages install offline from a wheelhouse inside the workspace, into the project's own environment.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G1.6", "G1.2"}},
@@ -411,7 +411,7 @@ var Catalog = []Scenario{
 		Proves:    "An agent acts on internal systems with credentials it cannot leak, waits for approval before risky steps, and leaves a full record and a way back.",
 		Milestone: E4,
 		Children: []Scenario{
-			{ID: "G15.1", Title: "Calls internal APIs with secrets it cannot read back or leak", Milestone: E4, Uses: []string{"G5.9"}},
+			{ID: "G15.1", Title: "Calls internal APIs with secrets it cannot read back or leak", Proves: "A workflow workspace calls an internal API with a key it only holds a placeholder for; it cannot read the key back from anything it can see, nor send it to another host.", Milestone: E4, Uses: []string{"G5.9"}, Needs: []Need{NeedNetworkControl, NeedInProcess}},
 			{ID: "G15.2", Title: "Reaches only the internal hosts it is allowed", Proves: "A workflow workspace limited to an internal range reaches the allowed internal host and not another one, nor cloud metadata.", Milestone: E4, Uses: []string{"G5.4", "G8.6"}, Needs: []Need{NeedNetworkControl, NeedInProcess}},
 			{ID: "G15.3", Title: "Waits for approval before a risky step at no compute cost", Proves: "A workflow waiting for a decision is saved with no sandbox left running; after the person approves, the same process applies the change, with no step repeated.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}, Uses: []string{"G4.1", "G4.2"}},
 			{ID: "G15.4", Title: "Every command is recorded with the key that ran it", Milestone: E4, Uses: []string{"G5.7", "G5.8"}},
