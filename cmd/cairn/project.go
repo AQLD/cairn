@@ -172,13 +172,10 @@ func cmdRun(ctx context.Context, c *client.Client, args []string) (int, error) {
 	if rel != "." {
 		dir = p.Remote + "/" + filepath.ToSlash(rel)
 	}
-	// mark the moment before the command, so what it writes can be found.
-	// Change times come from a coarse clock (a few ms per tick): the pauses
-	// keep the push's writes before the mark's tick and the command's after
-	// it, or a write in the same tick as the mark would be missed.
+	// mark the moment before the command, so what it writes can be found
 	mark := fmt.Sprintf("/tmp/.cairn-run-%d", time.Now().UnixNano())
 	if !*noPull {
-		if _, err := c.Exec(ctx, p.Workspace, client.Exec{Command: []string{"sh", "-c", `sleep 0.03; touch "$0" && sleep 0.03`, mark}}); err != nil {
+		if _, err := c.Exec(ctx, p.Workspace, client.Exec{Command: []string{"sh", "-c", markScript(mark, excludes(exclude))}, Dir: p.Remote}); err != nil {
 			return 1, err
 		}
 	}
@@ -186,7 +183,7 @@ func cmdRun(ctx context.Context, c *client.Client, args []string) (int, error) {
 	if err != nil || *noPull {
 		return code, err
 	}
-	if perr := pullChanged(ctx, c, p, mark, append(append([]string{}, defaultExcludes...), exclude...)); perr != nil {
+	if perr := pullChanged(ctx, c, p, mark, excludes(exclude)); perr != nil {
 		fmt.Fprintln(os.Stderr, "cairn: copying results back:", perr)
 	}
 	return code, nil
@@ -204,16 +201,13 @@ const (
 // (which reads local files) sees its results. Agents otherwise wrote
 // report.md in the workspace and could not find it.
 func pullChanged(ctx context.Context, c *client.Client, p *project, mark string, exclude []string) error {
-	var prune []string
-	for _, x := range exclude {
-		prune = append(prune, "-name '"+strings.ReplaceAll(x, "'", "")+"'")
-	}
+	prune := pruneArgs(exclude)
 	// Change time, not modification time: pushed files keep the local
 	// machine's mtimes, which can be ahead of the workspace's clock, but their
 	// ctime is when the push wrote them, before the mark. Relative to the
 	// project folder, so it means the same on every runtime.
 	script := fmt.Sprintf(`find . \( %s \) -prune -o -type f -cnewer %s -print 2>/dev/null | head -n %d; rm -f %s`,
-		strings.Join(prune, " -o "), mark, pullMaxFiles+1, mark)
+		prune, mark, pullMaxFiles+1, mark)
 	res, err := c.Exec(ctx, p.Workspace, client.Exec{Command: []string{"sh", "-c", script}, Dir: p.Remote})
 	if err != nil {
 		return err
@@ -284,4 +278,33 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 func mustCwd() string {
 	d, _ := os.Getwd()
 	return d
+}
+
+func excludes(extra []string) []string {
+	return append(append([]string{}, defaultExcludes...), extra...)
+}
+
+// pruneArgs is find's expression for the excluded names.
+func pruneArgs(exclude []string) string {
+	var prune []string
+	for _, x := range exclude {
+		prune = append(prune, "-name '"+strings.ReplaceAll(x, "'", "")+"'")
+	}
+	return strings.Join(prune, " -o ")
+}
+
+// markScript touches the mark until no file in the project is newer than it,
+// then pauses. Change times come from a coarse clock (a few ms per tick), and
+// on a loaded host files just pushed can carry a change time at or after a
+// mark touched straight after them: found "newer" after the command, they
+// were copied back as if it had changed them (a `cairn run -- pwd` copied
+// back 22 files under the race detector). A fixed pause before the touch was
+// not always enough; checking is. The pause after keeps the command's own
+// writes after the mark's tick.
+func markScript(mark string, exclude []string) string {
+	return fmt.Sprintf(`touch %[1]s; i=0
+while [ $i -lt 50 ] && [ -n "$(find . \( %[2]s \) -prune -o -type f -cnewer %[1]s -print 2>/dev/null | head -n 1)" ]; do
+	sleep 0.02; touch %[1]s; i=$((i+1))
+done
+sleep 0.03`, mark, pruneArgs(exclude))
 }
