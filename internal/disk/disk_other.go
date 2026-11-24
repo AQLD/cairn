@@ -12,3 +12,5 @@ func Repair(img string) error                           { return ErrUnsupported 
 func MountOverlay(lower, upper, work, dir string) error { return ErrUnsupported }
 func OverlaySupported(scratch string) error             { return ErrUnsupported }
 func OverlayReportsWriteErrors(scratch string) error    { return ErrUnsupported }
+func Freeze(dir string) error                           { return nil }
+func Thaw(dir string) error                             { return nil }

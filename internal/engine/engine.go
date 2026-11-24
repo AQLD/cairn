@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -73,6 +74,10 @@ type Config struct {
 	// MinFreeBytes is the free space a save must leave behind; a save that would
 	// go below it is refused before anything is written. DefaultMinFreeBytes if 0.
 	MinFreeBytes int64
+	// DiskReserve is the free space on the data volume below which workspace
+	// disks turn read-only until there is room again (see pressure.go).
+	// DefaultDiskReserve if 0; negative turns the guard off.
+	DiskReserve int64
 	// ExclusiveWait bounds how long a full save or resume waits for running
 	// commands (default DefaultExclusiveWait).
 	ExclusiveWait time.Duration
@@ -124,8 +129,12 @@ type Engine struct {
 	events *eventlog.Log // activity log (activity.go)
 	bases  baseState     // bases.go
 
-	mu      sync.Mutex
-	diskErr error // why new workspaces get no disk image; nil if they do
+	mu           sync.Mutex
+	diskErr      error       // why new workspaces get no disk image; nil if they do
+	pressured    atomic.Bool // the disk pressure guard has frozen workspace filesystems
+	needsRepair  sync.Map    // workspace ID -> true: its disk hit write errors the guard saw
+	stopPressure context.CancelFunc
+	pressureDone chan struct{}
 	// overlayErr is why filesystems built on a base are copies rather than
 	// overlays on its shared root; nil if they are overlays.
 	overlayErr error
@@ -205,6 +214,9 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.DiskReserve == 0 {
+		cfg.DiskReserve = DefaultDiskReserve
 	}
 	switch {
 	case cfg.KeepSaves == 0:
@@ -312,6 +324,14 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 		e.events.Close()
 		return nil, fmt.Errorf("purge: %w", err)
 	}
+	if e.diskErr == nil {
+		e.thawAll(ctx) // left frozen by an engine that stopped under pressure
+	}
+	if e.diskErr == nil && cfg.DiskReserve > 0 {
+		pctx, cancel := context.WithCancel(context.Background())
+		e.stopPressure, e.pressureDone = cancel, make(chan struct{})
+		go e.pressureGuard(pctx)
+	}
 	if err := e.startWarm(ctx); err != nil {
 		st.Close()
 		e.events.Close()
@@ -337,6 +357,10 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 // workspaces, not to this process, and the next Open picks them up again.
 func (e *Engine) Close() error {
 	e.stopWarm()
+	if e.stopPressure != nil {
+		e.stopPressure()
+		<-e.pressureDone
+	}
 	if e.stopUploads != nil {
 		e.stopUploads()
 		<-e.uploaderDone
@@ -677,14 +701,23 @@ func (e *Engine) writeFile(ctx context.Context, id, name string, r io.Reader, mo
 	defer root.Close()
 	if dir := path.Dir(rel); dir != "." {
 		if err := root.MkdirAll(dir, 0o755); err != nil {
+			if perr := e.pressureErr(err); perr != nil {
+				return perr
+			}
 			return fmt.Errorf("%w: %v", ErrInvalid, err)
 		}
+	}
+	if e.pressured.Load() && spec.DiskImage {
+		return errPressure // the disk is frozen: the write would wait for room
 	}
 	if mode == 0 {
 		mode = 0o644
 	}
 	f, err := root.OpenFile(rel, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode.Perm())
 	if err != nil {
+		if perr := e.pressureErr(err); perr != nil {
+			return perr
+		}
 		return fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	var dst io.Writer = f
@@ -709,8 +742,23 @@ func (e *Engine) writeFile(ctx context.Context, id, name string, r io.Reader, mo
 	if err == nil {
 		err = syncDirsIn(root, path.Dir(rel)) // and so do the entries naming it
 	}
+	if perr := e.pressureErr(err); perr != nil {
+		return perr
+	}
 	return diskFull(err, spec)
 }
+
+// pressureErr says why a write failed when the disk pressure guard made the
+// workspace's disk read-only; nil for any other error.
+func (e *Engine) pressureErr(err error) error {
+	if err == nil || !errors.Is(err, syscall.EROFS) || !e.pressured.Load() {
+		return nil
+	}
+	return errPressure
+}
+
+// errPressure: the disk pressure guard holds workspace writes.
+var errPressure = fmt.Errorf("%w: the server's volume is nearly full, so workspace writes wait until there is room (reads still work)", ErrInsufficientStorage)
 
 // spaceGuard checks free space every 64 MiB written.
 type spaceGuard struct {

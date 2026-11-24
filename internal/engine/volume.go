@@ -249,8 +249,14 @@ func (e *Engine) checkDisk(ctx context.Context, id string) error {
 	if err != nil || !ws.DiskImage {
 		return err
 	}
+	if e.pressured.Load() {
+		// the disk pressure guard has frozen workspace filesystems: a command
+		// or a write would wait for room, so callers hear why at once
+		return errPressure
+	}
 	root := e.volume(id, "rootfs", ws)
-	if ro, err := disk.Damaged(root.diskDir()); err != nil || !ro {
+	_, flagged := e.needsRepair.Load(id)
+	if ro, err := disk.Damaged(root.diskDir()); err != nil || (!ro && !flagged) {
 		return err
 	}
 	if err := e.needSpace("repairing the workspace's disk", 0); err != nil {
@@ -261,7 +267,8 @@ func (e *Engine) checkDisk(ctx context.Context, id string) error {
 		return err
 	}
 	defer l.Unlock()
-	if ro, err := disk.Damaged(root.diskDir()); err != nil || !ro {
+	_, flagged = e.needsRepair.Load(id)
+	if ro, err := disk.Damaged(root.diskDir()); err != nil || (!ro && !flagged) {
 		return err // repaired meanwhile
 	}
 	e.log.Warn("repairing a workspace disk that hit write errors (its volume filled up); processes restart", "workspace", id)
@@ -278,6 +285,7 @@ func (e *Engine) checkDisk(ctx context.Context, id string) error {
 	if err := disk.Repair(root.diskImg()); err != nil {
 		return err
 	}
+	e.needsRepair.Delete(id)
 	if err := root.attach(); err != nil {
 		return err
 	}

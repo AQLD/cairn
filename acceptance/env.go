@@ -179,6 +179,16 @@ func removeTestInit() {
 func (e *Env) start() {
 	e.T.Helper()
 	cfg := engine.Config{DataDir: e.DataDir, Runtime: e.rt, Failpoints: e.Failpoints, Now: e.Clock.Now}
+	if os.Getenv("CAIRN_TEST_ENGINE_LOG") == "1" {
+		// the engine's own log, shown only if the scenario fails
+		buf := &SyncBuffer{}
+		cfg.Logger = slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		e.T.Cleanup(func() {
+			if e.T.Failed() {
+				e.T.Logf("engine log:\n%s", buf.String())
+			}
+		})
+	}
 	cfg.NoDiskImages = os.Getenv("CAIRN_TEST_DISK_IMAGES") == "0" // compare with plain folders
 	tmpl := os.Getenv("CAIRN_TEST_TEMPLATE")
 	if tmpl != "" {
