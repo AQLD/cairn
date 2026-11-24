@@ -24,6 +24,7 @@ import (
 type egressNet struct {
 	allowedIP, otherIP string
 	dnsAddr            string
+	ns                 string // the network namespace the servers run in
 }
 
 func newEgressNet(e *Env) *egressNet {
@@ -80,7 +81,7 @@ func newEgressNet(e *Env) *egressNet {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return &egressNet{allowedIP: allowed, otherIP: other, dnsAddr: pc.LocalAddr().String()}
+	return &egressNet{allowedIP: allowed, otherIP: other, dnsAddr: pc.LocalAddr().String(), ns: ns}
 }
 
 // serveTestDNS answers A queries from names; anything else gets no answers.

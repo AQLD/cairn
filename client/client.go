@@ -144,6 +144,9 @@ type CreateWorkspace struct {
 	// Egress limits outbound traffic to these names ("pypi.org",
 	// "*.github.com") and IPv4 ranges; it switches the network on.
 	Egress []string `json:"egress,omitempty"`
+	// Secrets the workspace may use, by name: it gets a placeholder for each,
+	// swapped for the value only on requests to the secret's hosts.
+	Secrets []string `json:"secrets,omitempty"`
 }
 
 // Template is a root filesystem new workspaces start from.
@@ -171,7 +174,8 @@ type Workspace struct {
 	State      string    `json:"state"` // running, stopped (full-saved), paused (woken on next use), ...
 	Limits     Limits    `json:"limits"`
 	Network    bool      `json:"network"`
-	Egress     []string  `json:"egress,omitempty"` // outbound allow-list, if any
+	Egress     []string  `json:"egress,omitempty"`  // outbound allow-list, if any
+	Secrets    []string  `json:"secrets,omitempty"` // secrets it uses, by name
 	Template   string    `json:"template,omitempty"`
 	SourceSave string    `json:"source_save,omitempty"`
 	BaseSave   string    `json:"base_save,omitempty"` // the save its state comes from: last saved, resumed or copied

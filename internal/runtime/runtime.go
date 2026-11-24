@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"time"
 )
 
@@ -61,7 +62,19 @@ type Spec struct {
 	// Egress, when set, limits a workspace with network on to these names
 	// ("pypi.org", "*.github.com") and IPv4 ranges (see ParseEgress).
 	Egress []string
+	// Env is added to every command's environment (and process 1's).
+	Env map[string]string
+	// Proxy, when set, is the workspace's HTTP(S) proxy (secrets,
+	// docs/design/secrets.md): the runtime serves it on the workspace's
+	// host-side address, points HTTP(S)_PROXY at it, and drops direct
+	// connections to ports 80 and 443 so it is the only way out on them.
+	Proxy http.Handler `json:"-"`
+	// MountDir, when set, is a host folder shown read-only at /run/cairn.
+	MountDir string
 }
+
+// ProxyPort is where a workspace's proxy listens on its host-side address.
+const ProxyPort = 3128
 
 // ExecRequest runs one command inside a workspace.
 type ExecRequest struct {
