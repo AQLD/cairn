@@ -758,3 +758,10 @@ func (c *Client) ListKeys(ctx context.Context) ([]Key, error) {
 func (c *Client) RevokeKey(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/keys/"+url.PathEscape(id), nil, nil)
 }
+
+// Diagnostics writes the engine's diagnostics bundle (.tar.gz) to w: facts
+// about the engine, host and state, never workspace contents. Needs an
+// admin token.
+func (c *Client) Diagnostics(ctx context.Context, w io.Writer) error {
+	return c.doRaw(ctx, http.MethodGet, "/v1/diagnostics", nil, w)
+}
