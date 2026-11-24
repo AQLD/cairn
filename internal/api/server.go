@@ -141,6 +141,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/saves/{id}/pin", s.pinSave(true))
 	s.mux.HandleFunc("DELETE /v1/saves/{id}/pin", s.pinSave(false))
 	s.mux.HandleFunc("POST /v1/saves/{id}/verify", s.verifySave)
+	s.mux.HandleFunc("PUT /v1/secrets/{name}", s.setSecret)
+	s.mux.HandleFunc("GET /v1/secrets", s.listSecrets)
+	s.mux.HandleFunc("DELETE /v1/secrets/{name}", s.deleteSecret)
 	s.mux.HandleFunc("GET /v1/templates", s.listTemplates)
 	s.mux.HandleFunc("PUT /v1/templates/{name}", s.importTemplate)
 	s.mux.HandleFunc("POST /v1/templates/{name}/pull", s.pullTemplate)
@@ -440,6 +443,40 @@ func (s *Server) undeleteSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, sv)
+}
+
+// Secrets: the value goes in, never comes out (docs/design/secrets.md).
+func (s *Server) setSecret(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Value string   `json:"value"`
+		Hosts []string `json:"hosts"`
+	}
+	if !s.decode(w, r, &req) {
+		return
+	}
+	sec, err := s.eng.SetSecret(r.Context(), r.PathValue("name"), []byte(req.Value), req.Hosts)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sec)
+}
+
+func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
+	list, err := s.eng.ListSecrets(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"secrets": list})
+}
+
+func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
+	if err := s.eng.DeleteSecret(r.Context(), r.PathValue("name")); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- plumbing ---
