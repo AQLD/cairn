@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/AQLD/cairn/internal/engine"
 )
 
 // mcpConn is a coding agent's side of `cairn mcp`: the real CLI binary,
@@ -484,5 +486,27 @@ func init() {
 		if strings.Join(w.Egress, ",") != "pypi.org,*.github.com" || !w.Network {
 			e.T.Fatalf("workspace egress %v network %v", w.Egress, w.Network)
 		}
+	})
+
+	register("G10.12.7", func(e *Env) {
+		key := secretsKey(e)
+		e.RestartWith(func(c *engine.Config) { c.SecretsKey = key })
+		value := secretValue()
+		_, err := e.C.SetSecret(e.Ctx, "GITHUB_TOKEN", value, []string{"github.com"})
+		e.Must(err)
+		m := startMCP(e)
+		m.initialize()
+		out := m.ok("workspace_create", map[string]any{"name": "with-secret", "secrets": []string{"GITHUB_TOKEN"}})
+		ws := firstMatch(e, wsIDPattern, out)
+		if !strings.Contains(out, "GITHUB_TOKEN") || !strings.Contains(out, "placeholder") || strings.Contains(out, value) {
+			e.T.Fatalf("workspace_create does not explain the secret (or shows its value): %q", out)
+		}
+		env := m.ok("exec", map[string]any{"command": "printf %s \"$GITHUB_TOKEN\""})
+		if !strings.Contains(env, "cairn-secret-") || strings.Contains(env, value) {
+			e.T.Fatalf("the agent's workspace holds %q, want a placeholder", env)
+		}
+		w, err := e.C.GetWorkspace(e.Ctx, ws)
+		e.Must(err)
+		Equal(e, "workspace secrets", strings.Join(w.Secrets, ","), "GITHUB_TOKEN")
 	})
 }

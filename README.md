@@ -92,6 +92,7 @@ For working on Cairn itself there is also a `host` runtime (`make run`) that run
 - A warm pool for instant creates (`cairnd --warm N`), and workspaces that share their template read-only (`cairnd --shared-templates`, opt-in)
 - A volume that fills never loses a workspace's write: below a reserve, writes wait until there is room
 - Outbound allow-lists per workspace (`cairn create --allow pypi.org --allow '*.github.com'`): only those names and ranges are reachable
+- Secrets a workspace uses but never holds (`cairn secret set GITHUB_TOKEN --host github.com`, then `secrets` on create): it gets a placeholder, swapped for the value only on requests to the secret's hosts, so no disk, save or copy carries it
 - The API over HTTPS (`cairnd --tls-cert --tls-key`, renewed certificates picked up without a restart; clients trust a private CA with `CAIRN_CA_CERT`)
 - REST API, CLI, MCP server and Python SDK; `cairn setup` connects Claude Code, Codex, pi and Cursor
 - Runs on a laptop with Docker (`cairn up`), on a Linux server, or on Kubernetes ([deploy/helm](deploy/helm))

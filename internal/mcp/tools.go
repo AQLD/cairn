@@ -84,6 +84,7 @@ func init() {
 			"template":  {"string", "Template (root filesystem) to start from. Default: the engine's default template."},
 			"network":   {"boolean", "Allow outbound network access (package installs, git clone). Default false."},
 			"allow":     {"array", "Allow outbound traffic only to these names (pypi.org, *.github.com) or IPv4 ranges; switches the network on. Prefer this over network=true when you know what the task needs to reach."},
+			"secrets":   {"array", "Secrets the task needs, by name (set beforehand with `cairn secret set`). Each becomes an environment variable holding a placeholder: use it as the credential (e.g. https://x:$GITHUB_TOKEN@github.com/...); the engine swaps in the real value only on requests to the secret's hosts. You never see the value."},
 			"memory_mb": {"integer", "Memory limit in MB. Default: the engine's."},
 		}),
 		run: func(ctx context.Context, s *Server, args json.RawMessage) (toolResult, error) {
@@ -92,13 +93,14 @@ func init() {
 				Template string   `json:"template"`
 				Network  bool     `json:"network"`
 				Allow    []string `json:"allow"`
+				Secrets  []string `json:"secrets"`
 				MemoryMB int64    `json:"memory_mb"`
 			}
 			if err := decode(args, &a); err != nil {
 				return toolResult{}, err
 			}
 			ws, err := s.c.CreateWorkspace(ctx, client.CreateWorkspace{Name: a.Name, Template: a.Template, Network: a.Network,
-				Egress: a.Allow, Limits: client.Limits{MemoryMB: a.MemoryMB}})
+				Egress: a.Allow, Secrets: a.Secrets, Limits: client.Limits{MemoryMB: a.MemoryMB}})
 			if err != nil {
 				return toolResult{}, err
 			}
@@ -107,7 +109,11 @@ func init() {
 			if len(ws.Egress) > 0 {
 				netw = "only to " + strings.Join(ws.Egress, ", ")
 			}
-			return text("Created workspace %s (template %q, network %s). It is now the default for other tools.", ws.ID, ws.Template, netw), nil
+			msg := fmt.Sprintf("Created workspace %s (template %q, network %s). It is now the default for other tools.", ws.ID, ws.Template, netw)
+			if len(ws.Secrets) > 0 {
+				msg += " Secrets (as environment variables holding placeholders, swapped for the real values on requests to their hosts): " + strings.Join(ws.Secrets, ", ") + "."
+			}
+			return text("%s", msg), nil
 		},
 	})
 
