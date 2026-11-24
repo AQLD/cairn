@@ -29,6 +29,9 @@ func props(required []string, p map[string][2]string) map[string]any {
 	ps := map[string]any{}
 	for name, td := range p {
 		ps[name] = map[string]any{"type": td[0], "description": td[1]}
+		if td[0] == "array" {
+			ps[name].(map[string]any)["items"] = map[string]any{"type": "string"}
+		}
 	}
 	if required == nil {
 		required = []string{}
@@ -80,25 +83,31 @@ func init() {
 			"name":      {"string", "A short name for the workspace."},
 			"template":  {"string", "Template (root filesystem) to start from. Default: the engine's default template."},
 			"network":   {"boolean", "Allow outbound network access (package installs, git clone). Default false."},
+			"allow":     {"array", "Allow outbound traffic only to these names (pypi.org, *.github.com) or IPv4 ranges; switches the network on. Prefer this over network=true when you know what the task needs to reach."},
 			"memory_mb": {"integer", "Memory limit in MB. Default: the engine's."},
 		}),
 		run: func(ctx context.Context, s *Server, args json.RawMessage) (toolResult, error) {
 			var a struct {
-				Name     string `json:"name"`
-				Template string `json:"template"`
-				Network  bool   `json:"network"`
-				MemoryMB int64  `json:"memory_mb"`
+				Name     string   `json:"name"`
+				Template string   `json:"template"`
+				Network  bool     `json:"network"`
+				Allow    []string `json:"allow"`
+				MemoryMB int64    `json:"memory_mb"`
 			}
 			if err := decode(args, &a); err != nil {
 				return toolResult{}, err
 			}
 			ws, err := s.c.CreateWorkspace(ctx, client.CreateWorkspace{Name: a.Name, Template: a.Template, Network: a.Network,
-				Limits: client.Limits{MemoryMB: a.MemoryMB}})
+				Egress: a.Allow, Limits: client.Limits{MemoryMB: a.MemoryMB}})
 			if err != nil {
 				return toolResult{}, err
 			}
 			s.use(ws.ID)
-			return text("Created workspace %s (template %q, network %v). It is now the default for other tools.", ws.ID, ws.Template, ws.Network), nil
+			netw := fmt.Sprint(ws.Network)
+			if len(ws.Egress) > 0 {
+				netw = "only to " + strings.Join(ws.Egress, ", ")
+			}
+			return text("Created workspace %s (template %q, network %s). It is now the default for other tools.", ws.ID, ws.Template, netw), nil
 		},
 	})
 

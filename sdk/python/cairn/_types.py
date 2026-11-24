@@ -161,6 +161,7 @@ class Workspace:
     created_at: Optional[datetime]
     updated_at: Optional[datetime]
     base_save: str = ""  # the save its state comes from: last saved, resumed or copied
+    egress: list = field(default_factory=list)  # outbound allow-list, if any
     _client: Any = field(default=None, repr=False, compare=False)
 
     @classmethod
@@ -169,7 +170,7 @@ class Workspace:
                    limits=Limits(**_pick(Limits, d.get("limits") or {})), network=d.get("network", False),
                    template=d.get("template", ""), source_save=d.get("source_save", ""),
                    created_at=_time(d.get("created_at")), updated_at=_time(d.get("updated_at")),
-                   base_save=d.get("base_save", ""), _client=client)
+                   base_save=d.get("base_save", ""), egress=list(d.get("egress") or []), _client=client)
 
     def exec(self, command, **kw) -> ExecResult:
         return self._client.exec(self.id, command, **kw)

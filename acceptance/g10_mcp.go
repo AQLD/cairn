@@ -470,4 +470,19 @@ func init() {
 			}
 		}
 	})
+
+	register("G10.12.6", func(e *Env) {
+		m := startMCP(e)
+		m.initialize()
+		out := m.ok("workspace_create", map[string]any{"name": "limited", "allow": []string{"pypi.org", "*.github.com"}})
+		ws := firstMatch(e, wsIDPattern, out)
+		if !strings.Contains(out, "only to pypi.org, *.github.com") {
+			e.T.Fatalf("workspace_create does not say the network is limited: %q", out)
+		}
+		w, err := e.C.GetWorkspace(e.Ctx, ws)
+		e.Must(err)
+		if strings.Join(w.Egress, ",") != "pypi.org,*.github.com" || !w.Network {
+			e.T.Fatalf("workspace egress %v network %v", w.Egress, w.Network)
+		}
+	})
 }

@@ -137,6 +137,16 @@ class TestWorkspaces(EngineTest):
         self.assertEqual(e.exception.status, 404)
         self.assertTrue(e.exception.request_id, "errors carry the request id the engine logged")
 
+    def test_egress_limits_or_is_refused_honestly(self):
+        if not self.info.capabilities.network_control:
+            with self.assertRaises(cairn.UnsupportedByRuntime):
+                self.c.create_workspace("egress", egress=["pypi.org"])
+            return
+        ws = self.c.create_workspace("egress", egress=["pypi.org", "*.github.com"])
+        self.addCleanup(self._delete, ws.id)
+        self.assertEqual(ws.egress, ["pypi.org", "*.github.com"])
+        self.assertTrue(ws.network)
+
     def test_retried_create_returns_the_same_workspace(self):
         a = self.workspace("once", idempotency_key="sdk-create-key-1")
         b = self.c.create_workspace("once", idempotency_key="sdk-create-key-1")
