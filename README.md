@@ -99,6 +99,10 @@ For working on Cairn itself there is also a `host` runtime (`make run`) that run
 
 Not yet: usage limits per user and project, a TypeScript SDK. [ROADMAP.md](ROADMAP.md) has the order.
 
+## Security
+
+What Cairn protects, from whom, and where it stops: [docs/threat-model.md](docs/threat-model.md). Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
+
 ## How it is tested
 
 Everything Cairn must handle is written down as a tree of end-goal scenarios in [`spec/catalog.go`](spec/catalog.go), from "a coding agent picks up where it left off" down to "a flipped byte in a save is caught". `make test` runs them; [docs/test-plan.md](docs/test-plan.md) shows which pass, and [ROADMAP.md](ROADMAP.md) ties each milestone to the scenarios that gate it.
