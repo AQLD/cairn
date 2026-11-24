@@ -64,7 +64,7 @@ func (c *Client) WithHTTPClient(h *http.Client) *Client { c.http = h; return c }
 // Error is an error returned by the engine.
 type Error struct {
 	Status    int
-	Code      string // stable: not_found, invalid_argument, conflict, save_corrupt, insufficient_storage, too_many_requests, unsupported_by_runtime, unauthorized, internal
+	Code      string // stable: not_found, invalid_argument, conflict, save_corrupt, insufficient_storage, too_many_requests, unsupported_by_runtime, unauthorized, forbidden, internal
 	Message   string
 	RequestID string // matches the engine's log line for this request
 }
@@ -718,4 +718,34 @@ func (c *Client) ListSecrets(ctx context.Context) ([]Secret, error) {
 // DeleteSecret removes a secret.
 func (c *Client) DeleteSecret(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/secrets/"+url.PathEscape(name), nil, nil)
+}
+
+// Key is an API key as the engine shows it. Token is set only in the answer
+// that created it: keep it then, it is never shown again.
+type Key struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Scope     string     `json:"scope"` // read, write or admin
+	CreatedAt time.Time  `json:"created_at"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+	Token     string     `json:"token,omitempty"`
+}
+
+// CreateKey makes an API key for one caller (needs an admin token).
+func (c *Client) CreateKey(ctx context.Context, name, scope string) (*Key, error) {
+	var out Key
+	return &out, c.do(ctx, http.MethodPost, "/v1/keys", map[string]string{"name": name, "scope": scope}, &out)
+}
+
+// ListKeys lists API keys, revoked ones included, never tokens.
+func (c *Client) ListKeys(ctx context.Context) ([]Key, error) {
+	var out struct {
+		Keys []Key `json:"keys"`
+	}
+	return out.Keys, c.do(ctx, http.MethodGet, "/v1/keys", nil, &out)
+}
+
+// RevokeKey stops a key working, at once.
+func (c *Client) RevokeKey(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/keys/"+url.PathEscape(id), nil, nil)
 }

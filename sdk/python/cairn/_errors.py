@@ -75,6 +75,12 @@ class Unauthorized(CairnError):
     code = "unauthorized"
 
 
+class Forbidden(CairnError):
+    """The caller's API key is valid but its scope does not allow this."""
+
+    code = "forbidden"
+
+
 class InternalError(CairnError):
     code = "internal"
 
@@ -100,7 +106,7 @@ class CommandFailed(CairnError):
 _BY_CODE = {
     c.code: c
     for c in (NotFound, InvalidArgument, Conflict, SaveCorrupt, InsufficientStorage,
-              TooManyRequests, UnsupportedByRuntime, Unauthorized, InternalError)
+              TooManyRequests, UnsupportedByRuntime, Unauthorized, Forbidden, InternalError)
 }
 
 

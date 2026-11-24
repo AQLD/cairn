@@ -226,6 +226,22 @@ class Client:
     def delete_secret(self, name: str) -> None:
         self._request("DELETE", "/v1/secrets/" + urllib.parse.quote(name, safe=""))
 
+
+    # -- API keys ----------------------------------------------------------
+
+    def create_key(self, name: str, scope: str = "write") -> dict:
+        """An API key for one caller (needs an admin token). The answer's
+        "token" is the only time the token is shown."""
+        return self._json("POST", "/v1/keys", {"name": name, "scope": scope})
+
+    def keys(self) -> list[dict]:
+        """API keys, revoked ones included, never tokens."""
+        return self._json("GET", "/v1/keys").get("keys") or []
+
+    def revoke_key(self, key_id: str) -> None:
+        """Stops a key working, at once."""
+        self._request("DELETE", "/v1/keys/" + urllib.parse.quote(key_id, safe=""))
+
     def workspaces(self) -> list[Workspace]:
         d = self._json("GET", "/v1/workspaces")
         return [Workspace._from(w, self) for w in d.get("workspaces") or []]

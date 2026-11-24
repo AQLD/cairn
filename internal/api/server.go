@@ -85,15 +85,45 @@ func New(eng *engine.Engine, log *slog.Logger, token string) *Server {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.handler.ServeHTTP(w, r) }
 
+// authorize finds who is calling: the operator's token (everything), or an
+// API key (its scope), and refuses what the caller may not do. Without a
+// token the engine is open (localhost only, see cairnd).
 func (s *Server) authorize(w http.ResponseWriter, r *http.Request) {
 	if s.token != "" && r.URL.Path != "/healthz" {
 		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		caller := engine.Caller{Scope: engine.ScopeAdmin}
 		if subtle.ConstantTimeCompare([]byte(got), []byte(s.token)) != 1 {
-			writeError(w, http.StatusUnauthorized, "unauthorized", "missing or wrong API token")
+			k, err := s.eng.Authenticate(r.Context(), got)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "unauthorized", "missing, wrong or revoked API token")
+				return
+			}
+			caller = engine.Caller{KeyID: k.ID, Scope: k.Scope}
+		}
+		if !allowed(caller.Scope, r) {
+			writeError(w, http.StatusForbidden, "forbidden", fmt.Sprintf("this key's scope (%s) does not allow %s %s", caller.Scope, r.Method, r.URL.Path))
 			return
 		}
+		r = r.WithContext(engine.WithCaller(r.Context(), caller))
 	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// allowed: read keys look; write keys use workspaces; keys, secrets and
+// template changes need admin.
+func allowed(scope string, r *http.Request) bool {
+	if scope == engine.ScopeAdmin {
+		return true
+	}
+	p := r.URL.Path
+	if strings.HasPrefix(p, "/v1/keys") || strings.HasPrefix(p, "/v1/secrets") {
+		return false
+	}
+	reading := r.Method == http.MethodGet || r.Method == http.MethodHead
+	if strings.HasPrefix(p, "/v1/templates") && !reading {
+		return false
+	}
+	return reading || scope == engine.ScopeWrite
 }
 
 func (s *Server) routes() {
@@ -144,6 +174,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PUT /v1/secrets/{name}", s.setSecret)
 	s.mux.HandleFunc("GET /v1/secrets", s.listSecrets)
 	s.mux.HandleFunc("DELETE /v1/secrets/{name}", s.deleteSecret)
+	s.mux.HandleFunc("POST /v1/keys", s.createKey)
+	s.mux.HandleFunc("GET /v1/keys", s.listKeys)
+	s.mux.HandleFunc("DELETE /v1/keys/{id}", s.revokeKey)
 	s.mux.HandleFunc("GET /v1/templates", s.listTemplates)
 	s.mux.HandleFunc("PUT /v1/templates/{name}", s.importTemplate)
 	s.mux.HandleFunc("POST /v1/templates/{name}/pull", s.pullTemplate)
@@ -473,6 +506,44 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
 	if err := s.eng.DeleteSecret(r.Context(), r.PathValue("name")); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// API keys: the token appears once, in the answer that creates the key.
+func (s *Server) createKey(w http.ResponseWriter, r *http.Request) {
+	if s.token == "" {
+		writeError(w, http.StatusBadRequest, "invalid_argument", "API keys need authentication on: start cairnd with --token")
+		return
+	}
+	var req struct {
+		Name  string `json:"name"`
+		Scope string `json:"scope"`
+	}
+	if !s.decode(w, r, &req) {
+		return
+	}
+	k, err := s.eng.CreateKey(r.Context(), req.Name, req.Scope)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, k)
+}
+
+func (s *Server) listKeys(w http.ResponseWriter, r *http.Request) {
+	list, err := s.eng.ListKeys(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"keys": list})
+}
+
+func (s *Server) revokeKey(w http.ResponseWriter, r *http.Request) {
+	if err := s.eng.RevokeKey(r.Context(), r.PathValue("id")); err != nil {
 		s.fail(w, err)
 		return
 	}

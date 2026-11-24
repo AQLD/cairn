@@ -165,6 +165,21 @@ class TestWorkspaces(EngineTest):
         with self.assertRaises(cairn.InvalidArgument):
             self.c.set_secret("9BAD", "v", ["x.example.com"])
 
+
+    def test_keys_are_scoped_and_revocable(self):
+        if not self.c.token:
+            return  # keys need an engine with authentication on
+        k = self.c.create_key("sdk-reader", "read")
+        self.assertTrue(k["token"].startswith("cairn_"))
+        reader = cairn.Client(self.c.endpoint, k["token"])
+        reader.workspaces()
+        with self.assertRaises(cairn.Forbidden):
+            reader.create_workspace("not-allowed")
+        self.assertNotIn(k["token"], repr(self.c.keys()))
+        self.c.revoke_key(k["id"])
+        with self.assertRaises(cairn.Unauthorized):
+            reader.workspaces()
+
     def test_egress_limits_or_is_refused_honestly(self):
         if not self.info.capabilities.network_control:
             with self.assertRaises(cairn.UnsupportedByRuntime):
