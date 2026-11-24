@@ -301,6 +301,7 @@ var Catalog = []Scenario{
 					{ID: "G10.12.3", Title: "An agent recalls what it did through the MCP history tool", Proves: "history lists the workspace's commands with their exit codes, its saves and rewinds, oldest first, filtered by kind, and works from a new conversation that never saw them.", Milestone: E3},
 					{ID: "G10.12.4", Title: "An agent sees what a step changed through the MCP diff tool", Proves: "diff with only a save lists the files that step added, modified and removed against the save it came from, with counts; from compares any two saves; a limit says the list was cut.", Milestone: E3},
 					{ID: "G10.12.5", Title: "An agent pins a milestone save through MCP", Proves: "save with pin=true makes a pinned save (kept however old it gets), says so, and list_saves marks it pinned.", Milestone: E3},
+					{ID: "G10.12.6", Title: "An agent creates a workspace limited to the sites its task needs through MCP", Proves: "workspace_create with allow makes a workspace whose egress is that list, and says so.", Milestone: E4, Needs: []Need{NeedNetworkControl}},
 				}},
 			// G10.13: the activity log (what an agent did in its workspace)
 			{ID: "G10.13", Title: "Every operation on a workspace shows up in its activity log", Proves: "A person can see what an agent did in its workspace, and watch it live, without the agent's help.", Milestone: E3,
@@ -357,7 +358,7 @@ var Catalog = []Scenario{
 			{ID: "G12.1", Title: "Loads a dataset of several gigabytes", Proves: "A dataset streamed in from outside is analysed in the workspace, and the answer matches the data exactly.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G19.5", "G3.2.3"}},
 			{ID: "G12.2", Title: "Keeps a live Python session between questions", Proves: "A dataset loaded once into a Python session answers several questions, each faster than loading and matching the data, without being loaded again.", Milestone: E3, Needs: []Need{NeedPersistent}, Uses: []string{"G19.1"}},
 			{ID: "G12.3", Title: "Comes back a week later to the same session with its data still loaded", Proves: "After a full save and a long pause, the same Python session answers from the data it loaded before, without loading again, and sees the time that passed.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}, Uses: []string{"G19.2", "G1.8.1", "G4.2"}},
-			{ID: "G12.4", Title: "Data cannot leave: the network is off or allow-listed", Milestone: E4, Uses: []string{"G5.3", "G5.4", "G8.6"}},
+			{ID: "G12.4", Title: "Data cannot leave: the network is off or allow-listed", Proves: "A data workspace reaches its allowed package index and nothing else: sending a file to a name off the list or straight to an address fails, and a workspace with the network off reaches nothing at all.", Milestone: E4, Uses: []string{"G5.3", "G5.4", "G8.6"}, Needs: []Need{NeedNetworkControl, NeedInProcess}},
 			{ID: "G12.5", Title: "A query that runs out of memory loses the query, not the session's files", Proves: "A query that outgrows the workspace's memory is stopped with an error; the session process and its files carry on, and the next query runs.", Milestone: E3, Needs: []Need{NeedResourceLimits, NeedPersistent}, Uses: []string{"G3.2.4", "G3.2.5"}},
 			{ID: "G12.6", Title: "Charts and result files come back out", Proves: "Result files the analysis writes, text and binary, download byte for byte.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G1.4", "G19.5"}},
 		},
@@ -381,7 +382,7 @@ var Catalog = []Scenario{
 		Milestone: E4,
 		Children: []Scenario{
 			{ID: "G14.1", Title: "Each question starts from a warm save with its tools loaded", Proves: "Copies of a full save answer with the tool process loaded before the save, without loading again, and no copy sees another's questions.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}, Uses: []string{"G2.1", "G9.5"}},
-			{ID: "G14.2", Title: "Fetches only from allowed sources", Milestone: E4, Uses: []string{"G5.4"}},
+			{ID: "G14.2", Title: "Fetches only from allowed sources", Proves: "A research workspace limited to its sources fetches from them and from nowhere else.", Milestone: E4, Uses: []string{"G5.4"}, Needs: []Need{NeedNetworkControl, NeedInProcess}},
 			{ID: "G14.3", Title: "Reads documents with installed tools (PDF, office files)", Proves: "A PDF and a Word file written into a workspace from the team's template come out as their exact text through the template's tools.", Milestone: E3, Needs: []Need{NeedAgentTools}, Uses: []string{"G1.2", "G1.10"}},
 			{ID: "G14.4", Title: "A hundred questions run side by side on one server", Milestone: E4, Uses: []string{"G2.4", "G9.7"}},
 			{ID: "G14.5", Title: "Finished questions leave nothing behind", Proves: "After questions answered in copies of a warm save and deleted, the host and the engine's data hold what they held before: no folders, bytes, sandboxes or other host resources left over.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent, NeedInProcess}, Uses: []string{"G10.7"}},
@@ -393,7 +394,7 @@ var Catalog = []Scenario{
 		Milestone: E4,
 		Children: []Scenario{
 			{ID: "G15.1", Title: "Calls internal APIs with secrets it cannot read back or leak", Milestone: E4, Uses: []string{"G5.9"}},
-			{ID: "G15.2", Title: "Reaches only the internal hosts it is allowed", Milestone: E4, Uses: []string{"G5.4", "G8.6"}},
+			{ID: "G15.2", Title: "Reaches only the internal hosts it is allowed", Proves: "A workflow workspace limited to an internal range reaches the allowed internal host and not another one, nor cloud metadata.", Milestone: E4, Uses: []string{"G5.4", "G8.6"}, Needs: []Need{NeedNetworkControl, NeedInProcess}},
 			{ID: "G15.3", Title: "Waits for approval before a risky step at no compute cost", Proves: "A workflow waiting for a decision is saved with no sandbox left running; after the person approves, the same process applies the change, with no step repeated.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}, Uses: []string{"G4.1", "G4.2"}},
 			{ID: "G15.4", Title: "Every command is recorded with the key that ran it", Milestone: E4, Uses: []string{"G5.7", "G5.8"}},
 			{ID: "G15.5", Title: "A bad change inside the workspace is undone by rewinding", Proves: "A migration that deletes rows is undone by resuming the save made before it: the workflow process holding the database open sees every row again and the database passes its integrity check.", Milestone: E3, Needs: []Need{NeedFullSave, NeedPersistent}, Uses: []string{"G18.3"}},

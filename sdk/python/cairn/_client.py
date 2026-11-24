@@ -185,12 +185,16 @@ class Client:
     # -- workspaces --------------------------------------------------------
 
     def create_workspace(self, name: str = "", *, template: str = "", network: bool = False,
+                         egress: Optional[list[str]] = None,
                          cpus: float = 0, memory_mb: int = 0, disk_mb: int = 0,
                          idempotency_key: Optional[str] = None) -> Workspace:
         """A new workspace, started from template (the engine's default when
-        empty). Network is off unless asked for."""
+        empty). Network is off unless asked for; egress limits it to these
+        names ("pypi.org", "*.github.com") and IPv4 ranges, and switches it on."""
         body: dict[str, Any] = {"name": name, "network": network, "template": template,
                                 "limits": Limits(cpus, memory_mb, disk_mb)._json()}
+        if egress:
+            body["egress"] = list(egress)
         d = self._json("POST", "/v1/workspaces", body, key=idempotency_key or _key())
         return Workspace._from(d, self)
 

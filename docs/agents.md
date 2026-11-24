@@ -46,7 +46,7 @@ The entry launches the absolute path of the `cairn` binary you ran, so desktop a
 
 | Tool | What it does |
 | --- | --- |
-| `workspace_create` | A new workspace for the task; later calls use it by default. `network=true` for package installs and `git clone`. |
+| `workspace_create` | A new workspace for the task; later calls use it by default. `network=true` for package installs and `git clone`; `allow=["pypi.org", "*.github.com"]` to reach only what the task needs. |
 | `exec` | Runs a shell command and returns its exit code and output. `background=true` starts a server or watcher that keeps running between calls. |
 | `write_file`, `read_file` | One file at a time. |
 | `push_dir`, `pull_dir` | A whole folder between your machine and the workspace (your project in, the finished work out), merging with what is there. |
