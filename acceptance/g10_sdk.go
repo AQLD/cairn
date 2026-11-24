@@ -4,6 +4,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/AQLD/cairn/internal/engine"
 )
 
 func init() {
@@ -11,6 +13,10 @@ func init() {
 	// engine, so the SDK is checked on every runtime the suite runs on
 	// (including full saves on gVisor).
 	register("G10.10", func(e *Env) {
+		if e.Engine != nil { // in process: give it a secrets key, so secrets are covered too
+			key := secretsKey(e)
+			e.RestartWith(func(c *engine.Config) { c.SecretsKey = key })
+		}
 		endpoint, token := e.endpoint()
 		cmd := exec.CommandContext(e.Ctx, "python3", "-W", "error", "-m", "unittest", "discover", "-v",
 			"-s", filepath.Join("..", "sdk", "python", "tests"))

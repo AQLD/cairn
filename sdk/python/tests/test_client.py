@@ -61,7 +61,8 @@ class Engine:
         cls._log = open(os.path.join(cls._dir, "cairnd.log"), "wb")
         cls._proc = subprocess.Popen(
             [binary, "--runtime", "host", "--data", os.path.join(cls._dir, "data"),
-             "--listen", f"127.0.0.1:{port}", "--token", cls.token],
+             "--listen", f"127.0.0.1:{port}", "--token", cls.token,
+             "--secrets-key", cls._key()],
             stdout=subprocess.DEVNULL, stderr=cls._log)
         cls.endpoint = f"http://127.0.0.1:{port}"
         deadline = time.time() + 30
@@ -72,6 +73,15 @@ class Engine:
             except OSError:
                 time.sleep(0.1)
         raise RuntimeError("cairnd did not start: " + open(os.path.join(cls._dir, "cairnd.log")).read())
+
+    @classmethod
+    def _key(cls) -> str:
+        # outside the data folder, as cairnd requires
+        path = os.path.join(cls._dir, "secrets.key")
+        with open(path, "w") as f:
+            f.write(os.urandom(32).hex())
+        os.chmod(path, 0o600)
+        return path
 
     @classmethod
     def stop(cls):
@@ -136,6 +146,24 @@ class TestWorkspaces(EngineTest):
         self.assertEqual(e.exception.code, "not_found")
         self.assertEqual(e.exception.status, 404)
         self.assertTrue(e.exception.request_id, "errors carry the request id the engine logged")
+
+    def test_secrets_are_stored_and_never_returned(self):
+        value = "sv-" + os.urandom(12).hex()
+        try:
+            out = self.c.set_secret("SDK_TOKEN", value, ["api.example.com"])
+        except cairn.UnsupportedByRuntime:
+            return  # an engine without a secrets key refuses them, honestly
+        self.addCleanup(lambda: self.c.delete_secret("SDK_TOKEN"))
+        self.assertEqual(out["name"], "SDK_TOKEN")
+        self.assertNotIn(value, repr(out))
+        listed = self.c.secrets()
+        self.assertIn("SDK_TOKEN", [s["name"] for s in listed])
+        self.assertNotIn(value, repr(listed))
+        if not self.info.capabilities.network_control:
+            with self.assertRaises(cairn.UnsupportedByRuntime):
+                self.c.create_workspace("with-secret", secrets=["SDK_TOKEN"])
+        with self.assertRaises(cairn.InvalidArgument):
+            self.c.set_secret("9BAD", "v", ["x.example.com"])
 
     def test_egress_limits_or_is_refused_honestly(self):
         if not self.info.capabilities.network_control:

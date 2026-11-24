@@ -195,7 +195,7 @@ class Client:
     # -- workspaces --------------------------------------------------------
 
     def create_workspace(self, name: str = "", *, template: str = "", network: bool = False,
-                         egress: Optional[list[str]] = None,
+                         egress: Optional[list[str]] = None, secrets: Optional[list[str]] = None,
                          cpus: float = 0, memory_mb: int = 0, disk_mb: int = 0,
                          idempotency_key: Optional[str] = None) -> Workspace:
         """A new workspace, started from template (the engine's default when
@@ -205,8 +205,26 @@ class Client:
                                 "limits": Limits(cpus, memory_mb, disk_mb)._json()}
         if egress:
             body["egress"] = list(egress)
+        if secrets:
+            body["secrets"] = list(secrets)
         d = self._json("POST", "/v1/workspaces", body, key=idempotency_key or _key())
         return Workspace._from(d, self)
+
+    # -- secrets -----------------------------------------------------------
+
+    def set_secret(self, name: str, value: str, hosts: list[str]) -> dict:
+        """Creates or replaces a secret: its value and the hosts it may be sent
+        to. Workspaces created with secrets=[name] hold a placeholder; the
+        engine never returns the value."""
+        return self._json("PUT", "/v1/secrets/" + urllib.parse.quote(name, safe=""),
+                          {"value": value, "hosts": list(hosts)})
+
+    def secrets(self) -> list[dict]:
+        """Secrets by name and hosts, never values."""
+        return self._json("GET", "/v1/secrets").get("secrets") or []
+
+    def delete_secret(self, name: str) -> None:
+        self._request("DELETE", "/v1/secrets/" + urllib.parse.quote(name, safe=""))
 
     def workspaces(self) -> list[Workspace]:
         d = self._json("GET", "/v1/workspaces")

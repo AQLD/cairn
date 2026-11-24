@@ -10,7 +10,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E1 | 55 | 0 | 4 |
 | E2 | 31 | 1 | 1 |
 | E3 | 109 | 11 | 2 |
-| E4 | 27 | 16 | 1 |
+| E4 | 28 | 16 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
 
@@ -365,6 +365,7 @@ An operator can install, observe and upgrade Cairn without surprises. Gate: **E4
   - ✅ **G10.12.4** An agent sees what a step changed through the MCP diff tool · E3
   - ✅ **G10.12.5** An agent pins a milestone save through MCP · E3
   - ✅ **G10.12.6** An agent creates a workspace limited to the sites its task needs through MCP · E4 · needs network_control
+  - ✅ **G10.12.7** An agent creates a workspace that uses secrets through MCP · E4 · needs network_control, in_process
 - 📂 **G10.13** Every operation on a workspace shows up in its activity log · E3
   - ✅ **G10.13.1** Commands are logged with their exit code, duration and output tail; files with their path and size · E3
   - ✅ **G10.13.2** The log can be followed live · E3

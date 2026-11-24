@@ -320,6 +320,7 @@ var Catalog = []Scenario{
 					{ID: "G10.12.4", Title: "An agent sees what a step changed through the MCP diff tool", Proves: "diff with only a save lists the files that step added, modified and removed against the save it came from, with counts; from compares any two saves; a limit says the list was cut.", Milestone: E3},
 					{ID: "G10.12.5", Title: "An agent pins a milestone save through MCP", Proves: "save with pin=true makes a pinned save (kept however old it gets), says so, and list_saves marks it pinned.", Milestone: E3},
 					{ID: "G10.12.6", Title: "An agent creates a workspace limited to the sites its task needs through MCP", Proves: "workspace_create with allow makes a workspace whose egress is that list, and says so.", Milestone: E4, Needs: []Need{NeedNetworkControl}},
+					{ID: "G10.12.7", Title: "An agent creates a workspace that uses secrets through MCP", Proves: "workspace_create with secrets makes a workspace that lists them, tells the agent to use the environment variables as credentials, and holds only placeholders.", Milestone: E4, Needs: []Need{NeedNetworkControl, NeedInProcess}},
 				}},
 			// G10.13: the activity log (what an agent did in its workspace)
 			{ID: "G10.13", Title: "Every operation on a workspace shows up in its activity log", Proves: "A person can see what an agent did in its workspace, and watch it live, without the agent's help.", Milestone: E3,
