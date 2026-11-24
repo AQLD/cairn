@@ -26,9 +26,11 @@ const (
 
 // Key is what the API shows of a key: never its token.
 type Key struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	Scope     string     `json:"scope"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Scope string `json:"scope"`
+	// Own keys see and use only the workspaces they made (and their saves).
+	Own       bool       `json:"own,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 	// Token is set only in the answer that created the key.
@@ -47,7 +49,7 @@ func hashToken(token string) string {
 
 // CreateKey makes a key and returns it with its token, the only time the
 // token is ever shown.
-func (e *Engine) CreateKey(ctx context.Context, name, scope string) (Key, error) {
+func (e *Engine) CreateKey(ctx context.Context, name, scope string, own bool) (Key, error) {
 	switch scope {
 	case ScopeRead, ScopeWrite, ScopeAdmin:
 	default:
@@ -61,7 +63,10 @@ func (e *Engine) CreateKey(ctx context.Context, name, scope string) (Key, error)
 		return Key{}, err
 	}
 	token := tokenPrefix + hex.EncodeToString(raw)
-	k := store.APIKey{ID: newID("key"), Name: name, Scope: scope, Hash: hashToken(token), CreatedAt: e.cfg.Now()}
+	if own && scope == ScopeAdmin {
+		return Key{}, fmt.Errorf("%w: an admin key manages the whole engine; it cannot be limited to its own workspaces", ErrInvalid)
+	}
+	k := store.APIKey{ID: newID("key"), Name: name, Scope: scope, Hash: hashToken(token), Own: own, CreatedAt: e.cfg.Now()}
 	if err := e.store.InsertAPIKey(ctx, k); err != nil {
 		return Key{}, err
 	}
@@ -111,7 +116,7 @@ func (e *Engine) Authenticate(ctx context.Context, token string) (Key, error) {
 }
 
 func publicKey(k store.APIKey) Key {
-	out := Key{ID: k.ID, Name: k.Name, Scope: k.Scope, CreatedAt: k.CreatedAt}
+	out := Key{ID: k.ID, Name: k.Name, Scope: k.Scope, Own: k.Own, CreatedAt: k.CreatedAt}
 	if !k.RevokedAt.IsZero() {
 		t := k.RevokedAt
 		out.RevokedAt = &t
@@ -123,6 +128,35 @@ func publicKey(k store.APIKey) Key {
 type Caller struct {
 	KeyID string
 	Scope string
+	Own   bool // limited to the workspaces this key made
+}
+
+// Mine reports whether a caller may see a workspace with this owner.
+func (c Caller) Mine(owner string) bool { return !c.Own || owner == c.KeyID }
+
+// WorkspaceOwner returns the key that made a workspace ("" for the
+// operator, or an engine without keys).
+func (e *Engine) WorkspaceOwner(ctx context.Context, id string) (string, error) {
+	w, err := e.store.GetWorkspace(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return w.Owner, nil
+}
+
+// SaveOwner returns the key that made the workspace a save belongs to.
+func (e *Engine) SaveOwner(ctx context.Context, id string) (string, error) {
+	sv, err := e.store.GetSave(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return e.WorkspaceOwner(ctx, sv.WorkspaceID)
+}
+
+// owner is the key acting now, recorded on what it creates.
+func owner(ctx context.Context) string {
+	c, _ := CallerOf(ctx)
+	return c.KeyID
 }
 
 type callerKey struct{}

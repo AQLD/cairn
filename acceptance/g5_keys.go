@@ -136,3 +136,72 @@ func init() {
 		e.Must(admin.RevokeKey(e.Ctx, k.ID))
 	})
 }
+
+func init() {
+	register("G5.7.5", func(e *Env) {
+		withAuth(e)
+		mk := func(name string) (*client.Client, *client.Key) {
+			k, err := e.C.CreateOwnKey(e.Ctx, name, "write")
+			e.Must(err)
+			if !k.Own {
+				e.T.Fatalf("key %s is not own: %+v", name, k)
+			}
+			url, _ := e.endpoint()
+			return client.New(url, k.Token), k
+		}
+		a, ka := mk("agent-a")
+		b, _ := mk("agent-b")
+		wa, err := a.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "a-work"})
+		e.Must(err)
+		e.Must(a.WriteFile(e.Ctx, wa.ID, "secret-plan.txt", []byte("a's")))
+		sa, err := a.Save(e.Ctx, wa.ID, client.QuickSave)
+		e.Must(err)
+		wb, err := b.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "b-work"})
+		e.Must(err)
+		op := e.Workspace("operators") // the operator's: no own key sees it
+
+		// each lists only its own
+		list := func(c *client.Client) []string {
+			ws, err := c.ListWorkspaces(e.Ctx)
+			e.Must(err)
+			var ids []string
+			for _, w := range ws {
+				ids = append(ids, w.ID)
+			}
+			return ids
+		}
+		Equal(e, "a's list", strings.Join(list(a), ","), wa.ID)
+		Equal(e, "b's list", strings.Join(list(b), ","), wb.ID)
+		// b cannot touch a's workspace or save: they look absent
+		_, err = b.GetWorkspace(e.Ctx, wa.ID)
+		e.ErrCode(err, "not_found")
+		_, err = b.ReadFile(e.Ctx, wa.ID, "secret-plan.txt")
+		e.ErrCode(err, "not_found")
+		_, err = b.Run(e.Ctx, wa.ID, "true")
+		e.ErrCode(err, "not_found")
+		_, err = b.ListSaves(e.Ctx, wa.ID)
+		e.ErrCode(err, "not_found")
+		_, err = b.Resume(e.Ctx, sa.ID)
+		e.ErrCode(err, "not_found")
+		_, err = b.Copy(e.Ctx, sa.ID, 1)
+		e.ErrCode(err, "not_found")
+		e.ErrCode(b.DeleteWorkspace(e.Ctx, wa.ID), "not_found")
+		_, err = b.Run(e.Ctx, op.ID, "true")
+		e.ErrCode(err, "not_found")
+		Equal(e, "a's file untouched", e.Read(wa.ID, "secret-plan.txt"), "a's")
+		// a copies its own save: the copy is a's
+		copies, err := a.Copy(e.Ctx, sa.ID, 1)
+		e.Must(err)
+		Equal(e, "copy's owner", copies[0].Owner, ka.ID)
+		if got := list(a); len(got) != 2 {
+			e.T.Fatalf("a's list after copying: %v", got)
+		}
+		// the operator still sees everything
+		all, err := e.C.ListWorkspaces(e.Ctx)
+		e.Must(err)
+		Equal(e, "operator sees all", len(all), 4)
+		// an own admin key makes no sense: refused
+		_, err = e.C.CreateOwnKey(e.Ctx, "own-admin", "admin")
+		e.ErrCode(err, "invalid_argument")
+	})
+}

@@ -176,6 +176,7 @@ type Workspace struct {
 	Network    bool      `json:"network"`
 	Egress     []string  `json:"egress,omitempty"`  // outbound allow-list, if any
 	Secrets    []string  `json:"secrets,omitempty"` // secrets it uses, by name
+	Owner      string    `json:"owner,omitempty"`   // the API key that made it, if any
 	Template   string    `json:"template,omitempty"`
 	SourceSave string    `json:"source_save,omitempty"`
 	BaseSave   string    `json:"base_save,omitempty"` // the save its state comes from: last saved, resumed or copied
@@ -725,7 +726,8 @@ func (c *Client) DeleteSecret(ctx context.Context, name string) error {
 type Key struct {
 	ID        string     `json:"id"`
 	Name      string     `json:"name"`
-	Scope     string     `json:"scope"` // read, write or admin
+	Scope     string     `json:"scope"`         // read, write or admin
+	Own       bool       `json:"own,omitempty"` // sees and uses only the workspaces it made
 	CreatedAt time.Time  `json:"created_at"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 	Token     string     `json:"token,omitempty"`
@@ -735,6 +737,13 @@ type Key struct {
 func (c *Client) CreateKey(ctx context.Context, name, scope string) (*Key, error) {
 	var out Key
 	return &out, c.do(ctx, http.MethodPost, "/v1/keys", map[string]string{"name": name, "scope": scope}, &out)
+}
+
+// CreateOwnKey makes a key that sees and uses only the workspaces it makes
+// (and their saves and copies): one agent cannot touch another's work.
+func (c *Client) CreateOwnKey(ctx context.Context, name, scope string) (*Key, error) {
+	var out Key
+	return &out, c.do(ctx, http.MethodPost, "/v1/keys", map[string]any{"name": name, "scope": scope, "own": true}, &out)
 }
 
 // ListKeys lists API keys, revoked ones included, never tokens.
