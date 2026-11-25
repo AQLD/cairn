@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 31 | 1 | 1 |
-| E3 | 114 | 9 | 2 |
+| E3 | 116 | 7 | 2 |
 | E4 | 48 | 8 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -28,7 +28,7 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 4 of 5 | 5 of 5 | 0 |
 | [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 6 of 6 | 6 of 6 | 0 |
 | [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 1 of 6 | 3 of 6 | 4 |
-| [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 3 of 6 | 4 of 6 | 2 |
+| [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 4 of 6 | 5 of 6 | 1 |
 
 ## G11 A coding agent ships a change over several days
 
@@ -106,7 +106,7 @@ Expensive setup runs once; environments copy from its live state, reset between 
 - ✅ **G17.1** Setup runs once and environments copy from its live state · E3 · needs python, full_save, persistent_processes · uses G2.1 ✅, G2.6 ✅, G9.5 ✅
 - ✅ **G17.2** An environment resets to its start between episodes · E3 · needs python · uses G1.3 ✅, G9.4 ✅
 - ✅ **G17.3** A rollout branches from any earlier step · E3 · needs python, full_save, persistent_processes · uses G18.2 ✅, G18.6 ✅
-- ⏳ **G17.4** Copies keep or refresh their randomness, as the experiment needs · E3 · uses G2.6 ✅, G2.8 ⏳
+- ✅ **G17.4** Copies keep or refresh their randomness, as the experiment needs · E3 · needs full_save · uses G2.6 ✅, G2.8 ✅
 - ⏳ **G17.5** Thousands of environments run across servers · E5 · uses G7.8 ⏳
 - 📏 **G17.6** The cost of a thousand rollouts from a warm save is measured · E3 · `BenchmarkRollouts` · uses G9.5 ✅
 
@@ -161,7 +161,7 @@ One save becomes many independent workspaces that can each try something differe
 - ✅ **G2.5** A copy can be saved and copied again · E2
 - ✅ **G2.6** Copies of a full save get fresh network identity and randomness · E2 · needs full_save
 - ✅ **G2.7** The original keeps working while its copies run · E2
-- ⏳ **G2.8** A copy can keep the source's random state when asked · E3 · needs full_save
+- ✅ **G2.8** Copies keep the random state of the source's processes · E3 · needs full_save
 
 ## G3 Every user gets their own computer
 
