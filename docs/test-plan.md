@@ -10,7 +10,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E1 | 55 | 0 | 4 |
 | E2 | 31 | 1 | 1 |
 | E3 | 114 | 9 | 2 |
-| E4 | 46 | 10 | 1 |
+| E4 | 48 | 8 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
 
@@ -22,9 +22,9 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 
 | Journey | For | Steps proven | Steps unblocked | Capability scenarios still pending |
 | --- | --- | --- | --- | --- |
-| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 8 of 9 | 9 of 9 | 0 |
+| [G11](#g11-a-coding-agent-ships-a-change-over-several-days) A coding agent ships a change over several days | coding agents | 9 of 9 | 9 of 9 | 0 |
 | [G12](#g12-a-data-agent-analyses-private-data-across-sessions) A data agent analyses private data across sessions | data analysis agents | 6 of 6 | 6 of 6 | 0 |
-| [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 3 of 6 | 5 of 6 | 1 |
+| [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 4 of 6 | 5 of 6 | 1 |
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 4 of 5 | 5 of 5 | 0 |
 | [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 6 of 6 | 6 of 6 | 0 |
 | [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 1 of 6 | 3 of 6 | 4 |
@@ -43,7 +43,7 @@ An agent sets up a repository, works on it across days, tries fixes in parallel 
 - ✅ **G11.4** Stops for the night at no compute cost and carries on next day with the dev server running · E3 · needs python, full_save, persistent_processes · uses G4.1 ✅, G4.2 ✅, G1.8.1 ✅, G1.8.2 ✅
 - ✅ **G11.5** Tries three fixes in parallel and keeps the one whose tests pass · E3 · needs python · uses G2.1 ✅, G2.2 ✅, G2.7 ✅
 - ✅ **G11.6** Undoes a destructive command by rewinding one step · E3 · needs python, full_save, persistent_processes · uses G18.3 ✅
-- ⏳ **G11.7** A person reviews what changed and takes over · E4 · uses G1.4 ✅, G18.4 ✅, G19.3 ✅
+- ✅ **G11.7** A person reviews what changed and takes over · E4 · needs terminal, in_process · uses G1.4 ✅, G18.4 ✅, G19.3 ✅
 
 ## G12 A data agent analyses private data across sessions
 
@@ -64,7 +64,7 @@ A signed-in browser keeps its place through waits for a person, reaches only the
 - ✅ **G13.2** Waits for a person's approval or one-time code at no compute cost · E3 · needs agent_tools, full_save, persistent_processes · uses G4.1 ✅, G4.4 ✅
 - ✅ **G13.3** A person sees the page and takes over the session after a pause · E3 · needs agent_tools, full_save, persistent_processes · uses G1.4 ✅, G4.2 ✅
 - ⏳ **G13.4** The browser reaches only the task's sites · E4 · uses G5.4 ✅
-- ⏳ **G13.5** Every action is on record · E4 · uses G5.8 ✅, G10.4.2 ✅
+- ✅ **G13.5** Every action is on record · E4 · needs in_process · uses G5.8 ✅, G10.4.2 ✅
 - ⏳ **G13.6** A person watches the browser live · later · uses G19.4 ⏳
 
 ## G14 A research agent works many questions in parallel
