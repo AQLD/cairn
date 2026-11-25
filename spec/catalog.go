@@ -387,7 +387,7 @@ var Catalog = []Scenario{
 			{ID: "G11.4", Title: "Stops for the night at no compute cost and carries on next day with the dev server running", Proves: "A full save stops the workspace with its dev server; after the pause the same server process answers and the tests pass, with nothing restarted or reinstalled.", Milestone: E3, Needs: []Need{NeedPython, NeedFullSave, NeedPersistent}, Uses: []string{"G4.1", "G4.2", "G1.8.1", "G1.8.2"}},
 			{ID: "G11.5", Title: "Tries three fixes in parallel and keeps the one whose tests pass", Proves: "Three copies of a failing project each try a different fix at once; the one whose tests pass is applied to the original.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G2.1", "G2.2", "G2.7"}},
 			{ID: "G11.6", Title: "Undoes a destructive command by rewinding one step", Proves: "After a command deletes the project, its environment and the dev server, resuming the save made before it brings all three back: the same server process answers and the tests pass.", Milestone: E3, Needs: []Need{NeedPython, NeedFullSave, NeedPersistent}, Uses: []string{"G18.3"}},
-			{ID: "G11.7", Title: "A person reviews what changed and takes over", Milestone: E4, Uses: []string{"G1.4", "G18.4", "G19.3"}},
+			{ID: "G11.7", Title: "A person reviews what changed and takes over", Proves: "After an agent's step, a person lists what the step changed between two saves, opens a terminal in the agent's workspace, fixes a file by hand, and the agent's next command sees the fix; the record shows the person's terminal session apart from the agent's commands.", Milestone: E4, Uses: []string{"G1.4", "G18.4", "G19.3"}, Needs: []Need{NeedTerminal, NeedInProcess}},
 		},
 	},
 	{
@@ -412,7 +412,7 @@ var Catalog = []Scenario{
 			{ID: "G13.2", Title: "Waits for a person's approval or one-time code at no compute cost", Proves: "A browser waiting for a one-time code is saved with no sandbox left running; after resume the code sent before the pause signs it in.", Milestone: E3, Needs: []Need{NeedAgentTools, NeedFullSave, NeedPersistent}, Uses: []string{"G4.1", "G4.4"}},
 			{ID: "G13.3", Title: "A person sees the page and takes over the session after a pause", Proves: "After a resume, a person downloads a screenshot of the agent's page and, over their own connection to the browser, acts in the agent's signed-in session.", Milestone: E3, Needs: []Need{NeedAgentTools, NeedFullSave, NeedPersistent}, Uses: []string{"G1.4", "G4.2"}},
 			{ID: "G13.4", Title: "The browser reaches only the task's sites", Milestone: E4, Uses: []string{"G5.4"}},
-			{ID: "G13.5", Title: "Every action is on record", Milestone: E4, Uses: []string{"G5.8", "G10.4.2"}},
+			{ID: "G13.5", Title: "Every action is on record", Proves: "Everything a browser agent does through its key (commands, file reads and writes, saves) is in the audit under that key, each with the request ID the agent's client saw.", Milestone: E4, Uses: []string{"G5.8", "G10.4.2"}, Needs: []Need{NeedInProcess}},
 			{ID: "G13.6", Title: "A person watches the browser live", Milestone: Later, Uses: []string{"G19.4"}},
 		},
 	},
