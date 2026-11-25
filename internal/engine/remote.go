@@ -121,6 +121,14 @@ func (e *Engine) upload(ctx context.Context, id string) error {
 	if err := e.putFile(ctx, id, dir, save.ManifestFile); err != nil {
 		return err
 	}
+	// another engine collecting bases may have taken this one between our
+	// check above and the manifest landing (gcRemoteBases); now that the
+	// manifest names it, it is kept, so put it back if it went
+	if m.Base != nil {
+		if err := e.uploadBase(ctx, m.Base); err != nil {
+			return fmt.Errorf("upload base %s: %w", m.Base.SHA256, err)
+		}
+	}
 	return e.store.MarkUploaded(ctx, id)
 }
 

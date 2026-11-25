@@ -212,6 +212,7 @@ var Catalog = []Scenario{
 					{ID: "G6.12.8", Title: "A base that cannot be fetched now is not mistaken for a damaged save", Proves: "With the base gone here and object storage down, a restore is refused with conflict and the save stays ready; a save committed before a crash is kept (missing) rather than discarded; both restore once the store is back.", Milestone: E3, Needs: []Need{NeedInProcess}},
 					{ID: "G6.12.9", Title: "A base's index is never trusted unchecked", Proves: "An index that no longer matches its checksum is rebuilt from the verified base, so a damaged index cannot make a save skip a change.", Milestone: E3, Needs: []Need{NeedInProcess}},
 					{ID: "G6.12.10", Title: "A base used within the last hour is kept even when nothing refers to it", Proves: "A base an old template was imported with, used by a workspace created just now that is then deleted along with the template, survives garbage collection for the grace period after that use (the window a workspace or save has between starting to use a base and recording it), then goes.", Milestone: E3, Needs: []Need{NeedInProcess}},
+					{ID: "G6.12.11", Title: "A base in object storage goes when no save there needs it", Proves: "Once no manifest in the bucket names a base (another engine's saves count; this engine's database does not), it is removed after the grace period; a base another engine's save names stays; a base uploaded for a save whose manifest has not arrived is kept through the grace period.", Milestone: E2, Needs: []Need{NeedInProcess}},
 				}},
 		},
 	},
