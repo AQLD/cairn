@@ -55,6 +55,9 @@ type baseState struct {
 	mu      sync.Mutex
 	indexes map[string]*save.Index
 	rootMu  sync.Mutex // one root built at a time
+	// unusedSince: when this engine first found a base in object storage that
+	// no save there names (gcRemoteBases)
+	unusedSince map[string]time.Time
 }
 
 func (b *baseState) init() {
@@ -522,4 +525,99 @@ func copyFile(src, dst string) error {
 		err = cerr
 	}
 	return err
+}
+
+// CollectRemoteBases removes unused bases from object storage (see
+// gcRemoteBases). It talks to the bucket, so it is never part of opening the
+// engine or of a purge (recovery must not wait on object storage): cairnd
+// runs it after its hourly purge, with a time limit.
+func (e *Engine) CollectRemoteBases(ctx context.Context) (int, error) { return e.gcRemoteBases(ctx) }
+
+// gcRemoteBases removes bases from object storage that no save there names.
+// Other engines may share the bucket, so what counts is the bucket's own
+// manifests (deleted saves within their retention keep theirs), never this
+// engine's database. The bucket lists no upload times, so a base must be
+// found unreferenced for longer than baseGrace, by this engine, before it
+// goes: a save whose base is uploaded but whose manifest is not yet there
+// keeps it, and upload puts a base back if it went in that window.
+func (e *Engine) gcRemoteBases(ctx context.Context) (int, error) {
+	if e.cfg.Objects == nil {
+		return 0, nil
+	}
+	keys, err := e.cfg.Objects.List(ctx, "bases/")
+	if err != nil {
+		return 0, err
+	}
+	saves, err := e.cfg.Objects.List(ctx, "saves/")
+	if err != nil {
+		return 0, err
+	}
+	used := map[string]bool{}
+	for _, k := range saves {
+		if !strings.HasSuffix(k, "/"+save.ManifestFile) {
+			continue
+		}
+		data, err := e.readObject(ctx, k)
+		if err != nil {
+			return 0, fmt.Errorf("read %s: %w", k, err) // unsure what is used: remove nothing
+		}
+		var m save.Manifest
+		if json.Unmarshal(data, &m) == nil && m.Base != nil {
+			used[m.Base.SHA256] = true
+		}
+	}
+	now := e.cfg.Now()
+	e.bases.mu.Lock()
+	if e.bases.unusedSince == nil {
+		e.bases.unusedSince = map[string]time.Time{}
+	}
+	var gone []string
+	present := map[string]bool{}
+	for _, k := range keys {
+		sha, ok := strings.CutSuffix(strings.TrimPrefix(k, "bases/"), ".tar")
+		if !ok || len(sha) != 64 {
+			continue
+		}
+		present[sha] = true
+		if used[sha] {
+			delete(e.bases.unusedSince, sha)
+			continue
+		}
+		first, seen := e.bases.unusedSince[sha]
+		if !seen {
+			e.bases.unusedSince[sha] = now
+			continue
+		}
+		if now.Sub(first) > baseGrace {
+			gone = append(gone, sha)
+		}
+	}
+	for sha := range e.bases.unusedSince {
+		if !present[sha] {
+			delete(e.bases.unusedSince, sha)
+		}
+	}
+	e.bases.mu.Unlock()
+	n := 0
+	for _, sha := range gone {
+		if err := e.cfg.Objects.Delete(ctx, remoteBaseKey(sha)); err != nil {
+			return n, err
+		}
+		e.bases.mu.Lock()
+		delete(e.bases.unusedSince, sha)
+		e.bases.mu.Unlock()
+		n++
+		e.log.Info("removed unused base from object storage", "base", sha, "store", e.cfg.Objects.String())
+	}
+	return n, nil
+}
+
+// readObject reads a small object (a manifest) whole.
+func (e *Engine) readObject(ctx context.Context, key string) ([]byte, error) {
+	r, err := e.cfg.Objects.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return io.ReadAll(io.LimitReader(r, 16<<20))
 }

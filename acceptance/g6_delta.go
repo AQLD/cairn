@@ -568,3 +568,56 @@ func init() {
 		}
 	})
 }
+
+func init() {
+	register("G6.12.11", func(e *Env) {
+		srv := withObjectStore(e)
+		t := deltaTemplate(e, "delta")
+		ws := templatedWorkspace(e, "delta", "remote-gc")
+		e.Sh(ws.ID, agentEdits)
+		sv := e.Save(ws.ID)
+		e.Must(e.Engine.SyncRemote(e.Ctx))
+		bucketBase := func(sha string) string { return "saves/cluster/bases/" + sha + ".tar" }
+		if _, ok := srv.Object(bucketBase(t.SHA256)); !ok {
+			e.T.Fatal("the base was not uploaded")
+		}
+		// another engine's save in the same bucket, and its base
+		theirs := strings.Repeat("a", 64)
+		srv.SetObject(bucketBase(theirs), []byte("their base"))
+		m, err := json.Marshal(save.Manifest{Base: &save.BaseRef{SHA256: theirs, Size: 10}})
+		e.Must(err)
+		srv.SetObject("saves/cluster/saves/sv_other_engine/manifest.json", m)
+		// a base uploaded for a save whose manifest is still on its way
+		pending := strings.Repeat("b", 64)
+		srv.SetObject(bucketBase(pending), []byte("pending base"))
+
+		// nothing here needs the template's base any more
+		e.Must(e.C.DeleteWorkspace(e.Ctx, ws.ID))
+		e.Must(e.C.DeleteTemplate(e.Ctx, "delta"))
+		e.Must(e.C.DeleteSave(e.Ctx, sv.ID))
+		e.Clock.Advance(engine.DefaultRetention + 2*time.Hour)
+		_, err = e.Engine.PurgeExpired(e.Ctx)
+		e.Must(err)
+		_, err = e.Engine.CollectRemoteBases(e.Ctx) // cairnd runs it after each purge
+		e.Must(err)
+		if _, ok := srv.Object(manifestKey(sv.ID)); ok {
+			e.T.Fatal("the purged save is still in the bucket")
+		}
+		// found unused just now: still within the grace period
+		for _, sha := range []string{t.SHA256, pending, theirs} {
+			if _, ok := srv.Object(bucketBase(sha)); !ok {
+				e.T.Fatalf("base %s removed as soon as it was unused", sha[:12])
+			}
+		}
+
+		// past the grace period: unused bases go, the other engine's stays
+		e.Clock.Advance(2 * time.Hour)
+		_, err = e.Engine.CollectRemoteBases(e.Ctx)
+		e.Must(err)
+		for sha, want := range map[string]bool{t.SHA256: false, pending: false, theirs: true} {
+			if _, ok := srv.Object(bucketBase(sha)); ok != want {
+				e.T.Fatalf("base %s in the bucket: %v, want %v", sha[:12], ok, want)
+			}
+		}
+	})
+}

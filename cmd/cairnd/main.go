@@ -198,6 +198,13 @@ func run() error {
 				if _, err := eng.PurgeExpired(ctx); err != nil {
 					log.Error("purge failed", "err", err)
 				}
+				// object storage last, and bounded: a slow bucket never holds
+				// up the rest
+				gcCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+				if _, err := eng.CollectRemoteBases(gcCtx); err != nil {
+					log.Error("removing unused bases from object storage failed", "err", err)
+				}
+				cancel()
 			}
 		}
 	}()
