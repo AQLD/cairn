@@ -264,6 +264,7 @@ func (r *Runsc) Capabilities() Capabilities {
 		DiskLimits:          false,
 		NetworkControl:      true,
 		PersistentProcesses: true,
+		Terminal:            true,
 	}
 }
 
@@ -510,7 +511,11 @@ func (r *Runsc) Exec(ctx context.Context, spec Spec, req ExecRequest) (ExecResul
 	for _, kv := range sandboxEnv(spec, req.Env) {
 		args = append(args, "--env", kv)
 	}
-	args = append(args, containerID(spec), initInSandbox, "exec", "--")
+	if req.TTY != nil {
+		args = append(args, containerID(spec), initInSandbox, "terminal", strconv.Itoa(int(req.TTY.Rows)), strconv.Itoa(int(req.TTY.Cols)), "--")
+	} else {
+		args = append(args, containerID(spec), initInSandbox, "exec", "--")
+	}
 	args = append(args, req.Argv...)
 
 	runCtx := ctx
@@ -521,6 +526,21 @@ func (r *Runsc) Exec(ctx context.Context, spec Spec, req ExecRequest) (ExecResul
 	}
 	c := exec.Command(r.binaryFor(spec), append(r.flags(spec), args...)...)
 	c.Stdin, c.Stdout, c.Stderr = req.Stdin, req.Stdout, req.Stderr
+	if req.TTY != nil && req.Stdin != nil {
+		// A terminal's input never ends on its own: copied by exec.Cmd, Wait
+		// would wait for it after the shell exits. Hand the process a pipe and
+		// feed it here instead; the feeder ends when the terminal closes.
+		pr, pw, err := os.Pipe()
+		if err != nil {
+			return ExecResult{}, err
+		}
+		defer pr.Close()
+		go func() {
+			_, _ = io.Copy(pw, req.Stdin)
+			pw.Close()
+		}()
+		c.Stdin = pr
+	}
 	if err := c.Start(); err != nil {
 		return ExecResult{}, err
 	}

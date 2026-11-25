@@ -150,7 +150,8 @@ func allowed(scope string, r *http.Request) bool {
 	if strings.HasPrefix(p, "/v1/keys") || strings.HasPrefix(p, "/v1/secrets") || p == "/v1/audit" || p == "/v1/diagnostics" {
 		return false
 	}
-	reading := r.Method == http.MethodGet || r.Method == http.MethodHead
+	// a terminal changes things however it starts (a GET, for the WebSocket)
+	reading := (r.Method == http.MethodGet || r.Method == http.MethodHead) && !strings.HasSuffix(p, "/terminal")
 	if strings.HasPrefix(p, "/v1/templates") && !reading {
 		return false
 	}
@@ -183,6 +184,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/workspaces/{id}/pause", s.pauseWorkspace)
 	s.mux.HandleFunc("GET /v1/workspaces/{id}/events", s.listEvents)
 	s.mux.HandleFunc("GET /v1/events", s.allEvents)
+	s.mux.HandleFunc("GET /v1/workspaces/{id}/terminal", s.terminal)
 	s.mux.HandleFunc("POST /v1/workspaces/{id}/exec", s.exec)
 	s.mux.HandleFunc("PUT /v1/workspaces/{id}/files", s.writeFile)
 	s.mux.HandleFunc("GET /v1/workspaces/{id}/files", s.readFile)

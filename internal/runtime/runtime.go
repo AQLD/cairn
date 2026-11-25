@@ -43,6 +43,8 @@ type Capabilities struct {
 	// read-only and store only their own changes (set by the engine, whatever
 	// the runtime: it needs Linux, root and overlayfs).
 	SharedTemplates bool `json:"shared_templates"`
+	// Terminal: a command can run on an interactive terminal (ExecRequest.TTY).
+	Terminal bool `json:"terminal"`
 }
 
 // Limits are the resources a workspace may use. Zero means the engine default.
@@ -85,7 +87,21 @@ type ExecRequest struct {
 	Stdout  io.Writer
 	Stderr  io.Writer
 	Timeout time.Duration
+	// TTY, if set, runs the command on a terminal of this size: Stdout is the
+	// terminal's output, and Stdin carries frames (TerminalData,
+	// TerminalResize) rather than raw input.
+	TTY *TTYSize
 }
+
+// TTYSize is a terminal's size.
+type TTYSize struct{ Rows, Cols uint16 }
+
+// Frames on a terminal command's Stdin (see cmd/cairn-init): a type byte, a
+// big-endian uint32 length, the payload.
+const (
+	TerminalData   = 'd' // input typed into the terminal
+	TerminalResize = 'r' // two big-endian uint16: rows, columns
+)
 
 // ExecResult is how a command ended.
 type ExecResult struct {

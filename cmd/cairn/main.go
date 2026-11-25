@@ -63,6 +63,7 @@ commands:
   audit [--key ID] [--kind K] [--last N]  who did what, across workspaces (admin)
   key create NAME [--scope read|write|admin] [--own]  an API key for one caller (token shown once)
   key ls | key rm ID                      list or revoke API keys
+  shell WORKSPACE [-- COMMAND...]         an interactive terminal in a running workspace
   template import NAME ROOTFS.tar         import a root filesystem tar as a template
                                           (e.g. docker export $(docker create python:3.12-slim) > python.tar)
   template pull NAME IMAGE [--insecure]   build a template from a container image in a registry
@@ -503,6 +504,9 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 		default:
 			return 2, errors.New("usage: cairn key create NAME [--scope read|write|admin] | key ls | key rm ID")
 		}
+
+	case "shell":
+		return cmdShell(ctx, c, args)
 
 	case "template":
 		switch {
