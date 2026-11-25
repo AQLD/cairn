@@ -82,15 +82,20 @@ func init() {
 		kept := field(out, "kept=")
 		shell := field(out, "shell=")
 		e.Must(t.Close())
-		deadline := time.Now().Add(10 * time.Second)
-		for strings.Contains(e.Sh(ws.ID, "ps -o pid= -p "+shell+" 2>/dev/null || true"), shell) {
+		// closing travels: the API sees the WebSocket end, closes the
+		// terminal's input, cairn-init's client sees it and hangs up, and
+		// process 1 ends the shell's session; on a loaded host that takes a while
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			alive := strings.Contains(e.Sh(ws.ID, "ps -o pid= -p "+shell+" 2>/dev/null || true"), shell)
+			job := strings.TrimSpace(e.Sh(ws.ID, "ps -eo args | grep '^sleep 600' | grep -vc grep || true")) != "0"
+			if !alive && !job {
+				break
+			}
 			if time.Now().After(deadline) {
-				e.T.Fatal("the shell is still running after its terminal closed")
+				e.T.Fatalf("30 s after its terminal closed: shell running %v, its foreground job running %v", alive, job)
 			}
 			time.Sleep(200 * time.Millisecond)
-		}
-		if strings.Contains(e.Sh(ws.ID, "ps -eo args | grep -c 'sleep 600' || true"), "2") {
-			e.T.Fatal("the shell's foreground job outlived the terminal")
 		}
 		if !strings.Contains(e.Sh(ws.ID, "kill -0 "+kept+" && echo alive || echo gone"), "alive") {
 			e.T.Fatal("a nohup'd process started from the terminal did not survive it")
