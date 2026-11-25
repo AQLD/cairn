@@ -29,6 +29,9 @@ const (
 	SaveAfterThaw  = "save/after-thaw"  // thawed, the workspace still recorded as saving
 
 	RestoreBeforeBaseRecord = "restore/before-base-record" // a save's filesystem is in place; which base it came from is not yet recorded
+
+	RootBeforeRename  = "root/before-rename"  // a base's shared root extracted and synced, not yet renamed in
+	LayerBeforeCommit = "layer/before-commit" // a layered filesystem built, not yet renamed into the workspace
 )
 
 type Set struct {

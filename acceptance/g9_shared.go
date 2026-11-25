@@ -6,10 +6,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AQLD/cairn/client"
 	"github.com/AQLD/cairn/internal/disk"
 	"github.com/AQLD/cairn/internal/engine"
+	"github.com/AQLD/cairn/internal/failpoint"
 )
 
 // G9.9: workspaces made from one template share one read-only copy of it and
@@ -219,5 +221,106 @@ func init() {
 			e.T.Fatalf("a 64 MB write with fsync succeeded on a full volume (shared templates %v)", info.Capabilities.SharedTemplates)
 		}
 		e.Must(os.Remove(filepath.Join(mnt, "filler")))
+	})
+}
+
+func init() {
+	register("G9.9.4", func(e *Env) {
+		shareTemplates(e)
+		t := deltaTemplate(e, "shared-gc")
+		ws := templatedWorkspace(e, "shared-gc", "user")
+		root := filepath.Join(e.DataDir, "bases", t.SHA256+".root")
+		tar := filepath.Join(e.DataDir, "bases", t.SHA256+".tar")
+		exists := func(p string) bool { _, err := os.Stat(p); return err == nil }
+		if !exists(root) {
+			e.T.Fatal("no shared root after creating a workspace on the template")
+		}
+		purge := func() {
+			e.T.Helper()
+			_, err := e.Engine.PurgeExpired(e.Ctx)
+			e.Must(err)
+		}
+		// the template goes; the workspace sitting on its root keeps it
+		e.Must(e.C.DeleteTemplate(e.Ctx, "shared-gc"))
+		e.Clock.Advance(2 * time.Hour)
+		purge()
+		if !exists(root) {
+			e.T.Fatal("the root went while a workspace sits on it")
+		}
+		e.Sh(ws.ID, "ls "+deltaDir+" >/dev/null")
+		// the workspace goes; its save keeps the base (and the root)
+		sv := e.Save(ws.ID)
+		e.Must(e.C.DeleteWorkspace(e.Ctx, ws.ID))
+		e.Clock.Advance(2 * time.Hour)
+		purge()
+		if !exists(tar) || !exists(root) {
+			e.T.Fatalf("base %v and root %v while a save needs them", exists(tar), exists(root))
+		}
+		// the last save goes: so do they
+		e.Must(e.C.DeleteSave(e.Ctx, sv.ID))
+		e.Clock.Advance(engine.DefaultRetention + 2*time.Hour)
+		purge()
+		if exists(tar) || exists(root) {
+			e.T.Fatalf("base %v and root %v kept after nothing uses them", exists(tar), exists(root))
+		}
+	})
+
+	register("G9.9.6", func(e *Env) {
+		shareTemplates(e)
+		t := deltaTemplateWith(e, "shared-big", sharedExtra) // larger than the limit below
+		ws, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "small-disk", Template: "shared-big", Limits: client.Limits{DiskMB: 48}})
+		e.Must(err)
+		if t.Size < 48<<20 {
+			e.T.Fatalf("the template (%d bytes) must be larger than the 48 MB limit", t.Size)
+		}
+		e.Sh(ws.ID, "ls "+deltaDir+" >/dev/null") // the whole template is there
+		e.Sh(ws.ID, "dd if=/dev/zero of=/own.bin bs=1M count=32 conv=fsync status=none")
+		res, err := e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"sh", "-c", "dd if=/dev/zero of=/more.bin bs=1M count=64 conv=fsync 2>&1"}})
+		e.Must(err)
+		if res.ExitCode == 0 || !strings.Contains(strings.ToLower(res.Stdout+res.Stderr), "space") {
+			e.T.Fatalf("writing past the limit: exit %d, %q", res.ExitCode, res.Stdout+res.Stderr)
+		}
+		e.Sh(ws.ID, "rm -f /more.bin /own.bin && sync && dd if=/dev/zero of=/again.bin bs=1M count=16 conv=fsync status=none")
+	})
+
+	register("G9.9.7", func(e *Env) {
+		shareTemplates(e)
+		t := deltaTemplate(e, "shared-crash")
+		bases := filepath.Join(e.DataDir, "bases")
+		leftovers := func(what string) {
+			e.T.Helper()
+			entries, _ := os.ReadDir(bases)
+			for _, d := range entries {
+				if strings.Contains(d.Name(), ".tmp-") {
+					e.T.Fatalf("%s: %s left in bases/", what, d.Name())
+				}
+			}
+			// recovery may finish the create or undo it: either way, whatever is
+			// left is whole (it runs and has the template), and nothing else is
+			ws, err := e.C.ListWorkspaces(e.Ctx)
+			e.Must(err)
+			listed := map[string]bool{}
+			for _, w := range ws {
+				listed[w.ID] = true
+				e.Sh(w.ID, "ls "+deltaDir+" >/dev/null")
+			}
+			dirs, _ := os.ReadDir(filepath.Join(e.DataDir, "workspaces"))
+			for _, d := range dirs {
+				if !listed[d.Name()] {
+					e.T.Fatalf("%s: workspace folder %s left behind with no workspace", what, d.Name())
+				}
+			}
+		}
+		for _, fp := range []string{failpoint.RootBeforeRename, failpoint.LayerBeforeCommit} {
+			e.Failpoints.Enable(fp, failpoint.ErrCrash)
+			if _, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "crashing", Template: "shared-crash"}); err == nil {
+				e.T.Fatalf("%s: the create did not crash", fp)
+			}
+			e.Restart() // failpoints are cleared, recovery runs
+			leftovers(fp)
+		}
+		ws, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "after", Template: "shared-crash"})
+		e.Must(err)
+		sharesTemplate(e, "the workspace after the crashes", ws.ID, t)
 	})
 }
