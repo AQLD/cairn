@@ -67,7 +67,7 @@ var Catalog = []Scenario{
 			{ID: "G2.5", Title: "A copy can be saved and copied again", Proves: "Copies are first-class workspaces, so search trees work.", Milestone: E2},
 			{ID: "G2.6", Title: "Copies of a full save get fresh network identity and randomness", Proves: "Copies never collide on addresses, random seeds or open connections.", Milestone: E2, Needs: []Need{NeedFullSave}},
 			{ID: "G2.7", Title: "The original keeps working while its copies run", Proves: "Copying never disturbs the source workspace.", Milestone: E2},
-			{ID: "G2.8", Title: "A copy can keep the source's random state when asked", Proves: "Experiments that need identical branches get them; fresh randomness stays the default.", Milestone: E3, Needs: []Need{NeedFullSave}},
+			{ID: "G2.8", Title: "Copies keep the random state of the source's processes", Proves: "A random generator seeded before a full save draws the same sequence in the source and every copy (identical branches), while OS randomness (/dev/urandom, getrandom) is fresh in each (G2.6); docs/compatibility.md says which is which.", Milestone: E3, Needs: []Need{NeedFullSave}},
 		},
 	},
 	{
@@ -462,7 +462,7 @@ var Catalog = []Scenario{
 			{ID: "G17.1", Title: "Setup runs once and environments copy from its live state", Proves: "Eight copies of a full save each start with the warm environment server already running, its memory intact and setup not repeated, and play their episodes independently.", Milestone: E3, Needs: []Need{NeedPython, NeedFullSave, NeedPersistent}, Uses: []string{"G2.1", "G2.6", "G9.5"}},
 			{ID: "G17.2", Title: "An environment resets to its start between episodes", Proves: "Resuming the start save after each episode puts the environment's state back byte for byte, without repeating setup.", Milestone: E3, Needs: []Need{NeedPython}, Uses: []string{"G1.3", "G9.4"}},
 			{ID: "G17.3", Title: "A rollout branches from any earlier step", Proves: "With a full save after every step, copies of step 2 start with the live environment at step 2 and play their own continuations, while the original rollout is unchanged; each step's save records the one before.", Milestone: E3, Needs: []Need{NeedPython, NeedFullSave, NeedPersistent}, Uses: []string{"G18.2", "G18.6"}},
-			{ID: "G17.4", Title: "Copies keep or refresh their randomness, as the experiment needs", Milestone: E3, Uses: []string{"G2.6", "G2.8"}},
+			{ID: "G17.4", Title: "Copies keep or refresh their randomness, as the experiment needs", Proves: "From one full save, an experiment that wants identical branches gets the same draws in every copy; one that wants independent branches reseeds from the OS in each copy and gets different draws.", Milestone: E3, Uses: []string{"G2.6", "G2.8"}, Needs: []Need{NeedFullSave}},
 			{ID: "G17.5", Title: "Thousands of environments run across servers", Milestone: E5, Uses: []string{"G7.8"}},
 			{ID: "G17.6", Title: "The cost of a thousand rollouts from a warm save is measured", Milestone: E3, Uses: []string{"G9.5"}, Bench: "BenchmarkRollouts"},
 		},

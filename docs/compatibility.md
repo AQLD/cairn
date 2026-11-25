@@ -30,6 +30,14 @@ Cairn records the release in every full save and restores with that same release
 
 Releases 20260914, 20260921 and 20260928 restore checkpoints but leave sleeping processes frozen. 20261005 is the minimum.
 
+### Copies keep their processes' random generators, not the OS's randomness
+
+A full save holds processes' memory, and a random generator seeded inside a process (Python's `random`, NumPy, a game engine's RNG) is part of it. So the source and every copy of the save continue the same sequence. That's what an experiment needs when it replays identical branches.
+
+The operating system's randomness (`/dev/urandom`, `getrandom`, so new keys, UUIDs and TLS) is fresh in every copy, so copies never share it.
+
+To make copies independent, reseed after the copy: `random.seed(os.urandom(16))`. (Scenarios G2.6, G2.8, G17.4.)
+
 ### Lock-heavy multithreaded Python is slower
 
 Programs whose threads contend on locks many thousands of times a second (CPython threads sharing the GIL are the common case) run about 4x slower than under runc, because each contended wait is a system call that gVisor handles itself. Single-threaded code, multiprocessing, I/O-bound threads and short commands are not affected; short commands start faster than in a Docker container.
