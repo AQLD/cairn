@@ -340,7 +340,11 @@ func (s *Server) readFile(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
-	_, _ = io.Copy(w, f)
+	// exactly the size announced: a file that grows while it is sent (a log
+	// a program is writing) comes back as it was when opened, and never more
+	// than Content-Length, which would break this response and the next one
+	// on the connection
+	_, _ = io.CopyN(w, f, info.Size())
 }
 
 // pushArchive merges a tar stream into a folder of the workspace.

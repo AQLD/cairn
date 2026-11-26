@@ -2,6 +2,7 @@ package acceptance
 
 import (
 	"bytes"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -185,5 +186,51 @@ func init() {
 		res, err := e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"definitely-not-a-real-command-xyz"}})
 		e.Must(err)
 		Equal(e, "exit code", res.ExitCode, 127)
+	})
+}
+
+func init() {
+	register("G1.15", func(e *Env) {
+		ws := e.Workspace("growing-file")
+		// a program appends to a log as fast as it can
+		e.Write(ws.ID, "tmp/grow.py", "f = open('/tmp/grow.log', 'a', buffering=1)\ni = 0\nwhile True:\n    f.write('line %08d\\n' % i)\n    i += 1\n")
+		background(e, ws.ID, "python3 /tmp/grow.py")
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			b, err := e.C.ReadFile(e.Ctx, ws.ID, "tmp/grow.log")
+			if err == nil && len(b) > 0 {
+				break
+			}
+			if err != nil && !client.IsCode(err, "not_found") {
+				e.T.Fatalf("reading a growing file: %v", err)
+			}
+			if time.Now().After(deadline) {
+				e.T.Fatal("the writer never started")
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		prev := 0
+		for i := 0; i < 200; i++ {
+			b, err := e.C.ReadFile(e.Ctx, ws.ID, "tmp/grow.log")
+			if err != nil {
+				e.T.Fatalf("read %d of a growing file: %v", i, err)
+			}
+			if len(b) < prev {
+				e.T.Fatalf("read %d: %d bytes, fewer than the %d before", i, len(b), prev)
+			}
+			prev = len(b)
+			// whole lines up to the last newline; the tail may be mid-line
+			body := string(b)
+			if k := strings.LastIndexByte(body, '\n'); k >= 0 {
+				for n, line := range strings.Split(body[:k], "\n") {
+					if line != fmt.Sprintf("line %08d", n) {
+						e.T.Fatalf("read %d, line %d: %q", i, n, line)
+					}
+				}
+			}
+		}
+		// the connection still works for everything else
+		e.Write(ws.ID, "after.txt", "ok")
+		Equal(e, "a read after the growing file", e.Read(ws.ID, "after.txt"), "ok")
 	})
 }
