@@ -54,6 +54,8 @@ func cmdDoctor(ctx context.Context, c *client.Client, args []string) (int, error
 		var apiErr *client.Error
 		if errors.As(err, &apiErr) && apiErr.Code == "unauthorized" {
 			bad("the engine refused the token (fix: `cairn up` writes the right one to %s)", client.ConfigPath())
+		} else if canRunNative() {
+			bad("no engine answers at %s (fix: `sudo cairn up` runs it here with gVisor, no Docker needed)", cfg.Endpoint)
 		} else if derr := dockerReady(ctx); derr != nil {
 			bad("no engine answers, and Docker is not available: %v (fix: start Docker, then `cairn up`)", derr)
 		} else {
@@ -61,6 +63,11 @@ func cmdDoctor(ctx context.Context, c *client.Client, args []string) (int, error
 		}
 	default:
 		ok("runtime %s %s", info.Runtime, info.RuntimeVersion)
+		if dir, ok2 := nativeDir("cairn", ""); ok2 {
+			if pid := nativePID(dir); pid != 0 {
+				ok("engine runs natively (pid %d, folder %s)", pid, dir)
+			}
+		}
 		if !info.Capabilities.Isolation {
 			bad("runtime %s has no isolation: agent code runs on this machine (fix: `cairn up` runs gVisor in Docker)", info.Runtime)
 		}

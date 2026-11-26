@@ -1,6 +1,8 @@
 package acceptance
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"io"
 	"net"
 	"os"
@@ -23,9 +25,21 @@ type nativeEngine struct {
 	cli, name, port string
 	data, config    string
 	templateArg     string
+	native          bool // pass --native and --data (false: rely on the defaults, by --name)
 }
 
-func startNativeEngine(e *Env) *nativeEngine {
+// where names the engine for down and status: its folder, or (defaults)
+// its name.
+func (ne *nativeEngine) where() []string {
+	if ne.native {
+		return []string{"--data", ne.data}
+	}
+	return []string{"--name", ne.name}
+}
+
+func startNativeEngine(e *Env) *nativeEngine { return startNativeEngineAs(e, true) }
+
+func startNativeEngineAs(e *Env, native bool) *nativeEngine {
 	e.T.Helper()
 	bin := e.T.TempDir()
 	for _, p := range []string{"cairn", "cairnd"} {
@@ -43,12 +57,19 @@ func startNativeEngine(e *Env) *nativeEngine {
 	dir := e.T.TempDir()
 	ne := &nativeEngine{e: e, cli: filepath.Join(bin, "cairn"), name: "accept", port: port,
 		data: filepath.Join(dir, "engine"), config: filepath.Join(dir, "config", "config.json"),
-		templateArg: "base=" + os.Getenv("CAIRN_TEST_TEMPLATE")}
+		templateArg: "base=" + os.Getenv("CAIRN_TEST_TEMPLATE"), native: native}
+	if !native {
+		// the default folder, under a name of its own
+		var b [4]byte
+		_, _ = rand.Read(b[:])
+		ne.name = "accept-" + hex.EncodeToString(b[:])
+		ne.data = filepath.Join("/var/lib/cairn-up", ne.name)
+	}
 	if os.Getenv("CAIRN_TEST_TEMPLATE") == "" {
 		e.T.Skip("needs CAIRN_TEST_TEMPLATE: a rootfs tar for the engine's default template")
 	}
 	e.T.Cleanup(func() {
-		if out, err := ne.cairn("down", "--purge", "--data", ne.data); err != nil {
+		if out, err := ne.cairn(append([]string{"down", "--purge"}, ne.where()...)...); err != nil {
 			e.T.Logf("cleanup: %v\n%s", err, out)
 		}
 	})
@@ -84,7 +105,11 @@ func (ne *nativeEngine) cairn(args ...string) (string, error) {
 func (ne *nativeEngine) up(extra ...string) {
 	ne.e.T.Helper()
 	start := time.Now()
-	out, err := ne.cairn(append([]string{"up", "--native", "--name", ne.name, "--data", ne.data, "--port", ne.port, "--template", ne.templateArg}, extra...)...)
+	args := []string{"up", "--name", ne.name, "--port", ne.port, "--template", ne.templateArg}
+	if ne.native {
+		args = append(args, "--native", "--data", ne.data)
+	}
+	out, err := ne.cairn(append(args, extra...)...)
 	if err != nil {
 		ne.e.T.Fatalf("cairn up --native: %v\n%s", err, out)
 	}
@@ -93,7 +118,7 @@ func (ne *nativeEngine) up(extra ...string) {
 
 func (ne *nativeEngine) down() {
 	ne.e.T.Helper()
-	if out, err := ne.cairn("down", "--data", ne.data); err != nil {
+	if out, err := ne.cairn(append([]string{"down"}, ne.where()...)...); err != nil {
 		ne.e.T.Fatalf("cairn down: %v\n%s", err, out)
 	}
 }
@@ -230,6 +255,25 @@ func init() {
 		}
 		if _, err := os.Stat(ne.config); !os.IsNotExist(err) {
 			e.T.Fatalf("client config after a purge: %v", err)
+		}
+	})
+
+	register("G10.11.7", func(e *Env) {
+		ne := startNativeEngineAs(e, false) // no --native
+		pid := ne.pid()
+		if !processAlive(pid) {
+			e.T.Fatal("a plain cairn up did not start a native engine")
+		}
+		out, err := ne.cairn("status", "--name", ne.name)
+		if err != nil || !strings.Contains(out, "native") || !strings.Contains(out, "runtime runsc") {
+			e.T.Fatalf("cairn status: %v\n%s", err, out)
+		}
+		ne.up() // found again with no flags
+		Equal(e, "engine process after a second plain cairn up", ne.pid(), pid)
+		info, err := ne.client().Info(e.Ctx)
+		e.Must(err)
+		if !info.Capabilities.FullSave {
+			e.T.Fatalf("capabilities %+v: want full saves", info.Capabilities)
 		}
 	})
 }

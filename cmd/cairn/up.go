@@ -50,6 +50,7 @@ type upOptions struct {
 	port                  int
 	build                 bool
 	native                bool            // cairnd on the host, not in Docker (upnative.go)
+	docker                bool            // Docker even where native would do
 	data                  string          // --native: the engine's folder
 	set                   map[string]bool // flags given on the command line
 }
@@ -62,12 +63,16 @@ func cmdUp(ctx context.Context, args []string) (int, error) {
 	fs.StringVar(&o.image, "image", DefaultImage, "engine image")
 	fs.BoolVar(&o.build, "build", false, "build the image from this checkout of the Cairn repository instead of pulling it")
 	fs.StringVar(&o.template, "template", "python=python:3.12-slim", "NAME=IMAGE pulled on first start (or, with --native, NAME=ROOTFS.tar imported) and used for workspaces created without a template (empty: none)")
-	fs.BoolVar(&o.native, "native", false, "Linux: run cairnd straight on this host (as root, gVisor's runsc on PATH) instead of in Docker")
+	fs.BoolVar(&o.native, "native", false, "Linux: run cairnd straight on this host (as root, gVisor's runsc on PATH) instead of in Docker (the default there, when it can)")
+	fs.BoolVar(&o.docker, "docker", false, "run the engine in Docker even where it could run natively")
 	fs.StringVar(&o.data, "data", "", "with --native: the engine's folder (default "+nativeRoot+"/NAME)")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
-	if o.native || o.data != "" {
+	if o.native && o.docker {
+		return 2, errors.New("--native and --docker: pick one")
+	}
+	if o.native || o.data != "" || (!o.docker && nativeByDefault(ctx, o)) {
 		return upNative(ctx, o)
 	}
 	fs.Visit(func(f *flag.Flag) { o.set[f.Name] = true })

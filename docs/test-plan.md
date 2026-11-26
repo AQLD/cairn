@@ -7,7 +7,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
 | E0 | 4 | 0 | 1 |
-| E1 | 62 | 0 | 4 |
+| E1 | 63 | 0 | 4 |
 | E2 | 32 | 1 | 1 |
 | E3 | 122 | 4 | 2 |
 | E4 | 48 | 8 | 1 |
@@ -383,6 +383,7 @@ An operator can install, observe and upgrade Cairn without surprises. Gate: **E4
   - ✅ **G10.11.4** `cairn up --native` on Linux runs the engine as a background process with gVisor, full saves and a token · E1 · needs native_up
   - ✅ **G10.11.5** `cairn down` then `cairn up --native` keeps workspaces and their running processes · E1 · needs native_up
   - ✅ **G10.11.6** `cairn down --purge` removes only what `cairn up --native` made · E1 · needs native_up
+  - ✅ **G10.11.7** On Linux with gVisor installed, `cairn up` runs the engine natively unless told to use Docker · E1 · needs native_up
 - 📂 **G10.12** Local coding agents drive workspaces through MCP · E3
   - ✅ **G10.12.1** An agent creates, runs, saves, rewinds and copies through MCP tools · E3
   - ✅ **G10.12.2** A background server and a session survive an MCP full save and rewind · E3 · needs full_save, persistent_processes
