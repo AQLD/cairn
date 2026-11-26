@@ -35,6 +35,25 @@ type Store interface {
 	String() string
 }
 
+// Conditional is a Store that can write an object only if it is as the
+// caller last saw it: what lets several engines agree on one owner of a
+// workspace without a coordinator. S3 has it (If-Match and If-None-Match on
+// PUT); a store without it cannot hold leases.
+type Conditional interface {
+	// GetVersion returns a small object's content and its version (ETag).
+	GetVersion(ctx context.Context, key string) (data []byte, version string, err error)
+	// PutIf stores data under key only if the object's current version is
+	// ifMatch or, with ifMatch "", only if there is no object yet. It
+	// returns the new version, or ErrPrecondition if the object was not as
+	// expected. It is never retried (a lost answer to a write that landed
+	// would turn its retry into a false ErrPrecondition): any other failure
+	// leaves the outcome unknown, and the caller reads the object to learn it.
+	PutIf(ctx context.Context, key string, data []byte, ifMatch string) (version string, err error)
+}
+
+// ErrPrecondition is PutIf finding the object not as expected.
+var ErrPrecondition = errors.New("object changed")
+
 // Open returns the store a URL names:
 //
 //	s3://bucket/prefix?endpoint=https://host&region=us-east-1
@@ -100,3 +119,23 @@ func (p *prefixed) List(ctx context.Context, prefix string) ([]string, error) {
 	return keys, err
 }
 func (p *prefixed) String() string { return p.s.String() + "/" + strings.TrimSuffix(p.p, "/") }
+
+func (p *prefixed) GetVersion(ctx context.Context, key string) ([]byte, string, error) {
+	c, ok := p.s.(Conditional)
+	if !ok {
+		return nil, "", errNotConditional(p.s)
+	}
+	return c.GetVersion(ctx, p.p+key)
+}
+
+func (p *prefixed) PutIf(ctx context.Context, key string, data []byte, ifMatch string) (string, error) {
+	c, ok := p.s.(Conditional)
+	if !ok {
+		return "", errNotConditional(p.s)
+	}
+	return c.PutIf(ctx, p.p+key, data, ifMatch)
+}
+
+func errNotConditional(s Store) error {
+	return fmt.Errorf("object store %s cannot write conditionally", s)
+}

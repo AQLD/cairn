@@ -365,3 +365,41 @@ func truncate(b []byte) string {
 	}
 	return s
 }
+
+// GetVersion reads a small object and its ETag.
+func (s *S3) GetVersion(ctx context.Context, key string) ([]byte, string, error) {
+	var etag string
+	data, err := s.do(ctx, http.MethodGet, key, nil, nil, 0, 0, func(h http.Header) { etag = h.Get("ETag") })
+	return data, etag, err
+}
+
+// PutIf writes data under key with If-Match (or If-None-Match: * when ifMatch
+// is empty), once: see Conditional for why it is never retried.
+func (s *S3) PutIf(ctx context.Context, key string, data []byte, ifMatch string) (string, error) {
+	req, err := s.request(ctx, http.MethodPut, key, nil, bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return "", err
+	}
+	// standard headers: S3 does not need them signed
+	if ifMatch == "" {
+		req.Header.Set("If-None-Match", "*")
+	} else {
+		req.Header.Set("If-Match", ifMatch)
+	}
+	resp, err := s.client().Do(req)
+	if err != nil {
+		return "", fmt.Errorf("conditional PUT %s (outcome unknown): %w", key, err)
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode/100 == 2:
+		return resp.Header.Get("ETag"), nil
+	case resp.StatusCode == http.StatusPreconditionFailed:
+		return "", fmt.Errorf("%w: %s", ErrPrecondition, key)
+	case resp.StatusCode == http.StatusConflict:
+		// S3: another conditional write to the key was in flight
+		return "", fmt.Errorf("%w: %s (concurrent write)", ErrPrecondition, key)
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	return "", fmt.Errorf("conditional PUT %s (outcome unknown): %s: %s", key, resp.Status, truncate(body))
+}

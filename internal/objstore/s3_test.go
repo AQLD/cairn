@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -161,5 +162,62 @@ func TestRealS3(t *testing.T) {
 	}
 	if _, err := s.Get(ctx, "test/big"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("after delete: %v", err)
+	}
+	// leases need conditional writes: a store without them must say so here
+	testConditional(t, s.(Conditional), "test/lease")
+	_ = s.Delete(ctx, "test/lease")
+	_ = s.Delete(ctx, "test/race")
+}
+
+func TestConditional(t *testing.T) {
+	s, _ := newTestS3(t)
+	testConditional(t, s, "lease")
+	testConditional(t, WithPrefix(s, "p").(Conditional), "lease") // through a prefix too
+}
+
+// testConditional checks what leases rely on: create only if absent, replace
+// only if unchanged since read, and of writers racing for an absent key,
+// exactly one wins.
+func testConditional(t *testing.T, c Conditional, key string) {
+	t.Helper()
+	ctx := context.Background()
+	v1, err := c.PutIf(ctx, key, []byte("a"), "")
+	if err != nil || v1 == "" {
+		t.Fatalf("create: %q, %v", v1, err)
+	}
+	if _, err := c.PutIf(ctx, key, []byte("b"), ""); !errors.Is(err, ErrPrecondition) {
+		t.Fatalf("create over an existing object: %v, want ErrPrecondition", err)
+	}
+	data, v, err := c.GetVersion(ctx, key)
+	if err != nil || string(data) != "a" || v != v1 {
+		t.Fatalf("read: %q %q %v, want a %q", data, v, err, v1)
+	}
+	v2, err := c.PutIf(ctx, key, []byte("c"), v1)
+	if err != nil || v2 == v1 {
+		t.Fatalf("replace as read: %q, %v", v2, err)
+	}
+	if _, err := c.PutIf(ctx, key, []byte("d"), v1); !errors.Is(err, ErrPrecondition) {
+		t.Fatalf("replace from a stale read: %v, want ErrPrecondition", err)
+	}
+	if data, _, _ := c.GetVersion(ctx, key); string(data) != "c" {
+		t.Fatalf("after a refused replace: %q, want c", data)
+	}
+	race := strings.TrimSuffix(key, "lease") + "race"
+	var wins atomic.Int32
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := c.PutIf(ctx, race, []byte("me"), ""); err == nil {
+				wins.Add(1)
+			} else if !errors.Is(err, ErrPrecondition) {
+				t.Errorf("racing create: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if wins.Load() != 1 {
+		t.Fatalf("%d of 10 racing creates won, want exactly 1", wins.Load())
 	}
 }
