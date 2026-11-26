@@ -147,6 +147,8 @@ type Engine struct {
 	pressured    atomic.Bool // the disk pressure guard has frozen workspace filesystems
 	startedAt    time.Time   // when this engine opened
 	needsRepair  sync.Map    // workspace ID -> true: its disk hit write errors the guard saw
+	deleting     sync.Map    // workspace ID -> true: being deleted, so the guard leaves its disk thawed
+	freezeMu     sync.Mutex  // a guard freeze and a delete's thaw never interleave
 	stopPressure context.CancelFunc
 	pressureDone chan struct{}
 	// overlayErr is why filesystems built on a base are copies rather than
@@ -659,8 +661,15 @@ func (e *Engine) deleteWorkspace(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	// a process blocked on a frozen disk cannot be stopped: thaw it first
+	// a process blocked on a frozen disk cannot be stopped: thaw it first,
+	// and keep the guard (which freezes again every check while the volume
+	// is full) off it until it is gone
+	e.freezeMu.Lock()
+	e.deleting.Store(id, true)
 	e.thawWorkspace(w)
+	e.freezeMu.Unlock()
+	defer e.deleting.Delete(id)
+	_ = e.cfg.Failpoints.Check(failpoint.DeleteAfterThaw) // a delay only
 	if err := e.cfg.Runtime.Stop(ctx, spec); err != nil {
 		return err
 	}

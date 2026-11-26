@@ -6,6 +6,7 @@ package failpoint
 import (
 	"errors"
 	"sync"
+	"time"
 )
 
 // ErrCrash simulates the process dying at this point: the engine skips all
@@ -32,6 +33,8 @@ const (
 
 	RootBeforeRename  = "root/before-rename"  // a base's shared root extracted and synced, not yet renamed in
 	LayerBeforeCommit = "layer/before-commit" // a layered filesystem built, not yet renamed into the workspace
+
+	DeleteAfterThaw = "delete/after-thaw" // deleting: the workspace's disk thawed, its sandbox not yet stopped
 )
 
 type Set struct {
@@ -54,14 +57,26 @@ func (s *Set) Disable(name string) {
 	delete(s.m, name)
 }
 
-// Check returns the error enabled for name, if any. Safe on a nil Set.
+// Delay is enabled like an error but makes Check wait that long and then
+// return nil: it widens a window between two steps a race needs.
+type Delay time.Duration
+
+func (d Delay) Error() string { return "delay " + time.Duration(d).String() }
+
+// Check returns the error enabled for name, if any (after waiting, for a
+// Delay). Safe on a nil Set.
 func (s *Set) Check(name string) error {
 	if s == nil {
 		return nil
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.m[name]
+	err := s.m[name]
+	s.mu.Unlock()
+	if d, ok := err.(Delay); ok {
+		time.Sleep(time.Duration(d))
+		return nil
+	}
+	return err
 }
 
 // Crashed reports whether err is a simulated crash, in which case callers must
