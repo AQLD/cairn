@@ -15,6 +15,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/AQLD/cairn/internal/failpoint"
 	"github.com/AQLD/cairn/internal/oci"
 	"github.com/AQLD/cairn/internal/save"
 )
@@ -273,7 +274,9 @@ func (e *Engine) createLayeredRootfs(id string, spec Spec, root, tmp volume) (bo
 		e.log.Warn("template cannot be shared; copying it", "template", spec.Template, "err", err)
 		return false, nil
 	}
-	if _, err := e.ensureRoot(t.SHA256); err != nil {
+	if _, err := e.ensureRoot(t.SHA256); failpoint.Crashed(err) {
+		return true, err
+	} else if err != nil {
 		e.log.Warn("template cannot be shared; copying it", "template", spec.Template, "err", err)
 		return false, nil
 	}
@@ -282,6 +285,12 @@ func (e *Engine) createLayeredRootfs(id string, spec Spec, root, tmp volume) (bo
 	extracted := time.Now() // every file from the base is older than this
 	if err == nil {
 		err = tmp.release()
+	}
+	if err == nil {
+		err = e.cfg.Failpoints.Check(failpoint.LayerBeforeCommit)
+	}
+	if failpoint.Crashed(err) {
+		return true, err // recovery removes the half-made filesystem
 	}
 	if err != nil {
 		_ = tmp.remove()

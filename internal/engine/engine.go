@@ -549,7 +549,9 @@ func (e *Engine) createWorkspace(ctx context.Context, req CreateRequest) (*Works
 	if err != nil {
 		return nil, err
 	}
-	if err := e.createRootfs(id, spec); err != nil {
+	if err := e.createRootfs(id, spec); failpoint.Crashed(err) {
+		return nil, err // as a crash would: recovery finishes the job
+	} else if err != nil {
 		_ = e.store.SetWorkspaceState(ctx, id, store.Deleted)
 		_ = e.store.ReleaseWorkspaceRequestKey(ctx, id)
 		_ = e.removeWorkspaceDir(id, spec)

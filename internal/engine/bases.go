@@ -34,6 +34,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AQLD/cairn/internal/failpoint"
 	"github.com/AQLD/cairn/internal/save"
 )
 
@@ -245,7 +246,13 @@ func (e *Engine) ensureRoot(sha string) (string, error) {
 		err = syncTree(tmp)
 	}
 	if err == nil {
+		err = e.cfg.Failpoints.Check(failpoint.RootBeforeRename)
+	}
+	if err == nil {
 		err = os.Rename(tmp, root)
+	}
+	if failpoint.Crashed(err) {
+		return "", err // a crash leaves the half-made root: recovery removes it
 	}
 	if err != nil {
 		_ = os.RemoveAll(tmp)
