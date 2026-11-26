@@ -644,6 +644,40 @@ func (e *Engine) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 	return out, nil
 }
 
+// adopt re-creates a workspace this engine never knew from its save, under
+// its own ID and name: a copy that keeps the original's identity. Recorded
+// first (creating, from the save), so recovery finishes or undoes it like a
+// copy. The caller holds the workspace's lock and a heavy slot.
+func (e *Engine) adopt(ctx context.Context, saveID, id string, m *save.Manifest) (*Workspace, error) {
+	if m.Workspace == nil {
+		return nil, fmt.Errorf("%w: save %s does not describe its workspace (an older engine made it); copy it instead", ErrConflict, saveID)
+	}
+	var spec Spec
+	if err := json.Unmarshal(m.Workspace.Spec, &spec); err != nil {
+		return nil, fmt.Errorf("%w: save %s describes its workspace unreadably: %v", ErrCorrupt, saveID, err)
+	}
+	e.diskFor(&spec) // its size, in this engine's kind of disk
+	w, err := e.insertWorkspace(ctx, id, m.Workspace.Name, spec, saveID, "")
+	if err != nil {
+		return nil, err
+	}
+	rs, err := e.runtimeSpec(w)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(e.workspaceDir(id), 0o700); err != nil {
+		return nil, err
+	}
+	if err := e.restoreInto(ctx, rs, spec, saveID, m, failpoint.CopyBeforeRunning); err != nil {
+		return nil, err
+	}
+	if err := e.store.SetWorkspaceState(ctx, id, store.Running); err != nil {
+		return nil, err
+	}
+	e.log.Info("workspace adopted from its save", "workspace", id, "save", saveID)
+	return e.GetWorkspace(ctx, id)
+}
+
 // deleteWorkspace stops a workspace and removes its filesystem. Its saves are
 // kept, so it can still be copied from.
 func (e *Engine) deleteWorkspace(ctx context.Context, id string) error {
@@ -1577,7 +1611,7 @@ func (e *Engine) verifiedSave(ctx context.Context, saveID string) (*store.Save, 
 
 // resume restores a workspace to one of its saves: the filesystem, and for a
 // full save its memory and processes. Anything written since the save is lost.
-func (e *Engine) resume(ctx context.Context, saveID string) (*Workspace, error) {
+func (e *Engine) resume(ctx context.Context, saveID string, opts ResumeOptions) (*Workspace, error) {
 	sv, m, err := e.readySave(ctx, saveID)
 	if err != nil {
 		return nil, err
@@ -1599,10 +1633,17 @@ func (e *Engine) resume(ctx context.Context, saveID string) (*Workspace, error) 
 	defer l.Unlock()
 	w, err := e.liveWorkspace(ctx, id)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			return nil, fmt.Errorf("%w: workspace %s was deleted; copy the save instead", ErrConflict, id)
+		if !errors.Is(err, ErrNotFound) {
+			return nil, err
 		}
-		return nil, err
+		if _, gerr := e.store.GetWorkspace(ctx, id); errors.Is(gerr, store.ErrNotFound) {
+			// never known here: its save came through the bucket
+			if !opts.Adopt {
+				return nil, fmt.Errorf("%w: workspace %s is not known on this server (its save came from another one): resume with adopt if that server is gone, or copy the save", ErrConflict, id)
+			}
+			return e.adopt(ctx, saveID, id, m)
+		}
+		return nil, fmt.Errorf("%w: workspace %s was deleted; copy the save instead", ErrConflict, id)
 	}
 	spec, err := e.runtimeSpec(w)
 	if err != nil {

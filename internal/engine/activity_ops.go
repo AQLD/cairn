@@ -104,6 +104,20 @@ func orQuick(k save.Kind) save.Kind {
 // full save its memory and processes. Anything written since the save is lost.
 // The log keeps what happened before: it shows the rewind, it is not rewound.
 func (e *Engine) Resume(ctx context.Context, saveID string) (*Workspace, error) {
+	return e.ResumeWith(ctx, saveID, ResumeOptions{})
+}
+
+// ResumeOptions changes how a resume treats a workspace this engine does not
+// know.
+type ResumeOptions struct {
+	// Adopt re-creates a workspace known only from its save (made on another
+	// server, through the bucket) under its own ID and name. The caller
+	// asserts the server it ran on is gone: nothing here can tell.
+	Adopt bool
+}
+
+// ResumeWith is Resume with options.
+func (e *Engine) ResumeWith(ctx context.Context, saveID string, opts ResumeOptions) (*Workspace, error) {
 	var id, from string
 	var kind string
 	if sv, err := e.store.GetSave(ctx, saveID); err == nil {
@@ -113,7 +127,7 @@ func (e *Engine) Resume(ctx context.Context, saveID string) (*Workspace, error) 
 		}
 	}
 	start := time.Now()
-	w, err := e.resume(ctx, saveID)
+	w, err := e.resume(ctx, saveID, opts)
 	if id == "" {
 		return w, err // no such save: nothing to log against
 	}

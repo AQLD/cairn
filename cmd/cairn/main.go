@@ -88,6 +88,7 @@ commands:
                                           files added (A), modified (M) and removed (D) since
                                           the save it came from, or since --from
   resume SAVE                             restore a workspace to a save
+  resume --adopt SAVE                     bring back a workspace from another (lost) server under its own ID
   copy SAVE [--count N]                   make workspaces from a save
   verify SAVE                             re-check a save's checksums now
   rm-save SAVE                            delete a save (recoverable for the retention window)
@@ -351,10 +352,14 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 		fmt.Fprintf(os.Stderr, "%d added, %d modified, %d removed since %s%s\n", d.Added, d.Modified, d.Removed, d.From, more)
 
 	case "resume":
-		if len(args) != 1 {
-			return 2, errors.New("usage: cairn resume SAVE")
+		adopt := len(args) == 2 && args[0] == "--adopt"
+		if adopt {
+			args = args[1:]
 		}
-		ws, err := c.Resume(ctx, args[0])
+		if len(args) != 1 {
+			return 2, errors.New("usage: cairn resume [--adopt] SAVE")
+		}
+		ws, err := c.ResumeWith(ctx, args[0], client.ResumeOptions{Adopt: adopt})
 		if err != nil {
 			return 1, err
 		}
