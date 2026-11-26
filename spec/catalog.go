@@ -256,12 +256,19 @@ var Catalog = []Scenario{
 			{ID: "G7.16", Title: "Restores running while other workspaces start never lose a file", Proves: "Four workspaces in one engine each save, overwrite and resume in a loop while workspaces are created, run and deleted beside them, and every resume brings back exactly what was saved: an image is never mounted again while its earlier filesystem is still alive (a sandbox starting holds a copy of every mount for a moment).", Milestone: E3, Needs: []Need{NeedIsolation, NeedDiskLimits}},
 			{ID: "G7.17", Title: "A lost server's workspace comes back elsewhere under its own ID when the caller says that server is gone", Proves: "Agents and tools that hold a workspace's ID keep working after it moves; nothing is adopted unless asked.", Milestone: E3,
 				Children: []Scenario{
-					{ID: "G7.17.1", Title: "Resuming with adopt brings the workspace back under its own ID and name, files and processes", Proves: "A server that knows the workspace only from the bucket re-creates it from its save: the same ID, name, files and (from a full save) running processes.", Milestone: E3, Needs: []Need{NeedInProcess}},
+					{ID: "G7.17.1", Title: "Resuming with adopt brings the workspace back under its own ID and name, files and processes", Proves: "A server that knows the workspace only from the bucket re-creates it from its save, once the lost server's lease has run out (G7.8): the same ID, name, files and (from a full save) running processes.", Milestone: E3, Needs: []Need{NeedInProcess}},
 					{ID: "G7.17.2", Title: "Resuming without adopt is refused and says how to go on", Proves: "Without being asked, a workspace known only from the bucket is never taken over (its server may still run it): the error names adopt and copy, and nothing is created.", Milestone: E3, Needs: []Need{NeedInProcess}},
 					{ID: "G7.17.3", Title: "A workspace deleted on this server is never adopted back", Proves: "Resume with adopt of a save whose workspace was deleted here is refused; copying it still works.", Milestone: E3},
 				}},
 			{ID: "G7.7", Title: "A lost server's workspaces resume elsewhere from their last save", Proves: "Losing a server loses at most the work since the last save.", Milestone: E5, Needs: []Need{NeedInProcess}},
-			{ID: "G7.8", Title: "A workspace never runs on two servers at once", Proves: "Leases and fencing hold under partitions and slow servers.", Milestone: E5, Needs: []Need{NeedMultiServer}},
+			{ID: "G7.8", Title: "A workspace never runs on two servers at once", Proves: "Leases and fencing hold under partitions and slow servers.", Milestone: E5,
+				Children: []Scenario{
+					{ID: "G7.8.1", Title: "While a workspace's server keeps its lease, no other server adopts it", Proves: "The owning engine renews the workspace's owner record in object storage; another engine's adopt is refused, naming the owner and when its lease runs out, for as long as renewals continue.", Milestone: E3, Needs: []Need{NeedInProcess}},
+					{ID: "G7.8.2", Title: "Once the lease runs out, another server adopts the workspace", Proves: "A server that stopped renewing (lost) holds nothing: after its lease's time, adopt succeeds and the owner record names the new engine, with a higher epoch.", Milestone: E3, Needs: []Need{NeedInProcess}},
+					{ID: "G7.8.3", Title: "Of two servers adopting at once, exactly one gets the workspace", Proves: "The claim is a conditional write: the other's adopt is refused and creates nothing.", Milestone: E3, Needs: []Need{NeedInProcess}},
+					{ID: "G7.8.4", Title: "A server that lost its lease stops the workspace and refuses commands for it", Proves: "Back from a partition, the old server learns on renewal that another engine owns the workspace and fences itself.", Milestone: E5, Needs: []Need{NeedInProcess}},
+					{ID: "G7.8.5", Title: "A late save from a fenced server never replaces the new owner's", Proves: "Saves carry the owner's epoch; one from an older epoch never counts as the workspace's latest.", Milestone: E5, Needs: []Need{NeedInProcess}},
+				}},
 		},
 	},
 	{

@@ -9,9 +9,9 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 63 | 0 | 4 |
 | E2 | 32 | 1 | 1 |
-| E3 | 125 | 4 | 2 |
+| E3 | 128 | 4 | 2 |
 | E4 | 48 | 8 | 1 |
-| E5 | 1 | 3 | 0 |
+| E5 | 1 | 4 | 0 |
 | later | 0 | 3 | 0 |
 
 Legend: ✅ implemented · ⏳ pending · 📏 benchmark · needs = what the environment must provide (skipped without it)
@@ -27,8 +27,8 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 | [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 4 of 6 | 5 of 6 | 1 |
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 4 of 5 | 5 of 5 | 0 |
 | [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 6 of 6 | 6 of 6 | 0 |
-| [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 1 of 6 | 3 of 6 | 4 |
-| [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 4 of 6 | 5 of 6 | 1 |
+| [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 1 of 6 | 3 of 6 | 5 |
+| [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 4 of 6 | 5 of 6 | 2 |
 
 ## G11 A coding agent ships a change over several days
 
@@ -313,7 +313,12 @@ However the engine stops, it comes back knowing every workspace and save, and ne
   - ✅ **G7.17.2** Resuming without adopt is refused and says how to go on · E3 · needs in_process
   - ✅ **G7.17.3** A workspace deleted on this server is never adopted back · E3
 - ✅ **G7.7** A lost server's workspaces resume elsewhere from their last save · E5 · needs in_process
-- ⏳ **G7.8** A workspace never runs on two servers at once · E5 · needs multi_server
+- 📂 **G7.8** A workspace never runs on two servers at once · E5
+  - ✅ **G7.8.1** While a workspace's server keeps its lease, no other server adopts it · E3 · needs in_process
+  - ✅ **G7.8.2** Once the lease runs out, another server adopts the workspace · E3 · needs in_process
+  - ✅ **G7.8.3** Of two servers adopting at once, exactly one gets the workspace · E3 · needs in_process
+  - ⏳ **G7.8.4** A server that lost its lease stops the workspace and refuses commands for it · E5 · needs in_process
+  - ⏳ **G7.8.5** A late save from a fenced server never replaces the new owner's · E5 · needs in_process
 
 ## G8 One workspace cannot hurt another or the host
 

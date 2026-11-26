@@ -119,6 +119,10 @@ type Config struct {
 	// Objects, if set, keeps a copy of every save in object storage, so saves
 	// outlive this server (see remote.go).
 	Objects objstore.Store
+	// LeaseTTL is how long a workspace's owner record holds without renewal
+	// (DefaultLeaseTTL if 0; owner.go). Another engine adopts the workspace
+	// only after it runs out.
+	LeaseTTL time.Duration
 	// RestoreState rebuilds the state database from its last backup and the
 	// data folder (see state.go) if it is missing or damaged; a healthy one is
 	// left alone, so the setting is safe to leave on.
@@ -164,6 +168,9 @@ type Engine struct {
 	uploadKick   chan struct{}      // wakes the uploader
 	stopUploads  context.CancelFunc // ends it
 	uploaderDone chan struct{}
+	engineID     string // this engine, in workspaces' owner records (owner.go)
+	stopOwners   context.CancelFunc
+	ownerDone    chan struct{}
 }
 
 // Spec is the part of a workspace the caller chooses.
@@ -240,6 +247,9 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.LeaseTTL <= 0 {
+		cfg.LeaseTTL = DefaultLeaseTTL
+	}
 	if cfg.DiskReserve == 0 {
 		cfg.DiskReserve = DefaultDiskReserve
 	}
@@ -279,6 +289,11 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 		}
 	}
 	e := &Engine{cfg: cfg, log: cfg.Logger}
+	id, err := loadEngineID(cfg.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("engine id: %w", err)
+	}
+	e.engineID = id
 	restore := false
 	if cfg.RestoreState {
 		var err error
@@ -298,7 +313,7 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	e = &Engine{startedAt: time.Now(), cfg: cfg, log: cfg.Logger, store: st, locks: map[string]*wsLock{}, activity: map[string]time.Time{}, ops: make(chan struct{}, cfg.MaxOps)}
+	e = &Engine{startedAt: time.Now(), cfg: cfg, log: cfg.Logger, store: st, locks: map[string]*wsLock{}, activity: map[string]time.Time{}, ops: make(chan struct{}, cfg.MaxOps), engineID: id}
 	if err := e.openEvents(); err != nil {
 		st.Close()
 		return nil, err
@@ -378,6 +393,13 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 		}
 		e.uploadKick, e.stopUploads, e.uploaderDone = make(chan struct{}, 1), cancel, make(chan struct{})
 		go e.uploader(uctx, err != nil)
+		if e.leases() != nil {
+			octx, ocancel := context.WithCancel(context.Background())
+			e.stopOwners, e.ownerDone = ocancel, make(chan struct{})
+			go e.ownerLoop(octx)
+		} else {
+			e.log.Warn("object storage cannot write conditionally: no owner records, so nothing stops two servers adopting one workspace", "store", cfg.Objects.String())
+		}
 	}
 	return e, nil
 }
@@ -397,6 +419,10 @@ func (e *Engine) Close() error {
 			e.log.Warn("engine stopping under disk pressure: workspace disks thawed")
 			e.thawAll(context.Background())
 		}
+	}
+	if e.stopOwners != nil {
+		e.stopOwners()
+		<-e.ownerDone
 	}
 	if e.stopUploads != nil {
 		e.stopUploads()
@@ -657,6 +683,11 @@ func (e *Engine) adopt(ctx context.Context, saveID, id string, m *save.Manifest)
 		return nil, fmt.Errorf("%w: save %s describes its workspace unreadably: %v", ErrCorrupt, saveID, err)
 	}
 	e.diskFor(&spec) // its size, in this engine's kind of disk
+	// ours before anything is built: refused while another engine's lease
+	// holds, and when another engine adopting it wins the race
+	if err := e.takeOwner(ctx, id); err != nil {
+		return nil, err
+	}
 	w, err := e.insertWorkspace(ctx, id, m.Workspace.Name, spec, saveID, "")
 	if err != nil {
 		return nil, err
@@ -714,7 +745,11 @@ func (e *Engine) deleteWorkspace(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	return e.removeWorkspaceDir(id, ws)
+	if err := e.removeWorkspaceDir(id, ws); err != nil {
+		return err
+	}
+	e.releaseOwner(id)
+	return nil
 }
 
 // --- commands and files ---
