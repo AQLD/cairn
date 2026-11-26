@@ -152,8 +152,10 @@ type Engine struct {
 	startedAt    time.Time   // when this engine opened
 	needsRepair  sync.Map    // workspace ID -> true: its disk hit write errors the guard saw
 	deleting     sync.Map    // workspace ID -> true: being deleted, so the guard leaves its disk thawed
-	movedTo      sync.Map    // workspace ID -> the engine that adopted it (owner.go)
-	freezeMu     sync.Mutex  // a guard freeze and a delete's thaw never interleave
+	saveTimeMu   sync.Mutex
+	lastSave     time.Time  // the newest save time handed out (saveTime)
+	movedTo      sync.Map   // workspace ID -> the engine that adopted it (owner.go)
+	freezeMu     sync.Mutex // a guard freeze and a delete's thaw never interleave
 	stopPressure context.CancelFunc
 	pressureDone chan struct{}
 	// overlayErr is why filesystems built on a base are copies rather than
@@ -315,6 +317,10 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 		return nil, err
 	}
 	e = &Engine{startedAt: time.Now(), cfg: cfg, log: cfg.Logger, store: st, locks: map[string]*wsLock{}, activity: map[string]time.Time{}, ops: make(chan struct{}, cfg.MaxOps), engineID: id}
+	// new saves are never older than the ones already made, across restarts
+	if t, err := st.NewestSaveTime(ctx); err == nil {
+		e.lastSave = t
+	}
 	if err := e.openEvents(); err != nil {
 		st.Close()
 		return nil, err
@@ -1097,7 +1103,7 @@ func (e *Engine) saveWith(ctx context.Context, id string, opts SaveOptions) (*Sa
 	}
 
 	saveID := newID("sv")
-	now := time.Now().UTC()
+	now := e.saveTime()
 	if err := e.store.CreateSave(ctx, store.Save{ID: saveID, WorkspaceID: id, Kind: string(kind), State: store.SavePending, CreatedAt: now, RequestKey: requestKey, Parent: w.BaseSave}); err != nil {
 		if errors.Is(err, store.ErrDuplicateKey) {
 			return e.saveForKey(ctx, requestKey, id) // lost a race with the same key
@@ -2152,6 +2158,21 @@ func (e *Engine) setSavingState(ctx context.Context, w *store.Workspace, st stor
 		return nil
 	}
 	return e.store.SetWorkspaceState(ctx, w.ID, st)
+}
+
+// saveTime is the creation time of a new save: the engine's clock, but never
+// at or before the last one handed out. A wall clock can step back (resynced
+// after a laptop sleeps, an NTP step), and saves are ordered by time: for
+// rewinding, listing and pruning, which must keep the newest.
+func (e *Engine) saveTime() time.Time {
+	e.saveTimeMu.Lock()
+	defer e.saveTimeMu.Unlock()
+	t := e.cfg.Now().UTC()
+	if !t.After(e.lastSave) {
+		t = e.lastSave.Add(time.Microsecond)
+	}
+	e.lastSave = t
+	return t
 }
 
 type internalKey struct{}

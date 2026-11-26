@@ -63,7 +63,7 @@ func (e *Engine) pauseLocked(ctx context.Context, id, why string) error {
 		return err
 	}
 	saveID := newID("sv")
-	now := time.Now().UTC()
+	now := e.saveTime()
 	if err := e.store.CreateSave(ctx, store.Save{ID: saveID, WorkspaceID: id, Kind: string(save.Full), State: store.SavePending, CreatedAt: now, Auto: true}); err != nil {
 		return err
 	}

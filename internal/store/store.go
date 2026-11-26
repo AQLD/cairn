@@ -585,6 +585,16 @@ func (s *Store) MarkUploaded(ctx context.Context, id string) error {
 }
 
 // PendingUploads lists ready saves not yet in object storage, oldest first.
+// NewestSaveTime is the creation time of the newest save recorded (deleted
+// ones included), or zero.
+func (s *Store) NewestSaveTime(ctx context.Context) (time.Time, error) {
+	var ns sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT MAX(created_at) FROM saves`).Scan(&ns); err != nil || !ns.Valid {
+		return time.Time{}, err
+	}
+	return time.Unix(0, ns.Int64).UTC(), nil
+}
+
 func (s *Store) PendingUploads(ctx context.Context) ([]Save, error) {
 	return s.querySaves(ctx, `SELECT `+saveCols+` FROM saves WHERE state = ? AND uploaded = 0 ORDER BY created_at`, SaveReady)
 }

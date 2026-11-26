@@ -161,4 +161,17 @@ func init() {
 		Equal(e, "pruned with both limits off", prune(e), 0)
 		Equal(e, "oldest save with both limits off", stateOf(e, cs[0].ID), "ready")
 	})
+
+	register("G18.5.6", func(e *Env) {
+		e.RestartWith(func(c *engine.Config) { c.KeepSaves = 2; c.KeepSavesFor = -1 })
+		ws := e.Workspace("clock-steps-back")
+		first := saves(e, ws.ID, 1)[0]
+		e.Clock.Advance(-time.Hour) // the clock is resynced backwards
+		later := saves(e, ws.ID, 2)
+		Equal(e, "pruned", prune(e), 1)
+		Equal(e, "the first save", stateOf(e, first.ID), "deleted")
+		for _, sv := range later {
+			Equal(e, "a later save", stateOf(e, sv.ID), "ready")
+		}
+	})
 }

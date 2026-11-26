@@ -70,13 +70,14 @@ func (e *Engine) OpenFile(ctx context.Context, id, name string) (*os.File, os.Fi
 // the workspace's activity log.
 func (e *Engine) SaveWith(ctx context.Context, id string, opts SaveOptions) (*Save, error) {
 	start := time.Now()
+	clock := e.cfg.Now() // save times are the engine's clock
 	kind := opts.Kind
 	sv, err := e.saveWith(ctx, id, opts)
 	if err != nil {
 		e.note(ctx, id, "save", fmt.Sprintf("%s save", orQuick(kind)), err, map[string]any{"kind": orQuick(kind)})
 		return sv, err
 	}
-	if sv.CreatedAt.Before(start.Add(-time.Second)) {
+	if sv.CreatedAt.Before(clock.Add(-time.Second)) {
 		return sv, nil // a retry answered with the first request's save
 	}
 	took := time.Since(start)
