@@ -315,5 +315,9 @@ func (e *Engine) SyncRemote(ctx context.Context) error {
 			return fmt.Errorf("upload save %s: %w", sv.ID, err)
 		}
 	}
-	return e.importRemote(ctx)
+	if err := e.importRemote(ctx); err != nil {
+		return err
+	}
+	e.renewOwners(ctx)
+	return nil
 }

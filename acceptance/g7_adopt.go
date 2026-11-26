@@ -2,8 +2,10 @@ package acceptance
 
 import (
 	"strings"
+	"time"
 
 	"github.com/AQLD/cairn/client"
+	"github.com/AQLD/cairn/internal/engine"
 )
 
 // lostServer makes a workspace with a file (and, where full saves work, a
@@ -29,6 +31,8 @@ func lostServer(e *Env) (ws *client.Workspace, sv *client.Save, pid int) {
 	e.T.Cleanup(func() { unmountAll(lost) })
 	e.DataDir = e.T.TempDir()
 	e.start()
+	// the lost server's lease on the workspace runs out (G7.8)
+	e.Clock.Advance(engine.DefaultLeaseTTL + time.Second)
 	return ws, sv, pid
 }
 
