@@ -21,6 +21,7 @@ type Server struct {
 
 	mu      sync.Mutex
 	objects map[string][]byte // "bucket/key"
+	version map[string]int    // each object's write count: its ETag
 	uploads map[string]map[int][]byte
 	next    int
 
@@ -37,7 +38,7 @@ func (s *Server) SetFail(f func(r *http.Request) bool) {
 }
 
 func New() *Server {
-	s := &Server{objects: map[string][]byte{}, uploads: map[string]map[int][]byte{}}
+	s := &Server{objects: map[string][]byte{}, version: map[string]int{}, uploads: map[string]map[int][]byte{}}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
 }
@@ -54,7 +55,17 @@ func (s *Server) Object(bucketKey string) ([]byte, bool) {
 func (s *Server) SetObject(bucketKey string, b []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.objects[bucketKey] = b
+	s.store(bucketKey, b)
+}
+
+// store writes an object and gives it a new version. Callers hold mu.
+func (s *Server) store(full string, b []byte) {
+	s.objects[full] = b
+	s.version[full]++
+}
+
+func (s *Server) etag(full string) string {
+	return fmt.Sprintf("%q", fmt.Sprintf("v%d", s.version[full]))
 }
 
 // Keys lists stored objects ("bucket/key"), sorted.
@@ -144,7 +155,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		for i := 1; i <= len(parts); i++ {
 			all = append(all, parts[i]...)
 		}
-		s.objects[full] = all
+		s.store(full, all)
 		delete(s.uploads, q.Get("uploadId"))
 		writeXML(w, struct {
 			XMLName xml.Name `xml:"CompleteMultipartUploadResult"`
@@ -157,16 +168,25 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		s.objects[full] = b
+		_, exists := s.objects[full]
+		if r.Header.Get("If-None-Match") == "*" && exists ||
+			r.Header.Get("If-Match") != "" && (!exists || r.Header.Get("If-Match") != s.etag(full)) {
+			http.Error(w, "<Error><Code>PreconditionFailed</Code></Error>", http.StatusPreconditionFailed)
+			return
+		}
+		s.store(full, b)
+		w.Header().Set("ETag", s.etag(full))
 	case r.Method == http.MethodGet:
 		b, ok := s.objects[full]
 		if !ok {
 			http.Error(w, "<Error><Code>NoSuchKey</Code></Error>", http.StatusNotFound)
 			return
 		}
+		w.Header().Set("ETag", s.etag(full))
 		_, _ = w.Write(b)
 	case r.Method == http.MethodDelete:
 		delete(s.objects, full)
+		delete(s.version, full)
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "unsupported", http.StatusBadRequest)
