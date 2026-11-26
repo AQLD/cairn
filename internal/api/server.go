@@ -182,6 +182,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/workspaces/{id}", s.getWorkspace)
 	s.mux.HandleFunc("DELETE /v1/workspaces/{id}", s.deleteWorkspace)
 	s.mux.HandleFunc("POST /v1/workspaces/{id}/pause", s.pauseWorkspace)
+	s.mux.HandleFunc("PUT /v1/workspaces/{id}/quota", s.setQuota)
 	s.mux.HandleFunc("GET /v1/workspaces/{id}/events", s.listEvents)
 	s.mux.HandleFunc("GET /v1/events", s.allEvents)
 	s.mux.HandleFunc("GET /v1/workspaces/{id}/terminal", s.terminal)
@@ -259,6 +260,20 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
 	ws, err := s.eng.GetWorkspace(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ws)
+}
+
+// setQuota sets (or, with zero, clears) a workspace's run-time quota.
+func (s *Server) setQuota(w http.ResponseWriter, r *http.Request) {
+	var q engine.Quota
+	if !s.decode(w, r, &q) {
+		return
+	}
+	ws, err := s.eng.SetQuota(r.Context(), r.PathValue("id"), &q)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -671,6 +686,9 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 	case errors.Is(err, engine.ErrInsufficientStorage):
 		writeError(w, http.StatusInsufficientStorage, "insufficient_storage", err.Error())
+	case errors.Is(err, engine.ErrQuota):
+		// not 429: retrying does not help until someone raises the quota
+		writeError(w, http.StatusForbidden, "quota_exceeded", err.Error())
 	case errors.Is(err, engine.ErrBusy):
 		w.Header().Set("Retry-After", "1")
 		writeError(w, http.StatusTooManyRequests, "too_many_requests", err.Error())

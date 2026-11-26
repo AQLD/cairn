@@ -87,6 +87,7 @@ commands:
   diff SAVE [--from SAVE] [--limit N] [--json]
                                           files added (A), modified (M) and removed (D) since
                                           the save it came from, or since --from
+  quota WORKSPACE DURATION|none           how long it may run in all; at the limit it pauses, work saved
   resume SAVE                             restore a workspace to a save
   resume --adopt SAVE                     bring back a workspace from another (lost) server under its own ID
   copy SAVE [--count N]                   make workspaces from a save
@@ -191,13 +192,18 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 		memory := fs.Int64("memory", 0, "memory limit in MB (default: the engine's)")
 		disk := fs.Int64("disk", 0, "disk size in MB (default: the engine's)")
 		cpus := fs.Float64("cpus", 0, "CPU limit, in CPUs (default: the engine's)")
+		runQuota := fs.Duration("run-quota", 0, "pause the workspace (work saved) once it has run this long in all, e.g. 2h (0: no limit)")
 		var allow stringList
 		fs.Var(&allow, "allow", "allow outbound traffic only to this name (pypi.org), name suffix (*.github.com) or IPv4 range; repeat it; implies --network")
 		if err := fs.Parse(args); err != nil {
 			return 2, err
 		}
+		var quota *client.Quota
+		if *runQuota > 0 {
+			quota = &client.Quota{RunSeconds: int64(runQuota.Seconds())}
+		}
 		ws, err := c.CreateWorkspace(ctx, client.CreateWorkspace{Name: *name, Template: *template, Network: *network, Egress: allow,
-			Limits: client.Limits{MemoryMB: *memory, DiskMB: *disk, CPUs: *cpus}})
+			Limits: client.Limits{MemoryMB: *memory, DiskMB: *disk, CPUs: *cpus}, Quota: quota})
 		if err != nil {
 			return 1, err
 		}
@@ -350,6 +356,28 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 			more = fmt.Sprintf("; %d listed, --limit for more", len(d.Changes))
 		}
 		fmt.Fprintf(os.Stderr, "%d added, %d modified, %d removed since %s%s\n", d.Added, d.Modified, d.Removed, d.From, more)
+
+	case "quota":
+		if len(args) != 2 {
+			return 2, errors.New("usage: cairn quota WORKSPACE DURATION|none")
+		}
+		var q client.Quota
+		if args[1] != "none" {
+			d, err := time.ParseDuration(args[1])
+			if err != nil || d <= 0 {
+				return 2, fmt.Errorf("quota %q: want a duration such as 2h, or none", args[1])
+			}
+			q.RunSeconds = int64(d.Seconds())
+		}
+		ws, err := c.SetQuota(ctx, args[0], q)
+		if err != nil {
+			return 1, err
+		}
+		limit := "none"
+		if ws.Quota != nil {
+			limit = (time.Duration(ws.Quota.RunSeconds) * time.Second).String()
+		}
+		fmt.Printf("%s: run %s of %s\n", ws.ID, (time.Duration(ws.RunSeconds) * time.Second).Round(time.Second), limit)
 
 	case "resume":
 		adopt := len(args) == 2 && args[0] == "--adopt"

@@ -123,6 +123,9 @@ type Config struct {
 	// (DefaultLeaseTTL if 0; owner.go). Another engine adopts the workspace
 	// only after it runs out.
 	LeaseTTL time.Duration
+	// QuotaInterval is how often workspaces' run time is counted
+	// (DefaultQuotaInterval if 0; quota.go).
+	QuotaInterval time.Duration
 	// RestoreState rebuilds the state database from its last backup and the
 	// data folder (see state.go) if it is missing or damaged; a healthy one is
 	// left alone, so the setting is safe to leave on.
@@ -172,6 +175,8 @@ type Engine struct {
 	stopUploads  context.CancelFunc // ends it
 	uploaderDone chan struct{}
 	engineID     string // this engine, in workspaces' owner records (owner.go)
+	stopQuota    context.CancelFunc
+	quotaDone    chan struct{}
 	stopOwners   context.CancelFunc
 	ownerDone    chan struct{}
 }
@@ -190,6 +195,8 @@ type Spec struct {
 	// DiskImage: the files live in an image of Limits.DiskMB (see volume).
 	// Decided at creation; workspaces made before disk limits have none.
 	DiskImage bool `json:"disk_image,omitempty"`
+	// Quota limits how long it may run (quota.go).
+	Quota *Quota `json:"quota,omitempty"`
 }
 
 // Workspace is what the engine reports about a workspace.
@@ -207,6 +214,8 @@ type Workspace struct {
 	CreatedAt  time.Time            `json:"created_at"`
 	UpdatedAt  time.Time            `json:"updated_at"`
 	Owner      string               `json:"owner,omitempty"` // the API key that made it, if any
+	Quota      *Quota               `json:"quota,omitempty"`
+	RunSeconds float64              `json:"run_seconds"` // how long its sandbox has run
 }
 
 type Save struct {
@@ -252,6 +261,9 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 	}
 	if cfg.LeaseTTL <= 0 {
 		cfg.LeaseTTL = DefaultLeaseTTL
+	}
+	if cfg.QuotaInterval <= 0 {
+		cfg.QuotaInterval = DefaultQuotaInterval
 	}
 	if cfg.DiskReserve == 0 {
 		cfg.DiskReserve = DefaultDiskReserve
@@ -383,6 +395,9 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 		e.stopPressure, e.pressureDone = cancel, make(chan struct{})
 		go e.pressureGuard(pctx)
 	}
+	qctx, qcancel := context.WithCancel(context.Background())
+	e.stopQuota, e.quotaDone = qcancel, make(chan struct{})
+	go e.quotaLoop(qctx)
 	if err := e.startWarm(ctx); err != nil {
 		st.Close()
 		e.events.Close()
@@ -430,6 +445,10 @@ func (e *Engine) Close() error {
 	if e.stopOwners != nil {
 		e.stopOwners()
 		<-e.ownerDone
+	}
+	if e.stopQuota != nil {
+		e.stopQuota()
+		<-e.quotaDone
 	}
 	if e.stopUploads != nil {
 		e.stopUploads()
@@ -489,6 +508,8 @@ type CreateRequest struct {
 	// Secrets the workspace may use, by name (see SetSecret); it switches
 	// the network on.
 	Secrets []string `json:"secrets,omitempty"`
+	// Quota limits how long it may run; reaching it pauses the workspace.
+	Quota *Quota `json:"quota,omitempty"`
 	// RequestKey makes the request idempotent: a retry with the same key
 	// returns the workspace the first request created instead of a new one.
 	RequestKey string `json:"-"`
@@ -497,6 +518,9 @@ type CreateRequest struct {
 func (e *Engine) createWorkspace(ctx context.Context, req CreateRequest) (*Workspace, error) {
 	if req.Limits.CPUs < 0 || req.Limits.MemoryMB < 0 || req.Limits.DiskMB < 0 {
 		return nil, fmt.Errorf("%w: limits cannot be negative", ErrInvalid)
+	}
+	if err := req.Quota.validate(); err != nil {
+		return nil, err
 	}
 	if req.Limits.DiskMB != 0 && req.Limits.DiskMB < disk.MinSizeMB {
 		return nil, fmt.Errorf("%w: disk_mb must be at least %d", ErrInvalid, disk.MinSizeMB)
@@ -548,7 +572,7 @@ func (e *Engine) createWorkspace(ctx context.Context, req CreateRequest) (*Works
 		}
 		templateSize = t.Size
 	}
-	spec := Spec{Limits: req.Limits, Network: req.Network, Template: template, Egress: req.Egress, Secrets: req.Secrets}
+	spec := Spec{Limits: req.Limits, Network: req.Network, Template: template, Egress: req.Egress, Secrets: req.Secrets, Quota: req.Quota}
 	if len(spec.Secrets) > 0 {
 		spec.Placeholders = map[string]string{}
 		for _, name := range spec.Secrets {
@@ -2193,6 +2217,9 @@ func (e *Engine) runningWorkspace(ctx context.Context, id string) (*store.Worksp
 	if w.State == store.Moved {
 		return nil, e.movedErr(id)
 	}
+	if overQuota(w) {
+		return nil, quotaErr(w)
+	}
 	if w.State != store.Running && !(isInternal(ctx) && w.State == store.Warming) {
 		return nil, fmt.Errorf("%w: workspace %s is %s", ErrConflict, id, w.State)
 	}
@@ -2247,6 +2274,7 @@ func toWorkspace(w *store.Workspace) (*Workspace, error) {
 	}
 	return &Workspace{
 		ID: w.ID, Name: w.Name, Owner: w.Owner, State: w.State, Limits: spec.Limits, Network: spec.Network, Egress: spec.Egress, Secrets: spec.Secrets,
+		Quota: spec.Quota, RunSeconds: w.RunTime.Seconds(),
 		Template: spec.Template, SourceSave: w.SourceSave, BaseSave: w.BaseSave, CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt,
 	}, nil
 }

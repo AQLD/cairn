@@ -63,6 +63,7 @@ type Workspace struct {
 	BaseSave   string          `json:"base_save,omitempty"`   // the save its state comes from: last saved, resumed or copied
 	RequestKey string          `json:"-"`                     // caller's idempotency key, if any
 	Owner      string          `json:"owner,omitempty"`       // the API key that made it, if any
+	RunTime    time.Duration   `json:"-"`                     // how long its sandbox has run (quotas)
 	CreatedAt  time.Time       `json:"created_at"`
 	UpdatedAt  time.Time       `json:"updated_at"`
 }
@@ -181,10 +182,14 @@ CREATE TABLE api_keys (
 ALTER TABLE workspaces ADD COLUMN owner TEXT NOT NULL DEFAULT '';
 ALTER TABLE api_keys ADD COLUMN own INTEGER NOT NULL DEFAULT 0;
 `,
+	// 11: how long each workspace has run, in nanoseconds (run-time quotas)
+	`
+ALTER TABLE workspaces ADD COLUMN run_ns INTEGER NOT NULL DEFAULT 0;
+`,
 }
 
 const (
-	workspaceCols = `id, name, state, spec, source_save, paused_save, base_save, created_at, updated_at, owner`
+	workspaceCols = `id, name, state, spec, source_save, paused_save, base_save, created_at, updated_at, owner, run_ns`
 	saveCols      = `id, workspace_id, kind, state, size, created_at, deleted_at, auto, uploaded, parent, pinned`
 )
 
@@ -595,6 +600,24 @@ func (s *Store) NewestSaveTime(ctx context.Context) (time.Time, error) {
 	return time.Unix(0, ns.Int64).UTC(), nil
 }
 
+// AddRunTime adds to how long a workspace has run.
+func (s *Store) AddRunTime(ctx context.Context, id string, d time.Duration) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE workspaces SET run_ns = run_ns + ? WHERE id = ?`, int64(d), id)
+	return err
+}
+
+// SetSpec replaces a workspace's spec (its quota changed).
+func (s *Store) SetSpec(ctx context.Context, id string, spec json.RawMessage) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE workspaces SET spec = ?, updated_at = ? WHERE id = ?`, string(spec), time.Now().UnixNano(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) PendingUploads(ctx context.Context) ([]Save, error) {
 	return s.querySaves(ctx, `SELECT `+saveCols+` FROM saves WHERE state = ? AND uploaded = 0 ORDER BY created_at`, SaveReady)
 }
@@ -626,10 +649,11 @@ type scanner interface{ Scan(...any) error }
 func scanWorkspace(r scanner) (*Workspace, error) {
 	var w Workspace
 	var spec string
-	var created, updated int64
-	if err := r.Scan(&w.ID, &w.Name, &w.State, &spec, &w.SourceSave, &w.PausedSave, &w.BaseSave, &created, &updated, &w.Owner); err != nil {
+	var created, updated, run int64
+	if err := r.Scan(&w.ID, &w.Name, &w.State, &spec, &w.SourceSave, &w.PausedSave, &w.BaseSave, &created, &updated, &w.Owner, &run); err != nil {
 		return nil, err
 	}
+	w.RunTime = time.Duration(run)
 	w.Spec = json.RawMessage(spec)
 	w.CreatedAt = time.Unix(0, created).UTC()
 	w.UpdatedAt = time.Unix(0, updated).UTC()

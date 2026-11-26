@@ -85,7 +85,12 @@ var Catalog = []Scenario{
 					{ID: "G3.2.5", Title: "Only processes over the memory limit are stopped", Milestone: E1, Needs: []Need{NeedResourceLimits}},
 					{ID: "G3.2.6", Title: "A workspace keeps its disk size through resume, copy and restart", Milestone: E1, Needs: []Need{NeedDiskLimits}},
 				}},
-			{ID: "G3.3", Title: "Hitting a quota saves the work instead of killing it", Proves: "Running out of quota never loses work.", Milestone: E4},
+			{ID: "G3.3", Title: "Hitting a quota saves the work instead of killing it", Proves: "Running out of quota never loses work.", Milestone: E4,
+				Children: []Scenario{
+					{ID: "G3.3.1", Title: "A workspace that uses up its run-time quota is paused with its processes and files", Proves: "Reaching the limit is a full save and a stop, not a kill: the workspace shows as paused and its files read as they were.", Milestone: E4, Needs: []Need{NeedFullSave, NeedInProcess}},
+					{ID: "G3.3.2", Title: "Over its quota, a workspace refuses new work but its files stay readable", Proves: "Commands, writes and saves get quota_exceeded, which says how to go on; reading files still works.", Milestone: E4, Needs: []Need{NeedInProcess}},
+					{ID: "G3.3.3", Title: "Raising the quota lets the workspace carry on where it stopped", Proves: "After the quota is raised, the next command wakes it with the same running processes and files.", Milestone: E4, Needs: []Need{NeedFullSave, NeedInProcess}},
+				}},
 			{ID: "G3.4", Title: "Quotas apply per workspace and per project", Proves: "A platform can cap each end user and its own total.", Milestone: E4},
 			{ID: "G3.5", Title: "Workspaces are listed and managed independently", Proves: "Creating, saving or deleting one workspace never touches another.", Milestone: E1},
 		},
