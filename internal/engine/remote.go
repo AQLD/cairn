@@ -86,7 +86,9 @@ func (e *Engine) uploadPending(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if err := e.upload(ctx, sv.ID); err != nil {
+		if err := e.upload(ctx, sv.ID); errors.Is(err, errFenced) {
+			continue
+		} else if err != nil {
 			if ctx.Err() == nil {
 				e.log.Error("save upload failed; will retry", "save", sv.ID, "err", err)
 			}
@@ -97,7 +99,22 @@ func (e *Engine) uploadPending(ctx context.Context) {
 }
 
 // upload copies one save to object storage: data files first, manifest last.
+// errFenced: the save's workspace belongs to another engine now, so its save
+// stays here and is never uploaded.
+var errFenced = errors.New("workspace adopted by another engine")
+
 func (e *Engine) upload(ctx context.Context, id string) error {
+	if sv, err := e.store.GetSave(ctx, id); err == nil {
+		// checked before anything reaches the bucket: a save this engine made
+		// after another took the workspace must never be seen there
+		ok, err := e.mayUpload(ctx, sv.WorkspaceID)
+		if err != nil {
+			return fmt.Errorf("checking who owns workspace %s: %w", sv.WorkspaceID, err)
+		}
+		if !ok {
+			return errFenced
+		}
+	}
 	dir := e.saveDir(id)
 	m, err := save.Verify(dir) // never upload a damaged save
 	if errors.Is(err, os.ErrNotExist) {
@@ -311,7 +328,7 @@ func (e *Engine) SyncRemote(ctx context.Context) error {
 		return err
 	}
 	for _, sv := range pending {
-		if err := e.upload(ctx, sv.ID); err != nil {
+		if err := e.upload(ctx, sv.ID); err != nil && !errors.Is(err, errFenced) {
 			return fmt.Errorf("upload save %s: %w", sv.ID, err)
 		}
 	}

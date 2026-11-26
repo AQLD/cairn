@@ -35,6 +35,9 @@ const (
 	Pausing  WorkspaceState = "pausing"  // being saved to pause it
 	Paused   WorkspaceState = "paused"   // saved and stopped by the engine; the next use wakes it
 	Deleted  WorkspaceState = "deleted"
+	// Moved: another engine adopted it (its owner record in object storage
+	// names that engine); stopped here, and only deleting it is allowed.
+	Moved WorkspaceState = "moved"
 	// Warm workspaces are created and started ahead of demand and belong to
 	// no one until a create claims one (it becomes running); warming ones are
 	// still being built. Neither is listed or reachable by ID.

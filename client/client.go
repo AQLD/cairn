@@ -173,7 +173,7 @@ type PullTemplate struct {
 type Workspace struct {
 	ID         string    `json:"id"`
 	Name       string    `json:"name"`
-	State      string    `json:"state"` // running, stopped (full-saved), paused (woken on next use), ...
+	State      string    `json:"state"` // running, stopped (full-saved), paused (woken on next use), moved (adopted by another engine: delete only), ...
 	Limits     Limits    `json:"limits"`
 	Network    bool      `json:"network"`
 	Egress     []string  `json:"egress,omitempty"`  // outbound allow-list, if any

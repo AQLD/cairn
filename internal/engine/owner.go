@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/AQLD/cairn/internal/objstore"
+	"github.com/AQLD/cairn/internal/store"
 )
 
 // Owners: which engine runs a workspace, for engines sharing a bucket. Each
@@ -157,6 +158,9 @@ func (e *Engine) renewOwners(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		if w.State == store.Moved {
+			continue
+		}
 		o, version, err := e.readOwner(ctx, c, w.ID)
 		switch {
 		case err != nil:
@@ -167,13 +171,68 @@ func (e *Engine) renewOwners(ctx context.Context) {
 		case o.Engine == e.engineID:
 			err = e.writeOwner(ctx, c, w.ID, o.Epoch, version)
 		default:
-			e.log.Error("workspace is owned by another engine (adopted elsewhere)", "workspace", w.ID, "owner", o.Engine, "epoch", o.Epoch)
+			e.fence(ctx, w.ID, o)
 			continue
 		}
 		if err != nil && !errors.Is(err, objstore.ErrPrecondition) {
 			e.log.Warn("could not renew a workspace's owner record; will retry", "workspace", w.ID, "err", err)
 		}
 	}
+}
+
+// fence stops a workspace another engine now owns (it adopted it while this
+// one was cut off from the bucket) and marks it moved: nothing runs it here
+// again, and its saves are not uploaded (upload).
+func (e *Engine) fence(ctx context.Context, id string, o *ownerRecord) {
+	e.movedTo.Store(id, o.Engine)
+	l := e.lock(id)
+	l.cancelCommands()
+	l.Lock()
+	defer l.Unlock()
+	w, err := e.store.GetWorkspace(ctx, id)
+	if err != nil || w.State == store.Moved || w.State.Hidden() {
+		return
+	}
+	if rs, err := e.runtimeSpec(w); err == nil {
+		if err := e.cfg.Runtime.Stop(ctx, rs); err != nil {
+			e.log.Error("could not stop a workspace another engine took over", "workspace", id, "err", err)
+		}
+	}
+	if err := e.store.SetWorkspaceState(ctx, id, store.Moved); err != nil {
+		e.log.Error("could not mark a workspace moved", "workspace", id, "err", err)
+		return
+	}
+	e.log.Error("workspace adopted by another engine: stopped here", "workspace", id, "owner", o.Engine, "epoch", o.Epoch)
+	e.note(ctx, id, "moved", fmt.Sprintf("adopted by engine %s; stopped here", o.Engine), nil, map[string]any{"engine": o.Engine, "epoch": o.Epoch})
+}
+
+// movedErr is the refusal for a workspace another engine took over.
+func (e *Engine) movedErr(id string) error {
+	if to, ok := e.movedTo.Load(id); ok {
+		return fmt.Errorf("%w: workspace %s was adopted by engine %s and runs there now; it can only be deleted here", ErrConflict, id, to)
+	}
+	return fmt.Errorf("%w: workspace %s was adopted by another engine and runs there now; it can only be deleted here", ErrConflict, id)
+}
+
+// mayUpload says whether this engine may still upload a save of ws: not once
+// another engine owns it (fenced, or found so now).
+func (e *Engine) mayUpload(ctx context.Context, ws string) (bool, error) {
+	if w, err := e.store.GetWorkspace(ctx, ws); err == nil && w.State == store.Moved {
+		return false, nil
+	}
+	c := e.leases()
+	if c == nil {
+		return true, nil
+	}
+	o, _, err := e.readOwner(ctx, c, ws)
+	if err != nil {
+		return false, err
+	}
+	if o != nil && o.Engine != e.engineID {
+		e.fence(ctx, ws, o)
+		return false, nil
+	}
+	return true, nil
 }
 
 // releaseOwner removes a deleted workspace's owner record, if it is this

@@ -2,12 +2,15 @@ package acceptance
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AQLD/cairn/client"
@@ -30,10 +33,27 @@ func leasedStore(e *Env) *s3test.Server {
 	return srv
 }
 
-func bucketAt(srv *s3test.Server) objstore.Store {
+func bucketAt(srv *s3test.Server) objstore.Store { return bucketAs(srv, "k") }
+
+// bucketAs is the bucket reached with its own access key, so a test can cut
+// one engine off (partition) by dropping only its requests.
+func bucketAs(srv *s3test.Server, key string) objstore.Store {
 	ep, _ := url.Parse(srv.URL)
-	return objstore.WithPrefix(&objstore.S3{Endpoint: ep, Region: "us-east-1", Bucket: "saves", AccessKey: "k", SecretKey: "s", Attempts: 4}, "cluster")
+	return objstore.WithPrefix(&objstore.S3{Endpoint: ep, Region: "us-east-1", Bucket: "saves", AccessKey: key, SecretKey: "s", Attempts: 2}, "cluster")
 }
+
+// partition drops every request made with access key (nil heals).
+func partition(srv *s3test.Server, key string) {
+	if key == "" {
+		srv.SetFail(nil)
+		return
+	}
+	srv.SetFail(func(r *http.Request) bool {
+		return strings.Contains(r.Header.Get("Authorization"), "Credential="+key+"/")
+	})
+}
+
+var peerKeys atomic.Int32
 
 // peer is another server on the same bucket: its own disk, clock and API.
 type peer struct {
@@ -45,7 +65,7 @@ type peer struct {
 func startPeer(e *Env, srv *s3test.Server) *peer {
 	e.T.Helper()
 	p := &peer{clock: &Clock{}}
-	cfg := engine.Config{DataDir: e.T.TempDir(), Runtime: e.rt, Now: p.clock.Now, Objects: bucketAt(srv), LeaseTTL: testLease,
+	cfg := engine.Config{DataDir: e.T.TempDir(), Runtime: e.rt, Now: p.clock.Now, Objects: bucketAs(srv, fmt.Sprintf("peer%d", peerKeys.Add(1))), LeaseTTL: testLease,
 		NoDiskImages: os.Getenv("CAIRN_TEST_DISK_IMAGES") == "0"}
 	if os.Getenv("CAIRN_TEST_TEMPLATE") != "" {
 		cfg.DefaultTemplate = "base"
@@ -173,4 +193,76 @@ func init() {
 		}
 		Equal(e, "servers that got the workspace", won, 1)
 	})
+
+	register("G7.8.4", func(e *Env) {
+		srv, ws, sv := leasedWorkspace(e)
+		partition(srv, "k") // this server is cut off from the bucket
+		b := startPeer(e, srv)
+		b.clock.Advance(2 * testLease) // its lease has run out, as seen from b
+		_, err := b.c.ResumeWith(e.Ctx, sv.ID, client.ResumeOptions{Adopt: true})
+		e.Must(err)
+		newOwner, _ := ownerRecord(e, srv, ws.ID)
+
+		partition(srv, "") // back: its next renewal finds the new owner
+		e.Must(e.Engine.SyncRemote(e.Ctx))
+		got, err := e.C.GetWorkspace(e.Ctx, ws.ID)
+		e.Must(err)
+		Equal(e, "state here", got.State, "moved")
+		_, err = e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"echo", "hi"}})
+		e.ErrCode(err, "conflict")
+		if !strings.Contains(err.Error(), newOwner) {
+			e.T.Fatalf("refusal %q: want it to name the new engine %s", err, newOwner)
+		}
+		_, err = e.C.Save(e.Ctx, ws.ID, client.QuickSave)
+		e.ErrCode(err, "conflict")
+		// renewals here leave the new owner's record alone
+		e.Must(e.Engine.SyncRemote(e.Ctx))
+		if now, _ := ownerRecord(e, srv, ws.ID); now != newOwner {
+			e.T.Fatalf("owner record after the old server renewed: %s, want %s", now, newOwner)
+		}
+		// only deleting is left here, and it leaves the new owner's record
+		e.Must(e.C.DeleteWorkspace(e.Ctx, ws.ID))
+		if now, _ := ownerRecord(e, srv, ws.ID); now != newOwner {
+			e.T.Fatalf("owner record after deleting the moved workspace here: %s, want %s", now, newOwner)
+		}
+		Equal(e, "still running on the new server", readOn(e, b, ws.ID, "work.txt"), "made here")
+	})
+
+	register("G7.8.5", func(e *Env) {
+		srv, ws, sv := leasedWorkspace(e)
+		partition(srv, "k")
+		b := startPeer(e, srv)
+		b.clock.Advance(2 * testLease)
+		_, err := b.c.ResumeWith(e.Ctx, sv.ID, client.ResumeOptions{Adopt: true})
+		e.Must(err)
+		// cut off, this server does not know yet: it saves new work
+		e.Write(ws.ID, "work.txt", "made after the takeover")
+		late := e.Save(ws.ID)
+
+		partition(srv, "")
+		e.Must(e.Engine.SyncRemote(e.Ctx))
+		if _, ok := srv.Object(manifestKey(late.ID)); ok {
+			e.T.Fatal("a save made after another engine took the workspace reached the bucket")
+		}
+		// the save from before the takeover is still there
+		if _, ok := srv.Object(manifestKey(sv.ID)); !ok {
+			e.T.Fatal("the save made while this server owned the workspace is gone from the bucket")
+		}
+		e.Must(b.eng.SyncRemote(e.Ctx))
+		saves, err := b.c.ListSaves(e.Ctx, ws.ID)
+		e.Must(err)
+		for _, s := range saves {
+			if s.ID == late.ID {
+				e.T.Fatal("the new owner sees the fenced server's late save")
+			}
+		}
+		Equal(e, "the new owner's files", readOn(e, b, ws.ID, "work.txt"), "made here")
+	})
+}
+
+func readOn(e *Env, p *peer, ws, path string) string {
+	e.T.Helper()
+	b, err := p.c.ReadFile(e.Ctx, ws, path)
+	e.Must(err)
+	return string(b)
 }
