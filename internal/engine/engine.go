@@ -59,6 +59,9 @@ const DefaultMinFreeBytes = 512 << 20
 // MaxCopies is the most copies one request may make.
 const MaxCopies = 64
 
+// copyParallel is how many copies of one request are built at once.
+const copyParallel = 4
+
 // DefaultRetention is how long a deleted save can be recovered before it is purged.
 const DefaultRetention = 7 * 24 * time.Hour
 
@@ -1955,6 +1958,16 @@ func (e *Engine) copy(ctx context.Context, saveID string, count int, requestKey 
 	e.diskFor(&spec) // the copy keeps the original's size, in this engine's kind of disk
 
 	out := make([]Workspace, 0, count)
+	// Every copy is recorded first (so recovery finishes or undoes it after a
+	// crash), then built: up to copyParallel at once, since each is mostly
+	// writing its own filesystem. Results keep the order asked for.
+	type slot struct {
+		w    *store.Workspace
+		cs   Spec
+		done *Workspace
+		err  error
+	}
+	slots := make([]slot, count)
 	for i := 0; i < count; i++ {
 		key := ""
 		if requestKey != "" {
@@ -1964,7 +1977,7 @@ func (e *Engine) copy(ctx context.Context, saveID string, count int, requestKey 
 				return out, err
 			}
 			if existing != nil {
-				out = append(out, *existing)
+				slots[i].done = existing
 				continue
 			}
 		}
@@ -1980,26 +1993,54 @@ func (e *Engine) copy(ctx context.Context, saveID string, count int, requestKey 
 		}
 		w, err := e.insertWorkspace(ctx, id, fmt.Sprintf("%s-copy-%d", srcName, i+1), cs, saveID, key)
 		if err != nil {
-			return out, err
+			slots[i].err = err
+			count = i // nothing after it was recorded
+			break
 		}
-		rs, err := e.runtimeSpec(w)
-		if err != nil {
-			return out, err
+		slots[i].w, slots[i].cs = w, cs
+	}
+	build := func(sl *slot) {
+		rs, err := e.runtimeSpec(sl.w)
+		if err == nil {
+			err = os.MkdirAll(e.workspaceDir(sl.w.ID), 0o700)
 		}
-		if err := os.MkdirAll(e.workspaceDir(id), 0o700); err != nil {
-			return out, err
+		if err == nil {
+			err = e.restoreInto(ctx, rs, sl.cs, saveID, m, failpoint.CopyBeforeRunning)
 		}
-		if err := e.restoreInto(ctx, rs, cs, saveID, m, failpoint.CopyBeforeRunning); err != nil {
-			return out, err
+		if err == nil {
+			err = e.store.SetWorkspaceState(ctx, sl.w.ID, store.Running)
 		}
-		if err := e.store.SetWorkspaceState(ctx, id, store.Running); err != nil {
-			return out, err
+		if err == nil {
+			sl.done, err = e.GetWorkspace(ctx, sl.w.ID)
 		}
-		cw, err := e.GetWorkspace(ctx, id)
-		if err != nil {
-			return out, err
+		sl.err = err
+	}
+	sem := make(chan struct{}, copyParallel)
+	var wg sync.WaitGroup
+	for i := range slots[:count] {
+		if slots[i].w == nil {
+			continue
 		}
-		out = append(out, *cw)
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(sl *slot) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			build(sl)
+		}(&slots[i])
+	}
+	wg.Wait()
+	var firstErr error
+	for i := range slots {
+		switch {
+		case slots[i].done != nil:
+			out = append(out, *slots[i].done)
+		case slots[i].err != nil && firstErr == nil:
+			firstErr = slots[i].err
+		}
+	}
+	if firstErr != nil {
+		return out, firstErr
 	}
 	return out, nil
 }
