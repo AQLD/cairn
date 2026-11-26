@@ -156,6 +156,9 @@ func extract(r io.Reader, dir string, maxBytes int64, overlay bool) error {
 		mtime time.Time
 	}
 	var dirs []dirMeta
+	// folders known to exist, so a file's parents are not walked and made
+	// again for every file (os.Root resolves each path a folder at a time)
+	made := map[string]bool{}
 	asRoot := os.Geteuid() == 0
 	// meta applies what a create call cannot: special bits (setuid, setgid,
 	// sticky), the exact mode regardless of umask, and ownership when we can.
@@ -171,10 +174,17 @@ func extract(r io.Reader, dir string, maxBytes int64, overlay bool) error {
 		}
 		return nil
 	}
+	writers := newFileWriters(root, asRoot)
+	defer writers.close()
+	buf := make([]byte, 256<<10) // for files written inline, reused
 	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
+			// every file on disk before folders get their final modes and times
+			if err := writers.close(); err != nil {
+				return err
+			}
 			for i := len(dirs) - 1; i >= 0; i-- {
 				if err := root.Chmod(dirs[i].name, dirs[i].mode); err != nil {
 					return err
@@ -195,10 +205,15 @@ func extract(r io.Reader, dir string, maxBytes int64, overlay bool) error {
 		}
 		mode := hdr.FileInfo().Mode() & (fs.ModePerm | fs.ModeSetuid | fs.ModeSetgid | fs.ModeSticky)
 		if overlay {
+			// removals below must not race files still being written
+			if err := writers.drain(); err != nil {
+				return err
+			}
 			if hdr.PAXRecords[whiteoutKey] != "" {
 				if err := root.RemoveAll(name); err != nil && !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
 					return err
 				}
+				clear(made) // it may have held folders noted as made
 				continue
 			}
 			// replace what the base has here, unless both are folders
@@ -206,18 +221,21 @@ func extract(r io.Reader, dir string, maxBytes int64, overlay bool) error {
 				if err := root.RemoveAll(name); err != nil {
 					return err
 				}
+				clear(made)
 			}
 		}
-		if dirName := path.Dir(name); dirName != "." {
+		if dirName := path.Dir(name); dirName != "." && !made[dirName] {
 			if err := root.MkdirAll(dirName, 0o755); err != nil {
 				return err
 			}
+			made[dirName] = true
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
 			if err := root.Mkdir(name, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 				return err
 			}
+			made[name] = true
 			if asRoot {
 				if err := root.Lchown(name, hdr.Uid, hdr.Gid); err != nil {
 					return err
@@ -229,18 +247,34 @@ func extract(r io.Reader, dir string, maxBytes int64, overlay bool) error {
 				return fmt.Errorf("%w: %q claims %d bytes, more than the archive holds", ErrCorrupt, hdr.Name, hdr.Size)
 			}
 			budget -= hdr.Size
+			if hdr.Size <= inlineMax {
+				j, err := jobFor(tr, name, hdr, mode)
+				if err != nil {
+					return err
+				}
+				if err := writers.add(j); err != nil {
+					return err
+				}
+				continue
+			}
 			f, err := root.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 			if err != nil {
 				return err
 			}
-			_, err = io.Copy(f, tr)
+			// a reused buffer: io.Copy into a file allocates one per file
+			_, err = io.CopyBuffer(struct{ io.Writer }{f}, tr, buf)
+			// owner then mode on the open file: no second walk of its path
+			// (chown first: it clears setuid and setgid)
+			if err == nil && asRoot {
+				err = f.Chown(hdr.Uid, hdr.Gid)
+			}
+			if err == nil {
+				err = f.Chmod(mode)
+			}
 			if cerr := f.Close(); err == nil {
 				err = cerr
 			}
 			if err != nil {
-				return err
-			}
-			if err := meta(name, hdr, mode); err != nil {
 				return err
 			}
 			// keep modification times: a restored filesystem must look like the one
@@ -261,6 +295,9 @@ func extract(r io.Reader, dir string, maxBytes int64, overlay bool) error {
 			if target == "." || path.IsAbs(target) || target == ".." || strings.HasPrefix(target, "../") {
 				return fmt.Errorf("%w: unsafe link target %q in filesystem image", ErrCorrupt, hdr.Linkname)
 			}
+			if err := writers.drain(); err != nil { // its target is on disk
+				return err
+			}
 			if err := root.Link(target, name); err != nil {
 				return err
 			}
@@ -273,3 +310,5 @@ func extract(r io.Reader, dir string, maxBytes int64, overlay bool) error {
 		}
 	}
 }
+
+func ioReadFull(r io.Reader, b []byte) (int, error) { return io.ReadFull(r, b) }

@@ -4,8 +4,12 @@ import (
 	"archive/tar"
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -127,5 +131,71 @@ func TestExtractToStripsSpecialBits(t *testing.T) {
 	must(t, err)
 	if fi.Mode()&os.ModeSetuid != 0 || fi.Mode().Perm() != 0o755 {
 		t.Fatalf("mode %v", fi.Mode())
+	}
+}
+
+// TestUntarManyFilesInParallel: files are written on several goroutines
+// (writers.go); the result must be exactly the archive, hard links to files
+// written just before included (image tars carry them), and folders keep their
+// final modes.
+func TestUntarManyFilesInParallel(t *testing.T) {
+	var tarball bytes.Buffer
+	tw := tar.NewWriter(&tarball)
+	mtime := time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)
+	want := map[string]string{}
+	dirs := map[string]bool{}
+	for i := 0; i < 2000; i++ {
+		dir := fmt.Sprintf("d%02d/e%d", i%37, i%5)
+		for _, d := range []string{path.Dir(dir), dir} {
+			if !dirs[d] {
+				dirs[d] = true
+				must(t, tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: d + "/", Mode: 0o755, ModTime: mtime}))
+			}
+		}
+		name := fmt.Sprintf("%s/f%04d", dir, i)
+		body := bytes.Repeat([]byte{byte(i)}, i%4096)
+		must(t, tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: name, Mode: 0o644, Size: int64(len(body)), ModTime: mtime}))
+		_, err := tw.Write(body)
+		must(t, err)
+		want[name] = string(body)
+		if i%97 == 0 { // a hard link to the file just written
+			must(t, tw.WriteHeader(&tar.Header{Typeflag: tar.TypeLink, Name: name + ".link", Linkname: name}))
+			want[name+".link"] = string(body)
+		}
+	}
+	big := bytes.Repeat([]byte("x"), 3<<20) // over inlineMax: written by the reader
+	must(t, tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: "big.bin", Mode: 0o600, Size: int64(len(big)), ModTime: mtime}))
+	_, err := tw.Write(big)
+	must(t, err)
+	want["big.bin"] = string(big)
+	must(t, tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: "ro/", Mode: 0o555, ModTime: mtime}))
+	must(t, tw.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: "ro/inside.txt", Mode: 0o444, Size: 2, ModTime: mtime}))
+	_, err = tw.Write([]byte("hi"))
+	must(t, err)
+	want["ro/inside.txt"] = "hi"
+	must(t, tw.Close())
+
+	for round := 0; round < 3; round++ {
+		got := filepath.Join(t.TempDir(), "out")
+		must(t, UntarDir(bytes.NewReader(tarball.Bytes()), got, int64(tarball.Len())))
+		t.Cleanup(func() { _ = os.Chmod(filepath.Join(got, "ro"), 0o755) })
+		for name, body := range want {
+			b, err := os.ReadFile(filepath.Join(got, name))
+			if err != nil || string(b) != body {
+				t.Fatalf("round %d: %s: %d bytes, %v", round, name, len(b), err)
+			}
+			if fi, _ := os.Stat(filepath.Join(got, name)); !fi.ModTime().Equal(mtime) && !strings.HasSuffix(name, ".link") {
+				t.Fatalf("round %d: %s mtime %v, want %v", round, name, fi.ModTime(), mtime)
+			}
+		}
+		var a, b syscall.Stat_t
+		must(t, syscall.Stat(filepath.Join(got, "d00/e0/f0000"), &a))
+		must(t, syscall.Stat(filepath.Join(got, "d00/e0/f0000.link"), &b))
+		if a.Ino != b.Ino {
+			t.Fatalf("round %d: hard link not restored as a link", round)
+		}
+		if fi, _ := os.Stat(filepath.Join(got, "ro")); fi.Mode().Perm() != 0o555 {
+			t.Fatalf("round %d: read-only folder mode %v", round, fi.Mode().Perm())
+		}
 	}
 }

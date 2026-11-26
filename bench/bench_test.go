@@ -93,6 +93,55 @@ func BenchmarkCopy(b *testing.B) {
 	}
 }
 
+// BenchmarkFullSaveResume (G9.6): a full save of a workspace with a running
+// process and some memory in use, then a resume from it, sub-benchmarked
+// separately; and a wake from a pause (the same restore an idle workspace
+// pays on its next command).
+func BenchmarkFullSaveResume(b *testing.B) {
+	setup := func(b *testing.B) (*acceptance.Env, string) {
+		e := acceptance.NewEnv(b)
+		if !e.Info.Capabilities.FullSave {
+			b.Skip("needs full saves (gVisor)")
+		}
+		ws := e.Workspace("bench")
+		fill(e, ws.ID, 16<<20)
+		// a process holding ~64 MiB, like a language server
+		e.Sh(ws.ID, `nohup python3 -c "b = bytearray(64 << 20); import time; time.sleep(1e9)" >/dev/null 2>&1 &`)
+		return e, ws.ID
+	}
+	b.Run("save", func(b *testing.B) {
+		e, ws := setup(b)
+		for b.Loop() {
+			if _, err := e.C.SaveWith(e.Ctx, ws, client.SaveOptions{Kind: client.FullSave, KeepRunning: true}); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+	b.Run("resume", func(b *testing.B) {
+		e, ws := setup(b)
+		sv, err := e.C.Save(e.Ctx, ws, client.FullSave)
+		if err != nil {
+			b.Fatal(err)
+		}
+		for b.Loop() {
+			e.Resume(sv.ID)
+		}
+	})
+	b.Run("wake", func(b *testing.B) {
+		e, ws := setup(b)
+		for b.Loop() {
+			b.StopTimer()
+			if _, err := e.C.PauseWorkspace(e.Ctx, ws); err != nil {
+				b.Fatal(err)
+			}
+			b.StartTimer()
+			if _, err := e.C.Run(e.Ctx, ws, "true"); err != nil { // the next command wakes it
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
 // fill writes size bytes of incompressible data spread over a few files, like
 // a small project with build output.
 func fill(e *acceptance.Env, ws string, size int) {
@@ -110,6 +159,7 @@ func TestEveryBenchmarkScenarioIsCovered(t *testing.T) {
 		"BenchmarkQuickSave":       true,
 		"BenchmarkResume":          true,
 		"BenchmarkCopy":            true,
+		"BenchmarkFullSaveResume":  true,
 	}
 	var missing []string
 	spec.Walk(spec.Catalog, func(s spec.Scenario, _ []spec.Scenario) {
