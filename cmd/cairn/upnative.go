@@ -105,6 +105,42 @@ func nativePID(dir string) int {
 	return pid
 }
 
+// nativeByDefault says whether a plain `cairn up` runs the engine natively:
+// on Linux, with gVisor and cairnd installed, as root, unless the engine of
+// that name already runs in Docker or an image was asked for. Without root
+// it says how to get there and leaves the engine in Docker.
+func nativeByDefault(ctx context.Context, o *upOptions) bool {
+	if _, err := os.Stat(filepath.Join(nativeRoot, o.name, "up.json")); err == nil {
+		return true // brought up natively before
+	}
+	if o.set["image"] || o.build || !canRunNative() {
+		return false
+	}
+	if dockerReady(ctx) == nil {
+		if ct, _ := inspect(ctx, o.name); ct != nil {
+			return false // the engine already runs in Docker: keep it there
+		}
+	}
+	if os.Geteuid() != 0 {
+		fmt.Fprintln(os.Stderr, "cairn: gVisor is installed here: `sudo cairn up` runs the engine without Docker")
+		return false
+	}
+	return true
+}
+
+// canRunNative says whether this host could run the engine natively (Linux,
+// gVisor and cairnd installed), root or not.
+func canRunNative() bool {
+	if goruntime.GOOS != "linux" {
+		return false
+	}
+	if _, err := exec.LookPath("runsc"); err != nil {
+		return false
+	}
+	_, err := findBeside("cairnd")
+	return err == nil
+}
+
 func upNative(ctx context.Context, o *upOptions) (int, error) {
 	if goruntime.GOOS != "linux" {
 		return 1, errors.New("--native runs the engine straight on Linux; here, drop --native to run it in Docker")
