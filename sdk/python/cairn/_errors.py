@@ -81,6 +81,13 @@ class Forbidden(CairnError):
     code = "forbidden"
 
 
+class QuotaExceeded(CairnError):
+    """The workspace (or the key that made it) has used its run-time quota.
+    Its work is saved; it goes on once the quota is raised (set_quota)."""
+
+    code = "quota_exceeded"
+
+
 class InternalError(CairnError):
     code = "internal"
 
@@ -106,7 +113,7 @@ class CommandFailed(CairnError):
 _BY_CODE = {
     c.code: c
     for c in (NotFound, InvalidArgument, Conflict, SaveCorrupt, InsufficientStorage,
-              TooManyRequests, UnsupportedByRuntime, Unauthorized, Forbidden, InternalError)
+              TooManyRequests, UnsupportedByRuntime, Unauthorized, Forbidden, QuotaExceeded, InternalError)
 }
 
 

@@ -180,6 +180,31 @@ class TestWorkspaces(EngineTest):
         with self.assertRaises(cairn.Unauthorized):
             reader.workspaces()
 
+    def test_quota_round_trip(self):
+        ws = self.workspace("quota", quota_run_seconds=3600)
+        self.assertEqual(ws.quota_run_seconds, 3600)
+        self.assertGreaterEqual(ws.run_seconds, 0)
+        ws = self.c.set_quota(ws.id, 7200)
+        self.assertEqual(ws.quota_run_seconds, 7200)
+        ws = self.c.set_quota(ws.id, 0)
+        self.assertEqual(ws.quota_run_seconds, 0)
+        with self.assertRaises(cairn.InvalidArgument):
+            self.c.set_quota(ws.id, -1)
+
+    def test_quota_exceeded_is_its_own_error(self):
+        err = cairn._errors.from_response(403, "quota_exceeded", "raise its quota", "r1")
+        self.assertIsInstance(err, cairn.QuotaExceeded)
+        self.assertNotIsInstance(err, cairn.Forbidden)
+
+    def test_resume_with_adopt_of_a_known_workspace_is_a_resume(self):
+        ws = self.workspace("adopt-here")
+        ws.write_file("f.txt", "saved")
+        sv = ws.save()
+        ws.write_file("f.txt", "later")
+        back = self.c.resume(sv.id, adopt=True)
+        self.assertEqual(back.id, ws.id)
+        self.assertEqual(ws.read_file("f.txt"), b"saved")
+
     def test_egress_limits_or_is_refused_honestly(self):
         if not self.info.capabilities.network_control:
             with self.assertRaises(cairn.UnsupportedByRuntime):

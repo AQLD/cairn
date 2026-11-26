@@ -28,6 +28,7 @@ from ._errors import (  # noqa: E402
     TooManyRequests,
     Unauthorized,
     Forbidden,
+    QuotaExceeded,
     UnsupportedByRuntime,
 )
 from ._types import Capabilities, Change, Event, ExecResult, Info, Limits, RunResult, Save, SaveDiff, Session, Template, Workspace  # noqa: E402
@@ -35,6 +36,6 @@ from ._types import Capabilities, Change, Event, ExecResult, Info, Limits, RunRe
 __all__ = [
     "Client", "Workspace", "Save", "SaveDiff", "Change", "Template", "Info", "Capabilities", "Limits", "ExecResult", "Session", "RunResult", "Event",
     "CairnError", "NotFound", "InvalidArgument", "Conflict", "SaveCorrupt", "InsufficientStorage",
-    "TooManyRequests", "UnsupportedByRuntime", "Unauthorized", "Forbidden", "InternalError", "ConnectionFailed",
+    "TooManyRequests", "UnsupportedByRuntime", "Unauthorized", "Forbidden", "QuotaExceeded", "InternalError", "ConnectionFailed",
     "CommandFailed",
 ]

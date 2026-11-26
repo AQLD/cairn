@@ -163,6 +163,8 @@ class Workspace:
     base_save: str = ""  # the save its state comes from: last saved, resumed or copied
     egress: list = field(default_factory=list)  # outbound allow-list, if any
     secrets: list = field(default_factory=list)  # secrets it uses, by name
+    quota_run_seconds: int = 0  # how long it may run in all (0: no limit)
+    run_seconds: float = 0  # how long it has run
     _client: Any = field(default=None, repr=False, compare=False)
 
     @classmethod
@@ -172,7 +174,9 @@ class Workspace:
                    template=d.get("template", ""), source_save=d.get("source_save", ""),
                    created_at=_time(d.get("created_at")), updated_at=_time(d.get("updated_at")),
                    base_save=d.get("base_save", ""), egress=list(d.get("egress") or []),
-                   secrets=list(d.get("secrets") or []), _client=client)
+                   secrets=list(d.get("secrets") or []),
+                   quota_run_seconds=(d.get("quota") or {}).get("run_seconds", 0),
+                   run_seconds=d.get("run_seconds", 0), _client=client)
 
     def exec(self, command, **kw) -> ExecResult:
         return self._client.exec(self.id, command, **kw)

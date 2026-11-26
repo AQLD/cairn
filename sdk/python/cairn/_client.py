@@ -197,6 +197,7 @@ class Client:
     def create_workspace(self, name: str = "", *, template: str = "", network: bool = False,
                          egress: Optional[list[str]] = None, secrets: Optional[list[str]] = None,
                          cpus: float = 0, memory_mb: int = 0, disk_mb: int = 0,
+                         quota_run_seconds: int = 0,
                          idempotency_key: Optional[str] = None) -> Workspace:
         """A new workspace, started from template (the engine's default when
         empty). Network is off unless asked for; egress limits it to these
@@ -207,6 +208,9 @@ class Client:
             body["egress"] = list(egress)
         if secrets:
             body["secrets"] = list(secrets)
+        if quota_run_seconds:
+            # at it the workspace pauses with its work: QuotaExceeded until raised
+            body["quota"] = {"run_seconds": quota_run_seconds}
         d = self._json("POST", "/v1/workspaces", body, key=idempotency_key or _key())
         return Workspace._from(d, self)
 
@@ -501,9 +505,20 @@ class Client:
     def get_save(self, save_id: str) -> Save:
         return Save._from(self._json("GET", f"/v1/saves/{_q(save_id)}"), self)
 
-    def resume(self, save_id: str) -> Workspace:
-        """Puts the save's own workspace back to exactly the saved state."""
-        return Workspace._from(self._json("POST", f"/v1/saves/{_q(save_id)}/resume"), self)
+    def resume(self, save_id: str, *, adopt: bool = False) -> Workspace:
+        """Puts the save's own workspace back to exactly the saved state.
+
+        With adopt, a workspace this engine knows only from object storage
+        (made on another server) comes back under its own ID and name; ask
+        for it only when that server is gone (its lease must have run out)."""
+        body = {"adopt": True} if adopt else None
+        return Workspace._from(self._json("POST", f"/v1/saves/{_q(save_id)}/resume", body), self)
+
+    def set_quota(self, workspace_id: str, run_seconds: int) -> Workspace:
+        """Sets how long the workspace may run in all (0: no limit). One
+        paused at its quota wakes on its next use once under the new one."""
+        d = self._json("PUT", f"/v1/workspaces/{_q(workspace_id)}/quota", {"run_seconds": run_seconds})
+        return Workspace._from(d, self)
 
     def copy(self, save_id: str, count: int = 1, *, idempotency_key: Optional[str] = None) -> list[Workspace]:
         """New, independent workspaces that each start from the save."""
