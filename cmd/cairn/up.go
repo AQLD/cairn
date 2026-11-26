@@ -49,6 +49,8 @@ type upOptions struct {
 	name, image, template string
 	port                  int
 	build                 bool
+	native                bool            // cairnd on the host, not in Docker (upnative.go)
+	data                  string          // --native: the engine's folder
 	set                   map[string]bool // flags given on the command line
 }
 
@@ -59,9 +61,14 @@ func cmdUp(ctx context.Context, args []string) (int, error) {
 	fs.IntVar(&o.port, "port", 7420, "port on 127.0.0.1 for the engine's API")
 	fs.StringVar(&o.image, "image", DefaultImage, "engine image")
 	fs.BoolVar(&o.build, "build", false, "build the image from this checkout of the Cairn repository instead of pulling it")
-	fs.StringVar(&o.template, "template", "python=python:3.12-slim", "NAME=IMAGE pulled on first start and used for workspaces created without a template (empty: none)")
+	fs.StringVar(&o.template, "template", "python=python:3.12-slim", "NAME=IMAGE pulled on first start (or, with --native, NAME=ROOTFS.tar imported) and used for workspaces created without a template (empty: none)")
+	fs.BoolVar(&o.native, "native", false, "Linux: run cairnd straight on this host (as root, gVisor's runsc on PATH) instead of in Docker")
+	fs.StringVar(&o.data, "data", "", "with --native: the engine's folder (default "+nativeRoot+"/NAME)")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
+	}
+	if o.native || o.data != "" {
+		return upNative(ctx, o)
 	}
 	fs.Visit(func(f *flag.Flag) { o.set[f.Name] = true })
 	if o.template != "" {
@@ -161,7 +168,11 @@ func cmdUp(ctx context.Context, args []string) (int, error) {
 		fmt.Fprintf(os.Stderr, "cairn: warning: runtime %s has no isolation or full saves here\n", info.Runtime)
 	}
 	if tname, _, ok := strings.Cut(o.template, "="); ok && fresh {
-		if err := waitTemplate(ctx, c, o.name, tname, started, 10*time.Minute); err != nil {
+		logs := func() string {
+			out, _ := docker(ctx, "logs", "--since", started.UTC().Format(time.RFC3339), o.name)
+			return out
+		}
+		if err := waitTemplate(ctx, c, logs, tname, 10*time.Minute); err != nil {
 			return 1, err
 		}
 	}
@@ -219,8 +230,12 @@ func cmdDown(ctx context.Context, args []string) (int, error) {
 	fs := flag.NewFlagSet("down", flag.ContinueOnError)
 	name := fs.String("name", "cairn", "container name")
 	purge := fs.Bool("purge", false, "also delete the container, its data volume (every workspace and save) and its client config")
+	data := fs.String("data", "", "a native engine's folder (cairn up --native --data)")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
+	}
+	if dir, ok := nativeDir(*name, *data); ok {
+		return downNative(ctx, dir, *purge)
 	}
 	if err := dockerReady(ctx); err != nil {
 		return 1, err
@@ -270,10 +285,13 @@ func cmdDown(ctx context.Context, args []string) (int, error) {
 func cmdStatus(ctx context.Context, c *client.Client, args []string) (int, error) {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	name := fs.String("name", "cairn", "container name")
+	data := fs.String("data", "", "a native engine's folder (cairn up --native --data)")
 	if err := fs.Parse(args); err != nil {
 		return 2, err
 	}
-	if dockerReady(ctx) == nil {
+	if dir, ok := nativeDir(*name, *data); ok {
+		describeNative(dir)
+	} else if dockerReady(ctx) == nil {
 		if ct, _ := inspect(ctx, *name); ct != nil {
 			fmt.Printf("container %s: %s since %s, image %s\n", *name, ct.State.Status, ct.State.StartedAt, ct.Config.Labels[labelImage])
 		}
@@ -486,8 +504,8 @@ func waitHealthy(ctx context.Context, endpoint string, limit time.Duration) erro
 }
 
 // waitTemplate waits for a new engine's background pull of its default
-// template, reading only the log lines written since since.
-func waitTemplate(ctx context.Context, c *client.Client, container, name string, since time.Time, limit time.Duration) error {
+// template; logs returns the engine's log lines written since it started.
+func waitTemplate(ctx context.Context, c *client.Client, logs func() string, name string, limit time.Duration) error {
 	deadline := time.Now().Add(limit)
 	said := false
 	for time.Now().Before(deadline) {
@@ -499,8 +517,7 @@ func waitTemplate(ctx context.Context, c *client.Client, container, name string,
 		if !errors.As(err, &apiErr) || apiErr.Code != "not_found" {
 			return fmt.Errorf("checking template %s: %w", name, err)
 		}
-		logs, _ := docker(ctx, "logs", "--since", since.UTC().Format(time.RFC3339), container)
-		if line := lastLine(logs, `"template pull failed"`); line != "" && strings.Contains(line, `"template":"`+name+`"`) {
+		if line := lastLine(logs(), `"template pull failed"`); line != "" && strings.Contains(line, `"template":"`+name+`"`) {
 			return fmt.Errorf("pulling template %s failed (offline?); the engine is up, retry with `cairn template pull`:\n%s", name, line)
 		}
 		if !said {

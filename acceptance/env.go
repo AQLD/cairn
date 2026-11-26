@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -291,6 +292,15 @@ func (e *Env) has(n spec.Need) (bool, string) {
 	case spec.NeedAgentTools:
 		_, err := os.Stat(os.Getenv("CAIRN_TEST_AGENT_TOOLS"))
 		return os.Getenv("CAIRN_TEST_AGENT_TOOLS") != "" && err == nil, "set CAIRN_TEST_AGENT_TOOLS to a template built from acceptance/testdata/agent-tools (devenv/accept-runsc.sh builds it)"
+	case spec.NeedNativeUp:
+		if goruntime.GOOS != "linux" || os.Geteuid() != 0 {
+			return false, "needs Linux and root"
+		}
+		if !caps.FullSave {
+			return false, "runtime " + e.Info.Runtime + " cannot save memory (no gVisor here)"
+		}
+		_, err := exec.LookPath("runsc")
+		return err == nil, "runsc is not on PATH"
 	case spec.NeedDocker:
 		if os.Getenv("CAIRN_TEST_DOCKER_IMAGE") == "" {
 			return false, "set CAIRN_TEST_DOCKER_IMAGE to an engine image (docker build -f deploy/docker/Dockerfile .)"
