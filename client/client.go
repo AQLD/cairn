@@ -158,6 +158,7 @@ type Template struct {
 	CreatedAt   time.Time `json:"created_at"`
 	Image       string    `json:"image,omitempty"`        // the container image it was pulled from
 	ImageDigest string    `json:"image_digest,omitempty"` // that image's manifest digest
+	Warmup      []string  `json:"warmup,omitempty"`       // what its warm workspaces have already run
 }
 
 // PullTemplate is a container image to build a template from.
@@ -563,6 +564,14 @@ func (c *Client) ListTemplates(ctx context.Context) ([]Template, error) {
 func (c *Client) GetTemplate(ctx context.Context, name string) (*Template, error) {
 	var out Template
 	return &out, c.do(ctx, http.MethodGet, "/v1/templates/"+url.PathEscape(name), nil, &out)
+}
+
+// SetTemplateWarmup sets a template's warm-up command (nil clears it): with
+// a warm pool (cairnd --warm), workspaces of the template arrive with it
+// already run, processes still running. Needs an admin token.
+func (c *Client) SetTemplateWarmup(ctx context.Context, name string, command []string) (*Template, error) {
+	var out Template
+	return &out, c.do(ctx, http.MethodPut, "/v1/templates/"+url.PathEscape(name)+"/warmup", map[string]any{"command": command}, &out)
 }
 
 func (c *Client) DeleteTemplate(ctx context.Context, name string) error {
