@@ -19,6 +19,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/netip"
 	"time"
 )
 
@@ -132,6 +133,19 @@ type Runtime interface {
 
 // Freezer is a FullSave runtime that can save a workspace's memory without
 // stopping it, for full saves that keep the workspace running.
+// Prober is a runtime that can make a restored workspace's outside TCP
+// connections learn whether their peer still has them (probe.go): a peer
+// that dropped one while the workspace was saved answers with a reset, so a
+// program waiting on it gets an error instead of waiting forever.
+type Prober interface {
+	ProbeConnections(spec Spec, conns []TCPConn) error
+}
+
+// TCPConn is one of a workspace's TCP connections, as the workspace sees it.
+type TCPConn struct {
+	Local, Remote netip.AddrPort
+}
+
 type Freezer interface {
 	// CheckpointFrozen freezes every process where it is and writes memory
 	// and process state into dir, as Checkpoint does, but leaves the

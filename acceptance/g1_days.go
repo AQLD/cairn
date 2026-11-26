@@ -140,3 +140,108 @@ func init() {
 		}
 	})
 }
+
+// outsideServer holds every connection open, sending "ping" once /tmp/send
+// exists: a server out on the network that goes quiet for a while. Killed,
+// it forgets its connections at once (as one that timed them out has).
+const outsideServer = `nohup python3 -c "
+import os, socket, struct, threading, time
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(('0.0.0.0', 9100)); s.listen()
+open('/tmp/server.pid', 'w').write(str(os.getpid()))
+def hold(c):
+    # closed by a reset, not a FIN its stack would keep resending: once the
+    # server goes, it has forgotten the connection
+    c.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
+    while not os.path.exists('/tmp/send'):
+        time.sleep(0.1)
+    try:
+        c.sendall(b'ping')
+        time.sleep(60)
+    except OSError:
+        pass
+while True:
+    c, _ = s.accept()
+    threading.Thread(target=hold, args=(c,), daemon=True).start()
+" >/dev/null 2>&1 &`
+
+// blockedClient connects to the server and waits for data, writing how the
+// wait ended (data, eof or the error) to /tmp/conn.result.
+func blockedClient(addr string) string {
+	return `nohup python3 -c "
+import socket, time
+c = socket.create_connection(('` + addr + `', 9100), timeout=10); c.settimeout(None)
+open('/tmp/conn.up', 'w').write('up')
+try:
+    b = c.recv(16)
+    r = 'data ' + b.decode() if b else 'eof'
+except OSError as e:
+    r = 'error ' + repr(e)
+open('/tmp/conn.result', 'w').write(r)
+" >/dev/null 2>&1 &`
+}
+
+// workspaceIP is a workspace's own address (network on).
+func workspaceIP(e *Env, ws string) string {
+	e.T.Helper()
+	return strings.TrimSpace(e.Sh(ws, `python3 -c "import socket; s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(('1.1.1.1', 53)); print(s.getsockname()[0])"`))
+}
+
+func init() {
+	register("G1.8.3", func(e *Env) {
+		srvWS, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "outside", Network: true})
+		e.Must(err)
+		e.Sh(srvWS.ID, outsideServer)
+		addr := workspaceIP(e, srvWS.ID)
+		ws, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "days-conn", Network: true})
+		e.Must(err)
+		time.Sleep(500 * time.Millisecond) // the server is listening
+		e.Sh(ws.ID, blockedClient(addr))
+		deadline := time.Now().Add(15 * time.Second)
+		for {
+			if _, err := e.C.ReadFile(e.Ctx, ws.ID, "tmp/conn.up"); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				e.T.Fatalf("the client never connected to %s:9100", addr)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		// during the pause the server goes away (an idle timeout, a restart):
+		// what it sends then reaches nobody, so after the resume the client's
+		// connection is open only on its side
+		sv, err := e.C.Save(e.Ctx, ws.ID, client.FullSave)
+		e.Must(err)
+		e.Sh(srvWS.ID, "kill -9 $(cat /tmp/server.pid); sleep 1")
+		e.Sh(srvWS.ID, outsideServer) // back, without the old connection
+		time.Sleep(pauseFor())
+		_, err = e.C.Resume(e.Ctx, sv.ID)
+		e.Must(err)
+		var result string
+		for i := 0; i < 100; i++ {
+			if b, err := e.C.ReadFile(e.Ctx, ws.ID, "tmp/conn.result"); err == nil && len(b) > 0 {
+				result = string(b)
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if result == "" {
+			e.T.Fatal("a program waiting on an outside connection that was closed during the pause still hangs 10 s after the resume")
+		}
+		e.T.Logf("after the resume the connection ended with: %s", result)
+		// and it can connect again
+		e.Sh(ws.ID, "rm -f /tmp/conn.up /tmp/conn.result")
+		e.Sh(ws.ID, blockedClient(addr))
+		deadline = time.Now().Add(15 * time.Second)
+		for {
+			if _, err := e.C.ReadFile(e.Ctx, ws.ID, "tmp/conn.up"); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				e.T.Fatal("the program could not connect again after the resume")
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+}
