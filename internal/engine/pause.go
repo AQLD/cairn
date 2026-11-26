@@ -154,6 +154,7 @@ func (e *Engine) wakeLocked(ctx context.Context, id string) error {
 			map[string]any{"processes": false, "reason": verr.Error()})
 	} else {
 		e.note(ctx, id, "wake", "woke with its processes", nil, map[string]any{"processes": true})
+		e.probeAfterRestore(id)
 	}
 	return nil
 }

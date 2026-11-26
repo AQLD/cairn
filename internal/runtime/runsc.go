@@ -911,6 +911,17 @@ func (r *Runsc) firewallLocked(spec Spec) error {
 		}
 		outbound = guard.chain
 	}
+	if probeRule != nil {
+		// probes of restored connections bypass NAT (probe_linux.go); once
+		// per host, shared by every workspace
+		add := append([]string{"iptables", "-t", "raw", "-A"}, probeRule[2:]...)
+		check := append([]string{"iptables", "-t", "raw", "-C"}, probeRule[2:]...)
+		if sh(check...) != nil {
+			if err := sh(add...); err != nil {
+				return err
+			}
+		}
+	}
 	accepts := [][]string{
 		{"-t", "nat", "-A", "POSTROUTING", "-s", wsIP + "/32", "!", "-o", hostIf, "-j", "MASQUERADE"},
 		{"-I", "FORWARD", "-i", hostIf, "-j", outbound},

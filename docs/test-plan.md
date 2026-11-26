@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 63 | 0 | 4 |
 | E2 | 32 | 1 | 1 |
-| E3 | 130 | 4 | 2 |
+| E3 | 131 | 3 | 2 |
 | E4 | 48 | 8 | 1 |
 | E5 | 1 | 2 | 0 |
 | later | 0 | 3 | 0 |
@@ -147,7 +147,7 @@ Work done in a workspace is still there, exactly as it was, after a save and res
 - 📂 **G1.8** A workspace resumes correctly days later · E3
   - ✅ **G1.8.1** After a long pause the clock shows the real time and monotonic time never goes back · E3 · needs full_save, persistent_processes
   - ✅ **G1.8.2** Timers that fell due during the pause fire as soon as it resumes · E3 · needs full_save, persistent_processes
-  - ⏳ **G1.8.3** Connections to the outside fail fast after a long pause instead of hanging · E3 · needs full_save, persistent_processes, network_control
+  - ✅ **G1.8.3** Connections to the outside fail fast after a long pause instead of hanging · E3 · needs full_save, persistent_processes, network_control
 - ⏳ **G1.9** A real coding agent works in workspaces daily for two weeks · E3 · needs real_agent
 
 ## G2 Try several fixes at once

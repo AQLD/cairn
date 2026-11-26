@@ -1710,6 +1710,9 @@ func (e *Engine) resume(ctx context.Context, saveID string, opts ResumeOptions) 
 	if err := e.store.SetWorkspaceState(ctx, id, store.Running); err != nil {
 		return nil, err
 	}
+	if m.Kind == save.Full {
+		e.probeAfterRestore(id) // its connections came back from memory
+	}
 	return e.GetWorkspace(ctx, id)
 }
 

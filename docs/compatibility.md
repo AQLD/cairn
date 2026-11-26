@@ -18,7 +18,7 @@ Tools that write a temporary file in `/tmp` and then rename it into place elsewh
 
 A full save keeps processes and their connections inside the workspace (loopback TCP, Unix sockets). Connections to hosts outside the workspace are not: they can fail when a full save is resumed, and always do when it resumes on another server or is copied (a copy has a new IP address, and the remote side has moved on).
 
-A program in the middle of a download or holding a database connection sees the connection fail after resume, and has to reconnect.
+A program in the middle of a download or holding a database connection sees the connection fail after resume, and has to reconnect. It does see it fail: after a resume or a wake, the engine checks each outside connection with its peer, so one the peer dropped during the pause is reset at once instead of leaving the program waiting forever on it (G1.8.3). Connections the peer still has carry on.
 
 **What to do:** retry network operations, as you would for any flaky network. pip, for one, already does: in our tests it retried a download interrupted by a move and finished it.
 
