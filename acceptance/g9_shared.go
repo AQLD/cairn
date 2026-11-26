@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/AQLD/cairn/client"
@@ -214,11 +215,16 @@ func init() {
 		}
 
 		run(e, "sh", "-c", "dd if=/dev/zero of="+filepath.Join(mnt, "filler")+" bs=1M 2>/dev/null; sync; true")
+		freeBefore := volumeFree(mnt)
 		res, err := e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"sh", "-c", "dd if=/dev/urandom of=" + deltaDir + "/inside.bin bs=1M count=64 conv=fsync"}, TimeoutMS: 60_000})
 		if err != nil {
 			e.ErrCode(err, "insufficient_storage")
 		} else if res.ExitCode == 0 {
-			e.T.Fatalf("a 64 MB write with fsync succeeded on a full volume (shared templates %v)", info.Capabilities.SharedTemplates)
+			// say which it was: the volume had room after all, or a write
+			// error went missing (the kernel log shows the lost writes)
+			kernel, _ := exec.Command("sh", "-c", "dmesg | tail -n 15").CombinedOutput()
+			e.T.Fatalf("a 64 MB write with fsync succeeded on a full volume (shared templates %v); volume free before %d bytes, after %d; dd said %q\nkernel log:\n%s",
+				info.Capabilities.SharedTemplates, freeBefore, volumeFree(mnt), res.Stdout+res.Stderr, kernel)
 		}
 		e.Must(os.Remove(filepath.Join(mnt, "filler")))
 	})
@@ -323,4 +329,13 @@ func init() {
 		e.Must(err)
 		sharesTemplate(e, "the workspace after the crashes", ws.ID, t)
 	})
+}
+
+// volumeFree is the free space on the volume holding path.
+func volumeFree(path string) int64 {
+	var st syscall.Statfs_t
+	if syscall.Statfs(path, &st) != nil {
+		return -1
+	}
+	return int64(st.Bavail) * int64(st.Bsize) //nolint:unconvert
 }
