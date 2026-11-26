@@ -776,6 +776,18 @@ type Key struct {
 	CreatedAt time.Time  `json:"created_at"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 	Token     string     `json:"token,omitempty"`
+	// Quota limits its workspaces' run time together; RunSeconds is that
+	// run time so far.
+	Quota      *Quota  `json:"quota,omitempty"`
+	RunSeconds float64 `json:"run_seconds"`
+}
+
+// SetKeyQuota sets a key's run-time quota, for all its workspaces together
+// (zero: none). Over it, they pause with their work and the key cannot
+// create more until it is raised. Needs an admin token.
+func (c *Client) SetKeyQuota(ctx context.Context, id string, q Quota) (*Key, error) {
+	var out Key
+	return &out, c.do(ctx, http.MethodPut, "/v1/keys/"+url.PathEscape(id)+"/quota", q, &out)
 }
 
 // CreateKey makes an API key for one caller (needs an admin token).

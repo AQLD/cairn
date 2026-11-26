@@ -186,6 +186,10 @@ ALTER TABLE api_keys ADD COLUMN own INTEGER NOT NULL DEFAULT 0;
 	`
 ALTER TABLE workspaces ADD COLUMN run_ns INTEGER NOT NULL DEFAULT 0;
 `,
+	// 12: run-time quotas per key: its workspaces' run time together
+	`
+ALTER TABLE api_keys ADD COLUMN run_quota_s INTEGER NOT NULL DEFAULT 0;
+`,
 }
 
 const (
@@ -756,7 +760,8 @@ type APIKey struct {
 	Name      string
 	Scope     string
 	Hash      string
-	Own       bool // may use only the workspaces it made
+	Own       bool  // may use only the workspaces it made
+	RunQuota  int64 // seconds its workspaces may run together (0: no limit)
 	CreatedAt time.Time
 	RevokedAt time.Time // zero while it works
 }
@@ -794,6 +799,38 @@ func (s *Store) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
 	return s.keys(ctx, `ORDER BY created_at`)
 }
 
+// SetKeyQuota sets a key's run-time quota in seconds (0: none).
+func (s *Store) SetKeyQuota(ctx context.Context, id string, seconds int64) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE api_keys SET run_quota_s = ? WHERE id = ?`, seconds, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// RunTimeByOwner is how long each key's workspaces have run together,
+// deleted ones included (their time was used).
+func (s *Store) RunTimeByOwner(ctx context.Context) (map[string]time.Duration, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT owner, SUM(run_ns) FROM workspaces WHERE owner != '' GROUP BY owner`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]time.Duration{}
+	for rows.Next() {
+		var owner string
+		var ns int64
+		if err := rows.Scan(&owner, &ns); err != nil {
+			return nil, err
+		}
+		out[owner] = time.Duration(ns)
+	}
+	return out, rows.Err()
+}
+
 // RevokeAPIKey marks a key revoked (idempotent).
 func (s *Store) RevokeAPIKey(ctx context.Context, id string, at time.Time) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at = 0`, at.UnixNano(), id)
@@ -809,7 +846,7 @@ func (s *Store) RevokeAPIKey(ctx context.Context, id string, at time.Time) error
 }
 
 func (s *Store) keys(ctx context.Context, rest string, args ...any) ([]APIKey, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, scope, hash, own, created_at, revoked_at FROM api_keys `+rest, args...)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, scope, hash, own, created_at, revoked_at, run_quota_s FROM api_keys `+rest, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -818,7 +855,7 @@ func (s *Store) keys(ctx context.Context, rest string, args ...any) ([]APIKey, e
 	for rows.Next() {
 		var k APIKey
 		var created, revoked int64
-		if err := rows.Scan(&k.ID, &k.Name, &k.Scope, &k.Hash, &k.Own, &created, &revoked); err != nil {
+		if err := rows.Scan(&k.ID, &k.Name, &k.Scope, &k.Hash, &k.Own, &created, &revoked, &k.RunQuota); err != nil {
 			return nil, err
 		}
 		k.CreatedAt = time.Unix(0, created)

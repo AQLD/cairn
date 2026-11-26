@@ -91,7 +91,12 @@ var Catalog = []Scenario{
 					{ID: "G3.3.2", Title: "Over its quota, a workspace refuses new work but its files stay readable", Proves: "Commands, writes and saves get quota_exceeded, which says how to go on; reading files still works.", Milestone: E4, Needs: []Need{NeedInProcess}},
 					{ID: "G3.3.3", Title: "Raising the quota lets the workspace carry on where it stopped", Proves: "After the quota is raised, the next command wakes it with the same running processes and files.", Milestone: E4, Needs: []Need{NeedFullSave, NeedInProcess}},
 				}},
-			{ID: "G3.4", Title: "Quotas apply per workspace and per project", Proves: "A platform can cap each end user and its own total.", Milestone: E4},
+			{ID: "G3.4", Title: "Quotas apply per workspace and per project", Proves: "A platform can cap each end user and its own total.", Milestone: E4,
+				Children: []Scenario{
+					{ID: "G3.4.1", Title: "A key's run-time quota covers all its workspaces together", Proves: "An end user's own key with a quota: once its workspaces' run time adds up to it, every one of them pauses with its work and refuses new work, while another key's workspace runs on.", Milestone: E4, Needs: []Need{NeedInProcess}},
+					{ID: "G3.4.2", Title: "Over its quota, a key cannot start more work until the quota is raised", Proves: "Creating a workspace gets quota_exceeded; after an admin raises the key's quota, it creates workspaces and its paused ones carry on.", Milestone: E4, Needs: []Need{NeedInProcess}},
+					{ID: "G3.4.3", Title: "An engine-wide default quota applies to workspaces created without one", Proves: "The operator caps every workspace's run time by default; a workspace's own quota (set at creation or later) replaces it.", Milestone: E4, Needs: []Need{NeedInProcess}},
+				}},
 			{ID: "G3.5", Title: "Workspaces are listed and managed independently", Proves: "Creating, saving or deleting one workspace never touches another.", Milestone: E1},
 		},
 	},

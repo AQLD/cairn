@@ -10,7 +10,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E1 | 63 | 0 | 4 |
 | E2 | 33 | 1 | 1 |
 | E3 | 131 | 3 | 2 |
-| E4 | 51 | 7 | 1 |
+| E4 | 54 | 6 | 1 |
 | E5 | 1 | 2 | 0 |
 | later | 0 | 3 | 0 |
 
@@ -27,7 +27,7 @@ What each kind of agent gets done end to end. A step is unblocked when every cap
 | [G13](#g13-a-browser-agent-finishes-a-long-web-task-with-a-persons-help) A browser agent finishes a long web task with a person's help | browser and computer-use agents | 4 of 6 | 5 of 6 | 1 |
 | [G14](#g14-a-research-agent-works-many-questions-in-parallel) A research agent works many questions in parallel | research and document agents | 4 of 5 | 5 of 5 | 0 |
 | [G15](#g15-a-workflow-agent-changes-business-systems-safely) A workflow agent changes business systems safely | workflow and operations agents | 6 of 6 | 6 of 6 | 0 |
-| [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 1 of 6 | 4 of 6 | 2 |
+| [G16](#g16-every-user-of-a-product-gets-an-agent-computer-that-is-always-there) Every user of a product gets an agent computer that is always there | products that give each user an agent | 1 of 6 | 5 of 6 | 1 |
 | [G17](#g17-a-training-run-branches-thousands-of-environments-from-one-setup) A training run branches thousands of environments from one setup | agent training and evaluation | 4 of 6 | 6 of 6 | 0 |
 
 ## G11 A coding agent ships a change over several days
@@ -93,7 +93,7 @@ An agent acts on internal systems with credentials it cannot leak, waits for app
 A product gives each of its users a walled-off computer with limits, that costs little while idle and is ready when the user returns. Gate: **E5**.
 
 - ⏳ **G16.1** Each user's workspace is walled off from every other · E4 · uses G3.1 ✅, G8 ✅
-- ⏳ **G16.2** Users and the product have quotas, and hitting one saves the work · E4 · uses G3.3 ✅, G3.4 ⏳
+- ⏳ **G16.2** Users and the product have quotas, and hitting one saves the work · E4 · uses G3.3 ✅, G3.4 ✅
 - ⏳ **G16.3** Idle workspaces cost only storage and wake on the next request · E4 · uses G4.4 ✅, G9.8 ✅
 - ✅ **G16.4** The product hears when a workspace pauses, wakes or hits a limit · E4 · needs full_save, resource_limits · uses G19.6 ✅
 - ⏳ **G16.5** A user opens the app their agent built through a preview link · later · uses G19.4 ⏳
@@ -179,7 +179,10 @@ A platform can give each end user a walled-off workspace with limits it sets. Ga
   - ✅ **G3.3.1** A workspace that uses up its run-time quota is paused with its processes and files · E4 · needs full_save, in_process
   - ✅ **G3.3.2** Over its quota, a workspace refuses new work but its files stay readable · E4 · needs in_process
   - ✅ **G3.3.3** Raising the quota lets the workspace carry on where it stopped · E4 · needs full_save, in_process
-- ⏳ **G3.4** Quotas apply per workspace and per project · E4
+- 📂 **G3.4** Quotas apply per workspace and per project · E4
+  - ✅ **G3.4.1** A key's run-time quota covers all its workspaces together · E4 · needs in_process
+  - ✅ **G3.4.2** Over its quota, a key cannot start more work until the quota is raised · E4 · needs in_process
+  - ✅ **G3.4.3** An engine-wide default quota applies to workspaces created without one · E4 · needs in_process
 - ✅ **G3.5** Workspaces are listed and managed independently · E1
 
 ## G4 An assistant waits for an answer

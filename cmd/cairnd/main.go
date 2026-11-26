@@ -62,6 +62,7 @@ func run() error {
 	restoreState := flag.Bool("restore-state", false, "rebuild a lost or damaged state database from its last backup and the data folder, then run as usual")
 	backupEvery := flag.Duration("state-backup-interval", time.Hour, "how often to back up the state database (state.db.backup; 0 disables)")
 	sharedTemplates := flag.Bool("shared-templates", false, "workspaces share one read-only copy of their template and store only their changes (needs Linux, root and overlayfs; experimental: on Linux 7.0 a program's fsync is not told about a write that failed underneath, as on a full host volume)")
+	runQuota := flag.Duration("run-quota", 0, "run-time quota of workspaces created without one: at it they pause, work saved, until it is raised (0: none)")
 	warm := flag.Int("warm", 0, "keep N workspaces of the default template created and started ahead of demand, so creates return at once (0: off)")
 	diskReserveMB := flag.Int64("disk-reserve-mb", engine.DefaultDiskReserve>>20, "below this much free space on the data volume, workspace disks turn read-only until there is room (writes fail at once instead of being lost); 0 turns this off")
 	diskImages := flag.Bool("disk-images", true, "enforce workspace disk sizes with an ext4 image per workspace (needs root, mkfs.ext4 and loop devices)")
@@ -126,7 +127,7 @@ func run() error {
 			return errors.New("--secrets-key must be outside --data: saves and backups of the data folder would carry it")
 		}
 	}
-	eng, err := engine.Open(ctx, engine.Config{SecretsKey: sealKey, DataDir: *data, Runtime: r, Logger: log, Retention: *retention, KeepSaves: offIfZero(*keepSaves), KeepSavesFor: time.Duration(offIfZero(int(*keepSavesFor))), DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, DiskReserve: reserveBytes(*diskReserveMB), Warm: warmPool(*warm), SharedTemplates: *sharedTemplates, MaxCommands: *maxCommands, MaxOps: *maxOps, RestoreState: *restoreState, Objects: objects})
+	eng, err := engine.Open(ctx, engine.Config{SecretsKey: sealKey, DataDir: *data, Runtime: r, Logger: log, Retention: *retention, KeepSaves: offIfZero(*keepSaves), KeepSavesFor: time.Duration(offIfZero(int(*keepSavesFor))), DefaultTemplate: *defaultTemplate, DiskMB: *diskMB, NoDiskImages: !*diskImages, DiskReserve: reserveBytes(*diskReserveMB), Warm: warmPool(*warm), SharedTemplates: *sharedTemplates, MaxCommands: *maxCommands, MaxOps: *maxOps, RestoreState: *restoreState, Objects: objects, DefaultRunQuota: *runQuota})
 	if err != nil {
 		return err
 	}

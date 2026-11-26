@@ -33,6 +33,9 @@ type Key struct {
 	Own       bool       `json:"own,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+	// Quota limits its workspaces' run time together (quota.go).
+	Quota      *Quota  `json:"quota,omitempty"`
+	RunSeconds float64 `json:"run_seconds"` // its workspaces' run time together
 	// Token is set only in the answer that created the key.
 	Token string `json:"token,omitempty"`
 }
@@ -84,8 +87,11 @@ func (e *Engine) ListKeys(ctx context.Context) ([]Key, error) {
 		return nil, err
 	}
 	out := []Key{}
+	used, _ := e.store.RunTimeByOwner(ctx)
 	for _, k := range list {
-		out = append(out, publicKey(k))
+		pk := publicKey(k)
+		pk.RunSeconds = used[k.ID].Seconds()
+		out = append(out, pk)
 	}
 	return out, nil
 }
@@ -117,6 +123,9 @@ func (e *Engine) Authenticate(ctx context.Context, token string) (Key, error) {
 
 func publicKey(k store.APIKey) Key {
 	out := Key{ID: k.ID, Name: k.Name, Scope: k.Scope, Own: k.Own, CreatedAt: k.CreatedAt}
+	if k.RunQuota > 0 {
+		out.Quota = &Quota{RunSeconds: k.RunQuota}
+	}
 	if !k.RevokedAt.IsZero() {
 		t := k.RevokedAt
 		out.RevokedAt = &t
