@@ -540,6 +540,13 @@ func (s *Store) SoftDeleteSave(ctx context.Context, id string, t time.Time) erro
 }
 
 // SetPinned pins or unpins a save.
+// SetAuto marks a save as the engine's own (a pause or warm save): callers
+// cannot resume, copy or delete it.
+func (s *Store) SetAuto(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE saves SET auto = 1 WHERE id = ?`, id)
+	return err
+}
+
 func (s *Store) SetPinned(ctx context.Context, id string, pinned bool) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE saves SET pinned = ? WHERE id = ?`, pinned, id)
 	return err

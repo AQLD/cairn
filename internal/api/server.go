@@ -215,6 +215,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /v1/keys/{id}", s.revokeKey)
 	s.mux.HandleFunc("GET /v1/templates", s.listTemplates)
 	s.mux.HandleFunc("PUT /v1/templates/{name}", s.importTemplate)
+	s.mux.HandleFunc("PUT /v1/templates/{name}/warmup", s.setWarmup)
 	s.mux.HandleFunc("POST /v1/templates/{name}/pull", s.pullTemplate)
 	s.mux.HandleFunc("GET /v1/templates/{name}", s.getTemplate)
 	s.mux.HandleFunc("DELETE /v1/templates/{name}", s.deleteTemplate)
@@ -603,6 +604,23 @@ func (s *Server) diagnostics(w http.ResponseWriter, r *http.Request) {
 	if err := s.eng.Diagnostics(r.Context(), w); err != nil {
 		s.log.Error("diagnostics", "err", err) // headers are gone: the client sees a truncated archive
 	}
+}
+
+// setWarmup sets a template's warm-up command: warm workspaces of it arrive
+// with the command already run, processes and all. An empty command clears it.
+func (s *Server) setWarmup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Command []string `json:"command"`
+	}
+	if !s.decode(w, r, &req) {
+		return
+	}
+	t, err := s.eng.SetTemplateWarmup(r.Context(), r.PathValue("name"), req.Command)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
 }
 
 // --- plumbing ---

@@ -40,6 +40,9 @@ type Template struct {
 	// built from (empty for an imported tar).
 	Image       string `json:"image,omitempty"`
 	ImageDigest string `json:"image_digest,omitempty"`
+	// Warmup is the command warm workspaces of this template have already
+	// run, processes and all (warmsave.go); empty for none.
+	Warmup []string `json:"warmup,omitempty"`
 }
 
 func (e *Engine) templatesDir() string           { return filepath.Join(e.cfg.DataDir, "templates") }
@@ -138,7 +141,11 @@ func (e *Engine) importTemplate(ctx context.Context, name string, r io.Reader, s
 	} else if _, err := e.baseIndex(t.SHA256); err != nil {
 		e.log.Warn("could not index base", "template", name, "err", err)
 	}
-	e.dropWarm(ctx, name) // warm workspaces of the old content
+	e.templateChanged(ctx, name, false) // its warm save is of the old content
+	e.dropWarm(ctx, name)               // and so are its warm workspaces
+	if w, ok := e.readWarmup(name); ok {
+		t.Warmup = w.Command
+	}
 	return &t, nil
 }
 
@@ -156,6 +163,9 @@ func (e *Engine) GetTemplate(_ context.Context, name string) (*Template, error) 
 	var t Template
 	if err := json.Unmarshal(data, &t); err != nil {
 		return nil, err
+	}
+	if w, ok := e.readWarmup(name); ok {
+		t.Warmup = w.Command
 	}
 	return &t, nil
 }
@@ -191,6 +201,7 @@ func (e *Engine) DeleteTemplate(ctx context.Context, name string) error {
 	if err := os.RemoveAll(e.templateDir(name)); err != nil {
 		return err
 	}
+	e.templateChanged(ctx, name, true)
 	e.dropWarm(ctx, name)
 	return nil
 }

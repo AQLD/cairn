@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 55 | 0 | 4 |
 | E2 | 32 | 1 | 1 |
-| E3 | 119 | 4 | 2 |
+| E3 | 122 | 4 | 2 |
 | E4 | 48 | 8 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -346,6 +346,9 @@ Save, resume and copy are quick, and enough workspaces fit on a server for the e
   - ✅ **G9.10.2** The warm pool refills to its size after creates · E3 · needs in_process
   - ✅ **G9.10.3** Replacing or deleting a template empties its warm pool · E3 · needs in_process
   - ✅ **G9.10.4** Warm workspaces never outlive the engine or show up as anyone's · E3 · needs in_process
+  - ✅ **G9.10.5** A template's warm-up has already run in a workspace from the pool · E3 · needs full_save, in_process
+  - ✅ **G9.10.6** Workspaces warmed from one save are each their own · E3 · needs full_save, in_process
+  - ✅ **G9.10.7** Changing a template or its warm-up rebuilds what the pool hands out · E3 · needs full_save, in_process
 
 ## G10 Easy to run and operate
 

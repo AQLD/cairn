@@ -64,6 +64,7 @@ commands:
   key create NAME [--scope read|write|admin] [--own]  an API key for one caller (token shown once)
   key ls | key rm ID                      list or revoke API keys
   shell WORKSPACE [-- COMMAND...]         an interactive terminal in a running workspace
+  template warmup NAME [-- COMMAND...]   warm workspaces of NAME arrive with COMMAND already run (none: clear)
   template import NAME ROOTFS.tar         import a root filesystem tar as a template
                                           (e.g. docker export $(docker create python:3.12-slim) > python.tar)
   template pull NAME IMAGE [--insecure]   build a template from a container image in a registry
@@ -530,6 +531,20 @@ func run(ctx context.Context, c *client.Client, cmd string, args []string) (int,
 				return 1, err
 			}
 			fmt.Printf("%s  %d bytes  from %s@%s\n", t.Name, t.Size, t.Image, t.ImageDigest)
+		case len(args) >= 2 && args[0] == "warmup":
+			cmd := args[2:]
+			if len(cmd) > 0 && cmd[0] == "--" {
+				cmd = cmd[1:]
+			}
+			t, err := c.SetTemplateWarmup(ctx, args[1], cmd)
+			if err != nil {
+				return 1, err
+			}
+			if len(t.Warmup) == 0 {
+				fmt.Printf("%s: no warm-up\n", t.Name)
+			} else {
+				fmt.Printf("%s: warm workspaces will have run: %s\n", t.Name, strings.Join(t.Warmup, " "))
+			}
 		case len(args) == 1 && args[0] == "ls":
 			ts, err := c.ListTemplates(ctx)
 			if err != nil {

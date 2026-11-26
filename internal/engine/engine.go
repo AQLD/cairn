@@ -1026,7 +1026,7 @@ func (e *Engine) saveWith(ctx context.Context, id string, opts SaveOptions) (*Sa
 		return nil, err
 	}
 	if kind == save.Full {
-		if err := e.store.SetWorkspaceState(ctx, id, store.Saving); err != nil {
+		if err := e.setSavingState(ctx, w, store.Saving); err != nil {
 			return nil, err
 		}
 	}
@@ -1042,7 +1042,7 @@ func (e *Engine) saveWith(ctx context.Context, id string, opts SaveOptions) (*Sa
 	}
 	if err != nil {
 		_ = e.store.DeleteSave(ctx, saveID)
-		_ = e.store.SetWorkspaceState(ctx, id, store.Running)
+		_ = e.setSavingState(ctx, w, store.Running)
 		return nil, err
 	}
 	if err := e.cfg.Failpoints.Check(failpoint.SaveAfterCommit); err != nil {
@@ -1063,17 +1063,17 @@ func (e *Engine) saveWith(ctx context.Context, id string, opts SaveOptions) (*Sa
 		if err := freezer.Thaw(ctx, spec); err != nil {
 			// the save is good; the processes are not coming back from here
 			_ = e.cfg.Runtime.Stop(ctx, spec)
-			_ = e.store.SetWorkspaceState(ctx, id, store.Stopped)
+			_ = e.setSavingState(ctx, w, store.Stopped)
 			return nil, fmt.Errorf("saved %s, but the workspace could not carry on (resume that save to continue): %w", saveID, err)
 		}
 		if err := e.cfg.Failpoints.Check(failpoint.SaveAfterThaw); err != nil {
 			return nil, err
 		}
-		if err := e.store.SetWorkspaceState(ctx, id, store.Running); err != nil {
+		if err := e.setSavingState(ctx, w, store.Running); err != nil {
 			return nil, err
 		}
 	case kind == save.Full:
-		if err := e.store.SetWorkspaceState(ctx, id, store.Stopped); err != nil {
+		if err := e.setSavingState(ctx, w, store.Stopped); err != nil {
 			return nil, err
 		}
 	}
@@ -1525,7 +1525,7 @@ func (e *Engine) verifiedSave(ctx context.Context, saveID string) (*store.Save, 
 	if err != nil {
 		return nil, nil, err
 	}
-	if sv.Auto {
+	if sv.Auto && !isInternal(ctx) { // the engine restores its own (a warm save)
 		return nil, nil, errAutoSave(saveID)
 	}
 	switch sv.State {
@@ -2050,18 +2050,37 @@ func (e *Engine) liveWorkspace(ctx context.Context, id string) (*store.Workspace
 	if err != nil {
 		return nil, err
 	}
-	if w.State.Hidden() {
+	if w.State.Hidden() && !(isInternal(ctx) && w.State == store.Warming) {
 		return nil, ErrNotFound
 	}
 	return w, nil
 }
+
+// setSavingState records a workspace's state during a save, except for the
+// engine's own warming workspace (building a warm save), which stays hidden.
+func (e *Engine) setSavingState(ctx context.Context, w *store.Workspace, st store.WorkspaceState) error {
+	if w.State == store.Warming && isInternal(ctx) {
+		return nil
+	}
+	return e.store.SetWorkspaceState(ctx, w.ID, st)
+}
+
+type internalKey struct{}
+
+// internal marks the engine acting on its own hidden workspaces (building a
+// warm save): never reachable from a caller's request.
+func internal(ctx context.Context) context.Context {
+	return context.WithValue(ctx, internalKey{}, true)
+}
+
+func isInternal(ctx context.Context) bool { v, _ := ctx.Value(internalKey{}).(bool); return v }
 
 func (e *Engine) runningWorkspace(ctx context.Context, id string) (*store.Workspace, error) {
 	w, err := e.liveWorkspace(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if w.State != store.Running {
+	if w.State != store.Running && !(isInternal(ctx) && w.State == store.Warming) {
 		return nil, fmt.Errorf("%w: workspace %s is %s", ErrConflict, id, w.State)
 	}
 	return w, nil

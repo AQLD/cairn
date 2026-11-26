@@ -168,6 +168,11 @@ func (e *Engine) makeWarm(ctx context.Context, template string) error {
 	if err := e.needSpace("a warm workspace", 0); err != nil {
 		return err
 	}
+	// before taking a heavy slot: building the warm save takes its own
+	warmSave, err := e.warmSaveFor(ctx, template) // "" without a warm-up
+	if err != nil {
+		return err
+	}
 	release, err := e.heavy(ctx)
 	if err != nil {
 		return err
@@ -190,17 +195,30 @@ func (e *Engine) makeWarm(ctx context.Context, template string) error {
 		discard()
 		return err
 	}
-	if err := e.createRootfs(id, spec); err != nil {
-		discard()
-		return noSpace(err)
-	}
 	rs, err := e.runtimeSpec(&w)
-	if err == nil {
-		err = e.cfg.Runtime.Start(ctx, rs)
-	}
 	if err != nil {
 		discard()
 		return err
+	}
+	if warmSave != "" {
+		// a copy of the warmed-up template: its processes already running
+		_, m, err := e.readySave(internal(ctx), warmSave)
+		if err == nil {
+			err = e.restoreInto(ctx, rs, spec, warmSave, m, "")
+		}
+		if err != nil {
+			discard()
+			return fmt.Errorf("restore the warm save: %w", err)
+		}
+	} else {
+		if err := e.createRootfs(id, spec); err != nil {
+			discard()
+			return noSpace(err)
+		}
+		if err := e.cfg.Runtime.Start(ctx, rs); err != nil {
+			discard()
+			return err
+		}
 	}
 	if e.warmGen(template) != gen { // the template changed while this was built
 		discard()
