@@ -10,6 +10,7 @@ import (
 	"hash/fnv"
 	"io"
 	"log/slog"
+	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -56,7 +57,8 @@ type Runsc struct {
 
 	mu sync.Mutex // serializes network setup
 	// guards enforce allow-lists, per workspace ID (egress.go). Upstream, if
-	// set, replaces the host's resolvers for allowed names (tests).
+	// set, replaces the host's resolvers (tests): for allowed names, and in
+	// the resolv.conf of workspaces that name none.
 	guards   map[string]*egressGuard
 	Upstream []string
 	proxies  map[string]*proxyServer // per workspace ID (Spec.Proxy)
@@ -639,18 +641,51 @@ func hostMemoryMax(limit int64) int64 { return limit + max(limit/2, 256<<20) }
 
 // --- bundle -------------------------------------------------------------------
 
+// resolvMark starts a resolv.conf the engine wrote: rewritten on every start
+// (the host's resolvers can change, and a restored copy may run on another
+// host), unlike one the workspace wrote, which is never touched.
+const resolvMark = "# written by cairn: this host's resolvers (rewritten on every start)\n"
+
+// legacyResolvConf is what engines up to v0.3.0 wrote: public resolvers,
+// which networks that block outside DNS never answer.
+const legacyResolvConf = "nameserver 1.1.1.1\nnameserver 8.8.8.8\n"
+
+// writeResolvConf gives a workspace with network on that names no resolver
+// (images exported from Docker carry an empty resolv.conf) the host's own.
+func (r *Runsc) writeResolvConf(spec Spec) error {
+	rc := filepath.Join(spec.RootDir, "etc", "resolv.conf")
+	data, err := os.ReadFile(rc)
+	ours := err != nil || len(bytes.TrimSpace(data)) == 0 || string(data) == legacyResolvConf || bytes.HasPrefix(data, []byte(resolvMark))
+	if !ours {
+		return nil
+	}
+	up := r.Upstream
+	if len(up) == 0 {
+		up = hostResolvers()
+	}
+	var b strings.Builder
+	b.WriteString(resolvMark)
+	for _, a := range up {
+		host, _, err := net.SplitHostPort(a)
+		if err != nil {
+			host = a
+		}
+		b.WriteString("nameserver " + host + "\n")
+	}
+	if b.String() == string(data) {
+		return nil
+	}
+	_ = os.MkdirAll(filepath.Dir(rc), 0o755)
+	_ = os.Remove(rc) // may be a dangling symlink to the host's resolver
+	return os.WriteFile(rc, []byte(b.String()), 0o644)
+}
+
 // writeBundle writes the OCI config for a workspace. Written fresh before every
 // start and restore so limit changes and path moves (a copy) take effect.
 func (r *Runsc) writeBundle(spec Spec) error {
 	if spec.Network {
-		// images exported from Docker carry an empty resolv.conf
-		rc := filepath.Join(spec.RootDir, "etc", "resolv.conf")
-		if data, err := os.ReadFile(rc); err != nil || len(bytes.TrimSpace(data)) == 0 {
-			_ = os.MkdirAll(filepath.Dir(rc), 0o755)
-			_ = os.Remove(rc) // may be a dangling symlink to the host's resolver
-			if err := os.WriteFile(rc, []byte("nameserver 1.1.1.1\nnameserver 8.8.8.8\n"), 0o644); err != nil {
-				return err
-			}
+		if err := r.writeResolvConf(spec); err != nil {
+			return err
 		}
 	}
 	dir := bundleDir(spec)

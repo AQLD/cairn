@@ -152,6 +152,12 @@ var Catalog = []Scenario{
 					{ID: "G5.9.8", Title: "A copy gets its own placeholders", Proves: "A copy of a save gets new placeholders for the same secrets; the source workspace's placeholder does nothing in the copy.", Milestone: E4, Needs: []Need{NeedNetworkControl, NeedInProcess}},
 					{ID: "G5.9.9", Title: "Bypassing the proxy gets nowhere", Proves: "A direct connection on port 443 from a workspace with secrets is dropped.", Milestone: E4, Needs: []Need{NeedNetworkControl, NeedInProcess}},
 				}},
+			{ID: "G5.10", Title: "A workspace with network on resolves names wherever its host can", Proves: "Networks that block public DNS (common in companies) do not leave agents' workspaces unable to resolve anything.", Milestone: E1,
+				Children: []Scenario{
+					{ID: "G5.10.1", Title: "A workspace whose template names no resolver uses the host's", Proves: "Its /etc/resolv.conf lists the host's own resolvers (systemd-resolved's upstreams, never a loopback stub), and a name the host resolves resolves inside it.", Milestone: E1, Needs: []Need{NeedNetworkControl, NeedInProcess}},
+					{ID: "G5.10.2", Title: "The public resolvers older engines wrote are replaced on the next start", Proves: "A workspace that got 1.1.1.1 and 8.8.8.8 from an older engine gets the host's resolvers once it starts again.", Milestone: E1, Needs: []Need{NeedNetworkControl, NeedInProcess}},
+					{ID: "G5.10.3", Title: "A resolv.conf the workspace wrote itself is kept", Proves: "Resolvers an agent or template chose are never replaced.", Milestone: E1, Needs: []Need{NeedNetworkControl}},
+				}},
 		},
 	},
 	{

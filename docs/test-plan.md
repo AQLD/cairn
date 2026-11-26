@@ -7,7 +7,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
 | E0 | 4 | 0 | 1 |
-| E1 | 59 | 0 | 4 |
+| E1 | 62 | 0 | 4 |
 | E2 | 32 | 1 | 1 |
 | E3 | 122 | 4 | 2 |
 | E4 | 48 | 8 | 1 |
@@ -228,6 +228,10 @@ Cairn runs entirely on your own servers, safely, with nothing leaving your netwo
   - ✅ **G5.9.7** Secret values are stored only encrypted · E4 · needs in_process
   - ✅ **G5.9.8** A copy gets its own placeholders · E4 · needs network_control, in_process
   - ✅ **G5.9.9** Bypassing the proxy gets nowhere · E4 · needs network_control, in_process
+- 📂 **G5.10** A workspace with network on resolves names wherever its host can · E1
+  - ✅ **G5.10.1** A workspace whose template names no resolver uses the host's · E1 · needs network_control, in_process
+  - ✅ **G5.10.2** The public resolvers older engines wrote are replaced on the next start · E1 · needs network_control, in_process
+  - ✅ **G5.10.3** A resolv.conf the workspace wrote itself is kept · E1 · needs network_control
 
 ## G6 A save is never lost or silently broken
 

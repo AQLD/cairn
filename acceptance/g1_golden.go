@@ -3,6 +3,7 @@ package acceptance
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -128,7 +129,13 @@ func runGolden(e *Env, w goldenWorkload) {
 		deadline := time.Now().Add(w.warm)
 		for !w.ready(probeGolden(e, ws.ID)) {
 			if time.Now().After(deadline) {
-				e.T.Fatalf("%s not ready after %s: %v", w.name, w.warm, probeGolden(e, ws.ID))
+				// the workload's own logs say why (a stalled download, DNS)
+				logs, _ := e.C.Exec(e.Ctx, ws.ID, client.Exec{Command: []string{"sh", "-c", "for f in /spike/*.log; do echo \"== $f\"; tail -n 15 \"$f\"; done 2>&1"}, TimeoutMS: 20_000})
+				net := ""
+				if w.network {
+					net = networkReport(e, ws.ID)
+				}
+				e.T.Fatalf("%s not ready after %s: %v\n%s%s%s", w.name, w.warm, probeGolden(e, ws.ID), logs.Stdout, logs.Stderr, net)
 			}
 			time.Sleep(200 * time.Millisecond)
 		}
@@ -191,4 +198,47 @@ func tail(s string, n int) string {
 		return s[len(s)-n:]
 	}
 	return s
+}
+
+// networkProbe runs in a workspace: its address, and whether a TCP
+// connection and a DNS query over UDP reach the outside.
+const networkProbe = `
+import socket, struct
+def ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(("1.1.1.1", 53)); a = s.getsockname()[0]; s.close(); return a
+def tcp():
+    try:
+        socket.create_connection(("1.1.1.1", 443), timeout=3).close(); return "ok"
+    except Exception as e: return repr(e)
+def dns(server):
+    q = struct.pack(">HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0) + b"".join(bytes([len(p)]) + p.encode() for p in "pypi.org".split(".")) + b"\0" + struct.pack(">HH", 1, 1)
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.settimeout(3)
+    try:
+        s.sendto(q, (server, 53)); s.recvfrom(512); return "ok"
+    except Exception as e: return repr(e)
+print("ip", ip()); print("tcp 1.1.1.1:443", tcp()); print("dns 1.1.1.1", dns("1.1.1.1")); print("dns 8.8.8.8", dns("8.8.8.8"))
+print("resolv.conf", open("/etc/resolv.conf").read().replace("\n", "; "))
+`
+
+// networkReport says why a workspace with network on cannot reach the
+// outside: what it sees, and (as root on Linux) the host's route and rules
+// for its address.
+func networkReport(e *Env, ws string) string {
+	e.T.Helper()
+	res, err := e.C.Exec(e.Ctx, ws, client.Exec{Command: []string{"python3", "-c", networkProbe}, TimeoutMS: 30_000})
+	if err != nil {
+		return "\nnetwork probe: " + err.Error()
+	}
+	out := "\n== network (inside)\n" + res.Stdout + res.Stderr
+	var ip string
+	for _, line := range strings.Split(res.Stdout, "\n") {
+		if strings.HasPrefix(line, "ip ") {
+			ip = strings.TrimPrefix(line, "ip ")
+		}
+	}
+	if ip == "" || os.Geteuid() != 0 {
+		return out
+	}
+	host, _ := exec.Command("sh", "-c", "echo route: $(ip route get "+ip+"); echo addrs:; ip -o -4 addr | grep -F '"+strings.TrimSuffix(ip, ip[strings.LastIndex(ip, ".")+1:])+"'; echo nat:; iptables -w -t nat -S POSTROUTING | grep -F '"+ip+"/32'; echo forward:; iptables -w -S FORWARD | head -n 25; sysctl net.ipv4.ip_forward").CombinedOutput()
+	return out + "== network (host)\n" + string(host)
 }
