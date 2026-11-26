@@ -148,6 +148,14 @@ type CreateWorkspace struct {
 	// Secrets the workspace may use, by name: it gets a placeholder for each,
 	// swapped for the value only on requests to the secret's hosts.
 	Secrets []string `json:"secrets,omitempty"`
+	// Quota limits how long it may run; reaching it pauses the workspace
+	// (its work saved) until the quota is raised (SetQuota).
+	Quota *Quota `json:"quota,omitempty"`
+}
+
+// Quota limits a workspace. Zero fields are unlimited.
+type Quota struct {
+	RunSeconds int64 `json:"run_seconds,omitempty"` // how long its sandbox may run in all
 }
 
 // Template is a root filesystem new workspaces start from.
@@ -179,6 +187,8 @@ type Workspace struct {
 	Egress     []string  `json:"egress,omitempty"`  // outbound allow-list, if any
 	Secrets    []string  `json:"secrets,omitempty"` // secrets it uses, by name
 	Owner      string    `json:"owner,omitempty"`   // the API key that made it, if any
+	Quota      *Quota    `json:"quota,omitempty"`
+	RunSeconds float64   `json:"run_seconds"` // how long its sandbox has run
 	Template   string    `json:"template,omitempty"`
 	SourceSave string    `json:"source_save,omitempty"`
 	BaseSave   string    `json:"base_save,omitempty"` // the save its state comes from: last saved, resumed or copied
@@ -572,6 +582,13 @@ func (c *Client) GetTemplate(ctx context.Context, name string) (*Template, error
 func (c *Client) SetTemplateWarmup(ctx context.Context, name string, command []string) (*Template, error) {
 	var out Template
 	return &out, c.do(ctx, http.MethodPut, "/v1/templates/"+url.PathEscape(name)+"/warmup", map[string]any{"command": command}, &out)
+}
+
+// SetQuota sets a workspace's quota (zero fields: unlimited). A workspace
+// paused at its quota wakes on its next use once it is under the new one.
+func (c *Client) SetQuota(ctx context.Context, id string, q Quota) (*Workspace, error) {
+	var out Workspace
+	return &out, c.do(ctx, http.MethodPut, "/v1/workspaces/"+url.PathEscape(id)+"/quota", q, &out)
 }
 
 func (c *Client) DeleteTemplate(ctx context.Context, name string) error {
