@@ -7,7 +7,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
 | E0 | 4 | 0 | 1 |
-| E1 | 63 | 0 | 4 |
+| E1 | 64 | 0 | 4 |
 | E2 | 33 | 1 | 1 |
 | E3 | 131 | 3 | 2 |
 | E4 | 54 | 6 | 1 |
@@ -138,6 +138,7 @@ Work done in a workspace is still there, exactly as it was, after a save and res
 - ✅ **G1.12** An app and its database stay connected across a full save · E1 · needs full_save, persistent_processes
 - ✅ **G1.13** A file written through the API is seen whole by the workspace's programs · E1
 - ✅ **G1.14** A project folder goes into a workspace and comes back unchanged · E3
+- ✅ **G1.15** Reading a file that a program is still writing returns a whole snapshot of it · E1 · needs persistent_processes
 - ✅ **G1.11** Files in /tmp are kept like any other file · E1 · needs isolation, in_process
 - 📂 **G1.7** Golden workloads save and resume correctly · E0 · needs full_save
   - ✅ **G1.7.1** Python script with open files · E0 · needs full_save
