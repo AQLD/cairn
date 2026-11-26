@@ -9,7 +9,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | E0 | 4 | 0 | 1 |
 | E1 | 63 | 0 | 4 |
 | E2 | 32 | 1 | 1 |
-| E3 | 122 | 4 | 2 |
+| E3 | 125 | 4 | 2 |
 | E4 | 48 | 8 | 1 |
 | E5 | 1 | 3 | 0 |
 | later | 0 | 3 | 0 |
@@ -308,6 +308,10 @@ However the engine stops, it comes back knowing every workspace and save, and ne
 - ✅ **G7.14** A crash around a restore never makes a later save miss a change · E3 · needs in_process
 - ✅ **G7.15** Recovery never waits on object storage · E3 · needs in_process
 - ✅ **G7.16** Restores running while other workspaces start never lose a file · E3 · needs isolation, disk_limits
+- 📂 **G7.17** A lost server's workspace comes back elsewhere under its own ID when the caller says that server is gone · E3
+  - ✅ **G7.17.1** Resuming with adopt brings the workspace back under its own ID and name, files and processes · E3 · needs in_process
+  - ✅ **G7.17.2** Resuming without adopt is refused and says how to go on · E3 · needs in_process
+  - ✅ **G7.17.3** A workspace deleted on this server is never adopted back · E3
 - ✅ **G7.7** A lost server's workspaces resume elsewhere from their last save · E5 · needs in_process
 - ⏳ **G7.8** A workspace never runs on two servers at once · E5 · needs multi_server
 

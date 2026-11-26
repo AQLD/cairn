@@ -401,7 +401,13 @@ func (s *Server) diffSave(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) resume(w http.ResponseWriter, r *http.Request) {
-	ws, err := s.eng.Resume(r.Context(), r.PathValue("id"))
+	var req struct {
+		Adopt bool `json:"adopt"` // re-create a workspace known only from the bucket
+	}
+	if r.ContentLength != 0 && !s.decode(w, r, &req) {
+		return
+	}
+	ws, err := s.eng.ResumeWith(r.Context(), r.PathValue("id"), engine.ResumeOptions{Adopt: req.Adopt})
 	if err != nil {
 		s.fail(w, err)
 		return

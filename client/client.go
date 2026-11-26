@@ -628,8 +628,26 @@ func (c *Client) VerifySave(ctx context.Context, id string) (*Save, error) {
 }
 
 func (c *Client) Resume(ctx context.Context, saveID string) (*Workspace, error) {
+	return c.ResumeWith(ctx, saveID, ResumeOptions{})
+}
+
+// ResumeOptions changes how a resume treats a workspace the engine does not
+// know.
+type ResumeOptions struct {
+	// Adopt re-creates a workspace the engine knows only from its save (made
+	// on another server, through object storage) under its own ID and name.
+	// Ask for it only when that server is gone: the engine cannot tell.
+	Adopt bool
+}
+
+// ResumeWith is Resume with options.
+func (c *Client) ResumeWith(ctx context.Context, saveID string, opts ResumeOptions) (*Workspace, error) {
 	var out Workspace
-	return &out, c.do(ctx, http.MethodPost, "/v1/saves/"+url.PathEscape(saveID)+"/resume", nil, &out)
+	var body any
+	if opts.Adopt {
+		body = map[string]any{"adopt": true}
+	}
+	return &out, c.do(ctx, http.MethodPost, "/v1/saves/"+url.PathEscape(saveID)+"/resume", body, &out)
 }
 
 func (c *Client) Copy(ctx context.Context, saveID string, count int) ([]Workspace, error) {
