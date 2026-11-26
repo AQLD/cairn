@@ -152,6 +152,7 @@ type Engine struct {
 	startedAt    time.Time   // when this engine opened
 	needsRepair  sync.Map    // workspace ID -> true: its disk hit write errors the guard saw
 	deleting     sync.Map    // workspace ID -> true: being deleted, so the guard leaves its disk thawed
+	movedTo      sync.Map    // workspace ID -> the engine that adopted it (owner.go)
 	freezeMu     sync.Mutex  // a guard freeze and a delete's thaw never interleave
 	stopPressure context.CancelFunc
 	pressureDone chan struct{}
@@ -2164,6 +2165,9 @@ func (e *Engine) runningWorkspace(ctx context.Context, id string) (*store.Worksp
 	w, err := e.liveWorkspace(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	if w.State == store.Moved {
+		return nil, e.movedErr(id)
 	}
 	if w.State != store.Running && !(isInternal(ctx) && w.State == store.Warming) {
 		return nil, fmt.Errorf("%w: workspace %s is %s", ErrConflict, id, w.State)
