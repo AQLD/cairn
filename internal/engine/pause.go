@@ -114,8 +114,8 @@ func (e *Engine) wakeLocked(ctx context.Context, id string) error {
 	if err != nil || w.State != store.Paused {
 		return err
 	}
-	if overQuota(w) {
-		return quotaErr(w) // it stays paused, its work saved, until the quota is raised
+	if e.overQuota(w) {
+		return e.quotaErr(w) // it stays paused, its work saved, until the quota is raised
 	}
 	spec, err := e.runtimeSpec(w)
 	if err != nil {

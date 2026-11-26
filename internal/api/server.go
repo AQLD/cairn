@@ -214,6 +214,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/keys", s.createKey)
 	s.mux.HandleFunc("GET /v1/keys", s.listKeys)
 	s.mux.HandleFunc("DELETE /v1/keys/{id}", s.revokeKey)
+	s.mux.HandleFunc("PUT /v1/keys/{id}/quota", s.setKeyQuota)
 	s.mux.HandleFunc("GET /v1/templates", s.listTemplates)
 	s.mux.HandleFunc("PUT /v1/templates/{name}", s.importTemplate)
 	s.mux.HandleFunc("PUT /v1/templates/{name}/warmup", s.setWarmup)
@@ -265,6 +266,20 @@ func (s *Server) getWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, ws)
+}
+
+// setKeyQuota sets a key's run-time quota, for its workspaces together.
+func (s *Server) setKeyQuota(w http.ResponseWriter, r *http.Request) {
+	var q engine.Quota
+	if !s.decode(w, r, &q) {
+		return
+	}
+	k, err := s.eng.SetKeyQuota(r.Context(), r.PathValue("id"), &q)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, k)
 }
 
 // setQuota sets (or, with zero, clears) a workspace's run-time quota.

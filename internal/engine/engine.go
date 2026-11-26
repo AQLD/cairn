@@ -126,6 +126,9 @@ type Config struct {
 	// QuotaInterval is how often workspaces' run time is counted
 	// (DefaultQuotaInterval if 0; quota.go).
 	QuotaInterval time.Duration
+	// DefaultRunQuota is the run-time quota of workspaces created without
+	// one (0: none).
+	DefaultRunQuota time.Duration
 	// RestoreState rebuilds the state database from its last backup and the
 	// data folder (see state.go) if it is missing or damaged; a healthy one is
 	// left alone, so the setting is safe to leave on.
@@ -158,6 +161,7 @@ type Engine struct {
 	saveTimeMu   sync.Mutex
 	lastSave     time.Time  // the newest save time handed out (saveTime)
 	movedTo      sync.Map   // workspace ID -> the engine that adopted it (owner.go)
+	keyOver      sync.Map   // API key ID -> true: its workspaces used its run-time quota (quota.go)
 	freezeMu     sync.Mutex // a guard freeze and a delete's thaw never interleave
 	stopPressure context.CancelFunc
 	pressureDone chan struct{}
@@ -395,6 +399,7 @@ func Open(ctx context.Context, cfg Config) (*Engine, error) {
 		e.stopPressure, e.pressureDone = cancel, make(chan struct{})
 		go e.pressureGuard(pctx)
 	}
+	e.refreshKeyQuotas(ctx)
 	qctx, qcancel := context.WithCancel(context.Background())
 	e.stopQuota, e.quotaDone = qcancel, make(chan struct{})
 	go e.quotaLoop(qctx)
@@ -521,6 +526,12 @@ func (e *Engine) createWorkspace(ctx context.Context, req CreateRequest) (*Works
 	}
 	if err := req.Quota.validate(); err != nil {
 		return nil, err
+	}
+	if err := e.checkKeyQuota(ctx); err != nil {
+		return nil, err
+	}
+	if req.Quota == nil && e.cfg.DefaultRunQuota > 0 {
+		req.Quota = &Quota{RunSeconds: int64(e.cfg.DefaultRunQuota.Seconds())}
 	}
 	if req.Limits.DiskMB != 0 && req.Limits.DiskMB < disk.MinSizeMB {
 		return nil, fmt.Errorf("%w: disk_mb must be at least %d", ErrInvalid, disk.MinSizeMB)
@@ -1910,6 +1921,9 @@ func (e *Engine) copy(ctx context.Context, saveID string, count int, requestKey 
 	if count < 1 || count > MaxCopies {
 		return nil, fmt.Errorf("%w: count must be between 1 and %d", ErrInvalid, MaxCopies)
 	}
+	if err := e.checkKeyQuota(ctx); err != nil {
+		return nil, err
+	}
 	sv, m, err := e.readySave(ctx, saveID)
 	if err != nil {
 		return nil, err
@@ -2217,8 +2231,8 @@ func (e *Engine) runningWorkspace(ctx context.Context, id string) (*store.Worksp
 	if w.State == store.Moved {
 		return nil, e.movedErr(id)
 	}
-	if overQuota(w) {
-		return nil, quotaErr(w)
+	if e.overQuota(w) {
+		return nil, e.quotaErr(w)
 	}
 	if w.State != store.Running && !(isInternal(ctx) && w.State == store.Warming) {
 		return nil, fmt.Errorf("%w: workspace %s is %s", ErrConflict, id, w.State)
