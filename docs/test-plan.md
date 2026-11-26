@@ -7,7 +7,7 @@ Every end goal Cairn must meet, broken down into the scenarios that prove it. A 
 | Milestone | Implemented | Pending | Benchmarks |
 | --- | --- | --- | --- |
 | E0 | 4 | 0 | 1 |
-| E1 | 55 | 0 | 4 |
+| E1 | 56 | 0 | 4 |
 | E2 | 32 | 1 | 1 |
 | E3 | 122 | 4 | 2 |
 | E4 | 48 | 8 | 1 |
@@ -247,6 +247,7 @@ Every save either restores exactly or is refused with a clear error. Gate: **E2*
   - ✅ **G6.4.3** A real full disk on a server · E2 · needs in_process
   - ✅ **G6.4.4** When the server's volume nearly fills, workspace writes wait or fail and nothing written is lost · E2 · needs disk_limits, in_process
   - ✅ **G6.4.5** An engine stopping under disk pressure leaves no workspace disk frozen · E2 · needs disk_limits, in_process
+  - ✅ **G6.4.6** Deleting a workspace under disk pressure finishes even when the guard checks again meanwhile · E1 · needs disk_limits, in_process
 - 📂 **G6.5** Saves live in object storage and survive the server · E2 · needs in_process
   - ✅ **G6.5.1** A dropped storage connection mid-upload is retried or fails cleanly · E2 · needs in_process
   - ✅ **G6.5.2** Downloaded saves are verified before use · E2 · needs in_process

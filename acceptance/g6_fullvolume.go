@@ -11,6 +11,7 @@ import (
 
 	"github.com/AQLD/cairn/client"
 	"github.com/AQLD/cairn/internal/engine"
+	"github.com/AQLD/cairn/internal/failpoint"
 )
 
 // G6.4.3: the engine's own volume really fills up (not a failpoint): the
@@ -182,56 +183,66 @@ func init() {
 	})
 }
 
+// pressuredPair runs the engine on a small volume of its own, makes two
+// workspaces (one, gone, with a process that keeps writing) and fills the
+// volume until the guard freezes their disks.
+func pressuredPair(e *Env) (mnt string, kept, gone *client.Workspace) {
+	e.T.Helper()
+	if _, err := exec.LookPath("fallocate"); err != nil {
+		e.T.Skip("needs fallocate")
+	}
+	vol := e.T.TempDir()
+	img := filepath.Join(vol, "volume.img")
+	mnt = filepath.Join(vol, "data")
+	e.Must(os.Mkdir(mnt, 0o700))
+	run(e, "truncate", "-s", fmt.Sprintf("%dM", fullVolumeMB), img)
+	run(e, "mkfs.ext4", "-q", "-F", "-m", "0", img)
+	run(e, "mount", "-o", "loop", img, mnt)
+	e.T.Cleanup(func() {
+		unmountAll(mnt)
+		_ = exec.Command("umount", "-l", mnt).Run()
+	})
+	e.stop()
+	orig := e.DataDir
+	e.T.Cleanup(func() { unmountAll(orig) })
+	e.DataDir = mnt
+	const reserve = 300 << 20
+	e.configure = func(c *engine.Config) { c.MinFreeBytes = 64 << 20; c.DiskReserve = reserve }
+	e.start()
+	e.T.Cleanup(func() { e.configure = nil })
+
+	var err error
+	kept, err = e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "kept", Limits: client.Limits{DiskMB: 256}})
+	e.Must(err)
+	gone, err = e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "deleted", Limits: client.Limits{DiskMB: 256}})
+	e.Must(err)
+	// something in the workspace to be deleted keeps writing: once its disk
+	// freezes, that writer waits in the kernel
+	e.Sh(gone.ID, "nohup sh -c 'while :; do dd if=/dev/zero of=w.bin bs=1M count=1 conv=fsync 2>/dev/null; done' >/dev/null 2>&1 &")
+	// whatever happens, never leave a frozen filesystem behind (cleanups run
+	// last-registered first: before the unmounts above)
+	e.T.Cleanup(func() {
+		for _, id := range []string{kept.ID, gone.ID} {
+			_ = exec.Command("fsfreeze", "-u", filepath.Join(mnt, "workspaces", id, "rootfs")).Run()
+		}
+	})
+	var st syscall.Statfs_t
+	e.Must(syscall.Statfs(mnt, &st))
+	free := int64(st.Bavail) * int64(st.Bsize) //nolint:unconvert
+	run(e, "fallocate", "-l", fmt.Sprint(free-reserve/2), filepath.Join(mnt, "filler"))
+	deadline := time.Now().Add(5 * time.Second)
+	for !client.IsCode(e.C.WriteFile(e.Ctx, kept.ID, "probe.txt", []byte("x")), "insufficient_storage") {
+		if time.Now().After(deadline) {
+			e.T.Fatal("the guard did not trip 5 s after the volume went under the reserve")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return mnt, kept, gone
+}
+
 func init() {
 	register("G6.4.5", func(e *Env) {
-		if _, err := exec.LookPath("fallocate"); err != nil {
-			e.T.Skip("needs fallocate")
-		}
-		vol := e.T.TempDir()
-		img, mnt := filepath.Join(vol, "volume.img"), filepath.Join(vol, "data")
-		e.Must(os.Mkdir(mnt, 0o700))
-		run(e, "truncate", "-s", fmt.Sprintf("%dM", fullVolumeMB), img)
-		run(e, "mkfs.ext4", "-q", "-F", "-m", "0", img)
-		run(e, "mount", "-o", "loop", img, mnt)
-		e.T.Cleanup(func() {
-			unmountAll(mnt)
-			_ = exec.Command("umount", "-l", mnt).Run()
-		})
-		e.stop()
-		orig := e.DataDir
-		e.T.Cleanup(func() { unmountAll(orig) })
-		e.DataDir = mnt
-		const reserve = 300 << 20
-		e.configure = func(c *engine.Config) { c.MinFreeBytes = 64 << 20; c.DiskReserve = reserve }
-		e.start()
-		defer func() { e.configure = nil }()
-
-		kept, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "kept", Limits: client.Limits{DiskMB: 256}})
-		e.Must(err)
-		gone, err := e.C.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "deleted", Limits: client.Limits{DiskMB: 256}})
-		e.Must(err)
-		// something in the workspace to be deleted keeps writing: once its disk
-		// freezes, that writer waits in the kernel
-		e.Sh(gone.ID, "nohup sh -c 'while :; do dd if=/dev/zero of=w.bin bs=1M count=1 conv=fsync 2>/dev/null; done' >/dev/null 2>&1 &")
-		// whatever happens, never leave a frozen filesystem behind (cleanups run
-		// last-registered first: before the unmounts above)
-		e.T.Cleanup(func() {
-			for _, id := range []string{kept.ID, gone.ID} {
-				_ = exec.Command("fsfreeze", "-u", filepath.Join(mnt, "workspaces", id, "rootfs")).Run()
-			}
-		})
-		var st syscall.Statfs_t
-		e.Must(syscall.Statfs(mnt, &st))
-		free := int64(st.Bavail) * int64(st.Bsize) //nolint:unconvert
-		run(e, "fallocate", "-l", fmt.Sprint(free-reserve/2), filepath.Join(mnt, "filler"))
-		deadline := time.Now().Add(5 * time.Second)
-		for !client.IsCode(e.C.WriteFile(e.Ctx, kept.ID, "probe.txt", []byte("x")), "insufficient_storage") {
-			if time.Now().After(deadline) {
-				e.T.Fatal("the guard did not trip 5 s after the volume went under the reserve")
-			}
-			time.Sleep(100 * time.Millisecond)
-		}
-
+		mnt, kept, gone := pressuredPair(e)
 		// deleting a frozen workspace completes
 		done := make(chan error, 1)
 		go func() { done <- e.C.DeleteWorkspace(e.Ctx, gone.ID) }()
@@ -255,5 +266,27 @@ func init() {
 		e.Must(os.Remove(filepath.Join(mnt, "filler")))
 		e.start()
 		Equal(e, "workspace after the pressure", e.Read(kept.ID, "after-stop.txt"), "x")
+	})
+
+	register("G6.4.6", func(e *Env) {
+		mnt, kept, gone := pressuredPair(e)
+		// a second between the delete's thaw and its sandbox stop: the guard
+		// checks four times in it (a loaded host takes that long anyway)
+		e.Failpoints.Enable(failpoint.DeleteAfterThaw, failpoint.Delay(time.Second))
+		defer e.Failpoints.Disable(failpoint.DeleteAfterThaw)
+		done := make(chan error, 1)
+		go func() { done <- e.C.DeleteWorkspace(e.Ctx, gone.ID) }()
+		select {
+		case err := <-done:
+			e.Must(err)
+		case <-time.After(30 * time.Second):
+			e.T.Fatal("deleting a workspace under disk pressure did not finish in 30 s: its disk was frozen again while it was stopped")
+		}
+		if _, err := e.C.GetWorkspace(e.Ctx, gone.ID); !client.IsCode(err, "not_found") {
+			e.T.Fatalf("deleted workspace: %v", err)
+		}
+		// the guard still holds the other one
+		e.ErrCode(e.C.WriteFile(e.Ctx, kept.ID, "probe.txt", []byte("x")), "insufficient_storage")
+		e.Must(os.Remove(filepath.Join(mnt, "filler")))
 	})
 }

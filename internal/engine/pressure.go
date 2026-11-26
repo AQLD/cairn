@@ -97,7 +97,14 @@ func (e *Engine) setDisksReadOnly(ctx context.Context, ro bool) {
 		if ro {
 			op = disk.Freeze
 		}
-		if err := op(dir); err != nil {
+		e.freezeMu.Lock()
+		_, going := e.deleting.Load(ws[i].ID)
+		var opErr error
+		if !going || !ro { // one being deleted stays thawed so its sandbox can be stopped
+			opErr = op(dir)
+		}
+		e.freezeMu.Unlock()
+		if err := opErr; err != nil {
 			e.log.Warn("could not change a workspace disk's write access", "workspace", ws[i].ID, "read_only", ro, "err", err)
 			if ro {
 				// The volume filled before the guard could act (an outside
