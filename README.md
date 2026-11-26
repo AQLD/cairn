@@ -46,6 +46,8 @@ cairn up                      # engine in Docker with real gVisor workspaces (un
 
 From a checkout of this repository, `go run ./cmd/cairn up --build` builds the engine image locally instead of pulling it.
 
+On Linux with gVisor's `runsc` installed, `sudo cairn up --native` runs the engine straight on the host instead of in Docker: a background `cairnd` from next to the CLI, with its workspaces, saves, log and pid file in `/var/lib/cairn-up/cairn`. `sudo cairn down` and `sudo cairn down --purge` work the same way, and the client config goes to your own `~/.config/cairn`.
+
 `cairn up` writes `~/.config/cairn/config.json`, so the CLI and the Python SDK find the engine with nothing to set. Then:
 
 ```sh
