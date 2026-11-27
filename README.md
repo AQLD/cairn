@@ -91,7 +91,7 @@ For working on Cairn itself there is also a `host` runtime (`make run`) that run
 - Quick save (files) and full save (memory and running processes), with saves in a local folder or S3-compatible storage; saves of templated workspaces hold only what changed
 - Resume, rewind and copy from any save; list the files a step changed (`cairn diff`)
 - Old saves pruned by policy (the newest 20 and anything under 7 days kept), pinned saves kept for good (`cairn pin`)
-- A warm pool for instant creates (`cairnd --warm N`), and workspaces that share their template read-only (`cairnd --shared-templates`, opt-in)
+- A warm pool for instant creates (`cairnd --warm N`), and workspaces that share their template read-only where the host allows it (on by default; `cairnd --shared-templates=false` gives each its own copy)
 - A volume that fills never loses a workspace's write: below a reserve, writes wait until there is room
 - Outbound allow-lists per workspace (`cairn create --allow pypi.org --allow '*.github.com'`): only those names and ranges are reachable
 - Secrets a workspace uses but never holds (`cairn secret set GITHUB_TOKEN --host github.com`, then `secrets` on create): it gets a placeholder, swapped for the value only on requests to the secret's hosts, so no disk, save or copy carries it

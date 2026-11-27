@@ -105,9 +105,10 @@ type Config struct {
 	NoDiskImages bool
 	// SharedTemplates makes workspaces share one read-only copy of their
 	// template (an overlay on its base's root) instead of each getting its
-	// own copy, where the host supports it. Off by default: on Linux 7.0,
-	// overlayfs does not report a write that fails underneath it (a full
-	// host volume under a sparse layer image) to the program's fsync.
+	// own copy, where the host supports it: checked at Open, including that
+	// overlayfs reports a write that fails underneath it to the program's
+	// fsync (Linux 7.0's does not). cairnd turns it on by default; the zero
+	// Config leaves it off.
 	SharedTemplates bool
 	// Warm keeps this many workspaces per template created and started
 	// ahead of demand (the key "" is the default template); a create with

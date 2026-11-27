@@ -61,7 +61,7 @@ func run() error {
 	saveStore := flag.String("save-store", "", "keep a copy of every save in S3-compatible object storage: s3://bucket/prefix?endpoint=https://host&region=r (credentials from AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)")
 	restoreState := flag.Bool("restore-state", false, "rebuild a lost or damaged state database from its last backup and the data folder, then run as usual")
 	backupEvery := flag.Duration("state-backup-interval", time.Hour, "how often to back up the state database (state.db.backup; 0 disables)")
-	sharedTemplates := flag.Bool("shared-templates", false, "workspaces share one read-only copy of their template and store only their changes (needs Linux, root and overlayfs; experimental: on Linux 7.0 a program's fsync is not told about a write that failed underneath, as on a full host volume)")
+	sharedTemplates := flag.Bool("shared-templates", true, "workspaces share one read-only copy of their template and store only their changes, where the host allows it (Linux, root, overlayfs that renames folders and reports a failed write to fsync; checked at start, else each workspace gets its own copy); false: always their own copy")
 	runQuota := flag.Duration("run-quota", 0, "run-time quota of workspaces created without one: at it they pause, work saved, until it is raised (0: none)")
 	warm := flag.Int("warm", 0, "keep N workspaces of the default template created and started ahead of demand, so creates return at once (0: off)")
 	diskReserveMB := flag.Int64("disk-reserve-mb", engine.DefaultDiskReserve>>20, "below this much free space on the data volume, workspace disks turn read-only until there is room (writes fail at once instead of being lost); 0 turns this off")
