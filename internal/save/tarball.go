@@ -312,3 +312,63 @@ func extract(r io.Reader, dir string, maxBytes int64, overlay bool) error {
 }
 
 func ioReadFull(r io.Reader, b []byte) (int, error) { return io.ReadFull(r, b) }
+
+// CheckTar reads a root filesystem tar and refuses it for what extracting it
+// would refuse, without writing anything: unsafe paths and link targets,
+// sparse entries, more content than maxBytes, a hard link to an entry not
+// seen before, the same file twice, or a path under a file.
+func CheckTar(r io.Reader, maxBytes int64) error {
+	budget := maxBytes
+	kind := map[string]byte{} // what each path is so far
+	tr := tar.NewReader(r)
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		name := path.Clean(strings.TrimSuffix(hdr.Name, "/"))
+		if name == "." && hdr.Typeflag == tar.TypeDir {
+			continue
+		}
+		if name == "." || path.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") {
+			return fmt.Errorf("%w: unsafe path %q in filesystem image", ErrCorrupt, hdr.Name)
+		}
+		for d := path.Dir(name); d != "."; d = path.Dir(d) {
+			if k, ok := kind[d]; ok && k != tar.TypeDir {
+				return fmt.Errorf("%w: %q is under %q, which is not a folder", ErrCorrupt, hdr.Name, d)
+			}
+		}
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if k, ok := kind[name]; ok && k != tar.TypeDir {
+				return fmt.Errorf("%w: %q is both a folder and a file", ErrCorrupt, hdr.Name)
+			}
+			kind[name] = tar.TypeDir
+		case tar.TypeReg, tar.TypeSymlink, tar.TypeLink:
+			if _, ok := kind[name]; ok {
+				return fmt.Errorf("%w: %q appears twice", ErrCorrupt, hdr.Name)
+			}
+			if hdr.Typeflag == tar.TypeReg {
+				if hdr.Size < 0 || hdr.Size > budget {
+					return fmt.Errorf("%w: %q claims %d bytes, more than the archive holds", ErrCorrupt, hdr.Name, hdr.Size)
+				}
+				budget -= hdr.Size
+			}
+			if hdr.Typeflag == tar.TypeLink {
+				target := path.Clean(strings.TrimPrefix(hdr.Linkname, "./"))
+				if target == "." || path.IsAbs(target) || target == ".." || strings.HasPrefix(target, "../") {
+					return fmt.Errorf("%w: unsafe link target %q in filesystem image", ErrCorrupt, hdr.Linkname)
+				}
+				if k, ok := kind[target]; !ok || k == tar.TypeDir {
+					return fmt.Errorf("%w: hard link %q to %q, which is not an earlier file", ErrCorrupt, hdr.Name, hdr.Linkname)
+				}
+			}
+			kind[name] = hdr.Typeflag
+		case tar.TypeGNUSparse:
+			return fmt.Errorf("%w: sparse entry %q (Cairn never writes sparse files)", ErrCorrupt, hdr.Name)
+		}
+	}
+}

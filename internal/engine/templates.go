@@ -92,18 +92,16 @@ func (e *Engine) importTemplate(ctx context.Context, name string, r io.Reader, s
 	}
 
 	// Prove it extracts (paths, size) before anything is created from it.
-	probe := filepath.Join(tmp, "probe")
+	// usable as a root filesystem: checked by reading it, as extracting it
+	// would check (writing it all out just to look took longer than the upload)
 	tf, err := os.Open(filepath.Join(tmp, "rootfs.tar"))
 	if err != nil {
 		return nil, err
 	}
-	err = save.UntarDir(tf, probe, n)
+	err = save.CheckTar(tf, n)
 	tf.Close()
 	if err != nil {
 		return nil, fmt.Errorf("%w: template is not a usable root filesystem tar: %v", ErrInvalid, err)
-	}
-	if err := os.RemoveAll(probe); err != nil {
-		return nil, err
 	}
 
 	t := Template{Name: name, Size: n, SHA256: hex.EncodeToString(h.Sum(nil)), CreatedAt: e.cfg.Now().UTC(),
@@ -136,7 +134,7 @@ func (e *Engine) importTemplate(ctx context.Context, name string, r io.Reader, s
 	}
 	_ = os.RemoveAll(old)
 	// keep it as a base too, indexed now rather than at the first save
-	if err := e.ensureBase(t.SHA256, filepath.Join(final, "rootfs.tar")); err != nil {
+	if err := e.ensureBaseHashed(t.SHA256, filepath.Join(final, "rootfs.tar")); err != nil {
 		e.log.Warn("template kept without a base: its workspaces' saves hold their whole filesystem", "template", name, "err", err)
 	} else if _, err := e.baseIndex(t.SHA256); err != nil {
 		e.log.Warn("could not index base", "template", name, "err", err)
