@@ -191,6 +191,9 @@ func (e *Env) start() {
 		})
 	}
 	cfg.NoDiskImages = os.Getenv("CAIRN_TEST_DISK_IMAGES") == "0" // compare with plain folders
+	// as cairnd runs by default: workspaces share their template where the
+	// host allows it (a scenario's own configure still decides)
+	cfg.SharedTemplates = os.Getenv("CAIRN_TEST_SHARED_TEMPLATES") == "1"
 	tmpl := os.Getenv("CAIRN_TEST_TEMPLATE")
 	if tmpl != "" {
 		cfg.DefaultTemplate = "base"
@@ -220,6 +223,9 @@ func (e *Env) start() {
 	e.srv = httptest.NewServer(e.api)
 	e.C = client.New(e.srv.URL, e.token)
 	e.loadInfo()
+	if cfg.SharedTemplates && !e.Info.Capabilities.SharedTemplates {
+		e.T.Logf("shared templates asked for but not available here: each workspace gets its own copy")
+	}
 }
 
 func (e *Env) stop() {

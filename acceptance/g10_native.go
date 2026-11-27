@@ -276,4 +276,20 @@ func init() {
 			e.T.Fatalf("capabilities %+v: want full saves", info.Capabilities)
 		}
 	})
+
+	register("G9.9.10", func(e *Env) {
+		ne := startNativeEngine(e) // the real cairnd, no --shared-templates
+		c := ne.client()
+		info, err := c.Info(e.Ctx)
+		e.Must(err)
+		if !info.Capabilities.SharedTemplates {
+			e.T.Fatal("cairnd with no flag does not share templates on a host that allows it")
+		}
+		ws, err := c.CreateWorkspace(e.Ctx, client.CreateWorkspace{Name: "shared"})
+		e.Must(err)
+		e.Must(c.WriteFile(e.Ctx, ws.ID, "mine.txt", []byte("x")))
+		out, err := c.Run(e.Ctx, ws.ID, "cat", "/mine.txt")
+		e.Must(err)
+		Equal(e, "a file in a workspace on a shared template", strings.TrimSpace(out), "x")
+	})
 }
