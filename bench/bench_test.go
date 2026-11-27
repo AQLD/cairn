@@ -11,6 +11,7 @@ package bench
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -169,5 +170,36 @@ func TestEveryBenchmarkScenarioIsCovered(t *testing.T) {
 	})
 	if len(missing) > 0 {
 		t.Skipf("benchmarks still to write: %s", strings.Join(missing, ", "))
+	}
+}
+
+// BenchmarkImportTemplate: importing a template (CAIRN_TEST_AGENT_TOOLS, the
+// big one, else CAIRN_TEST_TEMPLATE) through the API.
+func BenchmarkImportTemplate(b *testing.B) {
+	p := os.Getenv("CAIRN_TEST_AGENT_TOOLS")
+	if p == "" {
+		p = os.Getenv("CAIRN_TEST_TEMPLATE")
+	}
+	if p == "" {
+		b.Skip("set CAIRN_TEST_AGENT_TOOLS or CAIRN_TEST_TEMPLATE")
+	}
+	e := acceptance.NewEnv(b)
+	fi, err := os.Stat(p)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.SetBytes(fi.Size())
+	i := 0
+	for b.Loop() {
+		f, err := os.Open(p)
+		if err != nil {
+			b.Fatal(err)
+		}
+		i++
+		_, err = e.C.ImportTemplate(e.Ctx, fmt.Sprintf("imp%d", i), f)
+		f.Close()
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }

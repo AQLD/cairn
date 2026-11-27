@@ -199,3 +199,61 @@ func TestUntarManyFilesInParallel(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckTar: an import is refused for what extracting it would refuse,
+// found by reading alone.
+func TestCheckTar(t *testing.T) {
+	build := func(entries ...*tar.Header) []byte {
+		var b bytes.Buffer
+		tw := tar.NewWriter(&b)
+		for _, h := range entries {
+			must(t, tw.WriteHeader(h))
+			if h.Typeflag == tar.TypeReg {
+				_, err := tw.Write(bytes.Repeat([]byte("x"), int(h.Size)))
+				must(t, err)
+			}
+		}
+		must(t, tw.Close())
+		return b.Bytes()
+	}
+	dir := func(n string) *tar.Header { return &tar.Header{Typeflag: tar.TypeDir, Name: n, Mode: 0o755} }
+	file := func(n string) *tar.Header { return &tar.Header{Typeflag: tar.TypeReg, Name: n, Mode: 0o644, Size: 3} }
+	link := func(n, to string) *tar.Header { return &tar.Header{Typeflag: tar.TypeLink, Name: n, Linkname: to} }
+	sym := func(n, to string) *tar.Header { return &tar.Header{Typeflag: tar.TypeSymlink, Name: n, Linkname: to} }
+
+	good := build(dir("./"), dir("usr/"), dir("usr/bin/"), file("usr/bin/a"), link("usr/bin/b", "usr/bin/a"), sym("usr/bin/c", "/etc/passwd"))
+	if err := CheckTar(bytes.NewReader(good), int64(len(good))); err != nil {
+		t.Fatalf("a usable root filesystem was refused: %v", err)
+	}
+	// and it extracts, so the check and extraction agree on it
+	must(t, UntarDir(bytes.NewReader(good), filepath.Join(t.TempDir(), "x"), int64(len(good))))
+
+	for name, tb := range map[string][]byte{
+		"escape":           build(file("../evil")),
+		"absolute":         build(file("/etc/evil")),
+		"twice":            build(file("a"), file("a")),
+		"under a file":     build(file("a"), file("a/b")),
+		"link to nothing":  build(link("b", "missing")),
+		"link before":      build(link("b", "a"), file("a")),
+		"link escape":      build(file("a"), link("b", "../a")),
+		"link to a folder": build(dir("d/"), link("b", "d")),
+		"folder over file": build(file("a"), dir("a/")),
+		"sparse":           build(&tar.Header{Typeflag: tar.TypeGNUSparse, Name: "s", Size: 0}),
+	} {
+		err := CheckTar(bytes.NewReader(tb), int64(len(tb)))
+		if name == "sparse" && err != nil {
+			continue // archive/tar cannot write a valid sparse header: refused as malformed
+		}
+		if !errors.Is(err, ErrCorrupt) {
+			t.Errorf("%s: %v, want ErrCorrupt", name, err)
+		}
+		// extraction refuses each one too: the check is no looser
+		if err := UntarDir(bytes.NewReader(tb), filepath.Join(t.TempDir(), "x"), int64(len(tb))); err == nil {
+			t.Errorf("%s: extraction accepts what the check refuses (check stricter than needed)", name)
+		}
+	}
+	inflated := build(file("a"))
+	if err := CheckTar(bytes.NewReader(inflated), 2); !errors.Is(err, ErrCorrupt) {
+		t.Errorf("more content than the archive's size: %v", err)
+	}
+}

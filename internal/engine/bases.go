@@ -75,7 +75,14 @@ func (b *baseState) init() {
 // workspace or save starting to use it and recording that it does. A base
 // linked from a template keeps the template's (old) time otherwise, which
 // gave no grace at all.
-func (e *Engine) ensureBase(sha, src string) error {
+func (e *Engine) ensureBase(sha, src string) error { return e.keepBase(sha, src, false) }
+
+// ensureBaseHashed is ensureBase for a file the caller has just hashed
+// itself (an import): a hard link to it is that same content, so it is not
+// read again (the base is verified again before any restore anyway).
+func (e *Engine) ensureBaseHashed(sha, src string) error { return e.keepBase(sha, src, true) }
+
+func (e *Engine) keepBase(sha, src string, hashed bool) error {
 	if _, err := os.Stat(e.basePath(sha)); err == nil {
 		e.touchBase(sha)
 		return nil
@@ -85,17 +92,20 @@ func (e *Engine) ensureBase(sha, src string) error {
 	}
 	tmp := e.basePath(sha) + fmt.Sprintf(".tmp-%d", time.Now().UnixNano())
 	defer os.Remove(tmp)
-	if err := os.Link(src, tmp); err != nil {
+	linked := os.Link(src, tmp) == nil
+	if !linked {
 		if err := copyFile(src, tmp); err != nil {
 			return err
 		}
 	}
-	got, _, err := hashFileSHA(tmp)
-	if err != nil {
-		return err
-	}
-	if got != sha {
-		return fmt.Errorf("template tar changed while it was being kept as a base (%s, want %s)", got, sha)
+	if !linked || !hashed {
+		got, _, err := hashFileSHA(tmp)
+		if err != nil {
+			return err
+		}
+		if got != sha {
+			return fmt.Errorf("template tar changed while it was being kept as a base (%s, want %s)", got, sha)
+		}
 	}
 	if err := os.Rename(tmp, e.basePath(sha)); err != nil {
 		return err
